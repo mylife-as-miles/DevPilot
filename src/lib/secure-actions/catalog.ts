@@ -27,6 +27,16 @@ const providerDefaultScopes: Record<IntegrationProvider, string[]> = {
 
 export const delegatedActionPolicies: DelegatedActionPolicy[] = [
   {
+    id: "github.read_open_prs",
+    actionKey: "github.read_open_prs",
+    provider: "github",
+    riskLevel: "low",
+    requiresApproval: false,
+    requiresStepUp: false,
+    allowedScopes: ["repo:read"],
+    summary: "Read open pull requests before DevPilot drafts or reviews work.",
+  },
+  {
     id: "gitlab.read_repo_metadata",
     actionKey: "gitlab.read_repo_metadata",
     provider: "gitlab",
@@ -57,6 +67,16 @@ export const delegatedActionPolicies: DelegatedActionPolicy[] = [
     summary: "Read repository metadata, pull requests, and issue lists.",
   },
   {
+    id: "github.create_draft_issue",
+    actionKey: "github.create_draft_issue",
+    provider: "github",
+    riskLevel: "medium",
+    requiresApproval: true,
+    requiresStepUp: false,
+    allowedScopes: ["issues:write"],
+    summary: "Create a draft issue in GitHub for a proposed DevPilot follow-up.",
+  },
+  {
     id: "slack.read_channel_metadata",
     actionKey: "slack.read_channel_metadata",
     provider: "slack",
@@ -65,6 +85,16 @@ export const delegatedActionPolicies: DelegatedActionPolicy[] = [
     requiresStepUp: false,
     allowedScopes: ["channels:read", "groups:read"],
     summary: "Read channel metadata so DevPilot can target the right workspace context.",
+  },
+  {
+    id: "gitlab.comment_on_mr",
+    actionKey: "gitlab.comment_on_mr",
+    provider: "gitlab",
+    riskLevel: "medium",
+    requiresApproval: true,
+    requiresStepUp: false,
+    allowedScopes: ["api"],
+    summary: "Post a review-ready note on an existing GitLab merge request.",
   },
   {
     id: "gitlab.create_draft_issue",
@@ -95,6 +125,26 @@ export const delegatedActionPolicies: DelegatedActionPolicy[] = [
     requiresStepUp: false,
     allowedScopes: ["chat:write"],
     summary: "Post a narrow status update in a targeted engineering channel.",
+  },
+  {
+    id: "slack.post_verification_summary",
+    actionKey: "slack.post_verification_summary",
+    provider: "slack",
+    riskLevel: "medium",
+    requiresApproval: true,
+    requiresStepUp: false,
+    allowedScopes: ["chat:write"],
+    summary: "Post a verification result summary back to the engineering team.",
+  },
+  {
+    id: "slack.post_approval_requested",
+    actionKey: "slack.post_approval_requested",
+    provider: "slack",
+    riskLevel: "medium",
+    requiresApproval: true,
+    requiresStepUp: false,
+    allowedScopes: ["chat:write"],
+    summary: "Post an approval-request message when DevPilot is waiting on a sensitive action.",
   },
   {
     id: "gitlab.open_draft_pr",
@@ -173,6 +223,7 @@ export function getRelevantProviderScopes(
 export function buildConnectedIntegrations(options: {
   now?: number;
   source: ConnectedIntegrationSource;
+  sourceByProvider?: Partial<Record<IntegrationProvider, ConnectedIntegrationSource>>;
   statusByProvider: Partial<
     Record<IntegrationProvider, ConnectedIntegrationStatus>
   >;
@@ -190,7 +241,7 @@ export function buildConnectedIntegrations(options: {
     accountIdentifier: options.accountIdentifiers?.[provider],
     connectedAt: options.connectedAtByProvider?.[provider],
     updatedAt: now,
-    source: options.source,
+    source: options.sourceByProvider?.[provider] ?? options.source,
   }));
 }
 
@@ -210,6 +261,7 @@ export function createPendingDelegatedAction(
     requiredScopes: policy.allowedScopes,
     approvalStatus: policy.requiresApproval ? "pending" : "not_required",
     stepUpStatus: policy.requiresStepUp ? "required" : "not_required",
+    metadata: input.metadata ? JSON.stringify(input.metadata) : undefined,
     createdAt: now,
     updatedAt: now,
   };
@@ -319,6 +371,7 @@ export function createMockSecureRuntimeSnapshot(
     session,
     integrations,
     policies: delegatedActionPolicies,
+    executions: [],
     pendingActions: [
       previewTwo,
       {

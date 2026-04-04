@@ -219,3 +219,4 @@ export * from './gitlab-duo';
 export * from './gitlab-repository';
 export * from './code-review';
 export * from './auth-integrations';
+export * from './delegated-actions';

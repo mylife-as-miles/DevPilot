@@ -12,8 +12,10 @@ import {
   verificationComparisonService,
   verificationService,
 } from "../services";
+import { config } from "../config/env";
 import { memoryService } from "../services/memory.service";
 import { runService } from "../services/run.service";
+import { queueWorkflowDelegatedAction } from "./delegatedActionQueue";
 
 function summarizeOriginalIssue(analysisContent?: string): string {
   if (!analysisContent) {
@@ -175,7 +177,6 @@ export async function runPostFixVerificationWorkflow(
       timestamp: Date.now(),
     });
 
-    const { config } = await import("../config/env");
     const gitlabUrl = task.gitlabProjectWebUrl
       || (task.repo.startsWith("http") ? task.repo : `${config.gitlabUrl}/${task.repo}`);
     if (!gitlabUrl) {
@@ -474,6 +475,34 @@ export async function runPostFixVerificationWorkflow(
       metadata: JSON.stringify({ verificationResultId }),
       timestamp: Date.now(),
     });
+
+    if (config.defaultSlackChannelId) {
+      await queueWorkflowDelegatedAction(taskId, {
+        provider: "slack",
+        actionKey: "slack.post_verification_summary",
+        title: "Queue Slack verification summary",
+        summary:
+          "Medium-risk delegated Slack update with the latest verification outcome.",
+        metadata: {
+          channelId: config.defaultSlackChannelId,
+          text: [
+            `DevPilot verification ${finalStatus.toUpperCase()} for "${task.title}".`,
+            `Summary: ${comparisonResult.summary}`,
+            comparisonResult.explanation,
+            `Confidence: ${Math.round(comparisonResult.confidence * 100)}%`,
+          ].join("\n"),
+        },
+      });
+    } else if (config.liveSlackActionMode) {
+      await taskService.appendAgentMessage({
+        taskId,
+        sender: "system",
+        content:
+          "Slack verification summary was not queued because no default Slack channel is configured.",
+        kind: "info",
+        timestamp: Date.now(),
+      });
+    }
 
     await completeStep(4, `Verification finalized with status: ${finalStatus}.`);
     await runService.updateAgentRunProgress(

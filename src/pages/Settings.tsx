@@ -10,6 +10,7 @@ export const Settings = ({
   secureRuntimeState,
   onRefreshSecureRuntime,
   onPreviewDelegatedAction,
+  onTriggerDelegatedAction,
   onApprovePendingAction,
   onRejectPendingAction,
   onExecutePendingAction,
@@ -22,6 +23,10 @@ export const Settings = ({
   secureRuntimeState: SecureRuntimeState;
   onRefreshSecureRuntime: () => Promise<void>;
   onPreviewDelegatedAction: (input: DelegatedActionPreviewInput) => Promise<PendingDelegatedAction | null>;
+  onTriggerDelegatedAction: (
+    input: DelegatedActionPreviewInput,
+    options?: { executeImmediatelyWhenSafe?: boolean }
+  ) => Promise<PendingDelegatedAction | SecureActionExecutionResult | null>;
   onApprovePendingAction: (id: string) => Promise<PendingDelegatedAction | null>;
   onRejectPendingAction: (id: string) => Promise<PendingDelegatedAction | null>;
   onExecutePendingAction: (id: string) => Promise<SecureActionExecutionResult | null>;
@@ -244,6 +249,7 @@ export const Settings = ({
                 secureRuntimeState={secureRuntimeState}
                 onRefreshSecureRuntime={onRefreshSecureRuntime}
                 onPreviewDelegatedAction={onPreviewDelegatedAction}
+                onTriggerDelegatedAction={onTriggerDelegatedAction}
                 onApprovePendingAction={onApprovePendingAction}
                 onRejectPendingAction={onRejectPendingAction}
                 onExecutePendingAction={onExecutePendingAction}

@@ -48,6 +48,9 @@ export const config = {
   liveGitlabMode: readBooleanEnv("VITE_LIVE_GITLAB_MODE"),
   liveAuthMode: readBooleanEnv("VITE_LIVE_AUTH_MODE"),
   liveDelegatedActionMode: readBooleanEnv("VITE_LIVE_DELEGATED_ACTION_MODE"),
+  liveGitHubActionMode: readBooleanEnv("VITE_LIVE_GITHUB_ACTION_MODE"),
+  liveGitLabActionMode: readBooleanEnv("VITE_LIVE_GITLAB_ACTION_MODE"),
+  liveSlackActionMode: readBooleanEnv("VITE_LIVE_SLACK_ACTION_MODE"),
   sandboxUrl: readEnv("VITE_SANDBOX_URL", "http://localhost:8080"),
   targetAppBaseUrl: readEnv("VITE_TARGET_APP_BASE_URL", "http://localhost:3000"),
   secureActionBffUrl: stripTrailingSlash(
@@ -57,6 +60,10 @@ export const config = {
   auth0Domain: readEnv("VITE_AUTH0_DOMAIN"),
   auth0ClientId: readEnv("VITE_AUTH0_CLIENT_ID"),
   auth0Audience: readEnv("VITE_AUTH0_AUDIENCE"),
+  defaultGitHubOwner: readEnv("VITE_DEFAULT_GITHUB_OWNER"),
+  defaultGitHubRepo: readEnv("VITE_DEFAULT_GITHUB_REPO"),
+  defaultSlackChannelId: readEnv("VITE_DEFAULT_SLACK_CHANNEL_ID"),
+  defaultSlackChannelName: readEnv("VITE_DEFAULT_SLACK_CHANNEL_NAME"),
 
   tokenVaultProviders: {
     githubConnection: readEnv("VITE_AUTH0_TOKEN_VAULT_GITHUB_CONNECTION"),
@@ -95,5 +102,14 @@ export const config = {
   },
   get isSecureDelegatedActionConfigured() {
     return !!(this.liveDelegatedActionMode && this.auth0Domain && this.auth0ClientId);
+  },
+  get isGitHubDelegatedActionConfigured() {
+    return !!(this.liveDelegatedActionMode && this.liveGitHubActionMode);
+  },
+  get isGitLabDelegatedActionConfigured() {
+    return !!(this.liveDelegatedActionMode && this.liveGitLabActionMode);
+  },
+  get isSlackDelegatedActionConfigured() {
+    return !!(this.liveDelegatedActionMode && this.liveSlackActionMode);
   },
 };

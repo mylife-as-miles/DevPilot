@@ -41,6 +41,10 @@ export const pendingDelegatedActionService = {
     return record;
   },
 
+  async removePendingAction(id: string): Promise<void> {
+    await db.pendingDelegatedActions.delete(id);
+  },
+
   async updatePendingAction(
     id: string,
     updates: PendingDelegatedActionUpdate,

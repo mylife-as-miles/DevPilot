@@ -6,7 +6,10 @@ export type ConnectedIntegrationStatus =
   | "expired"
   | "error";
 
-export type ConnectedIntegrationSource = "auth0_token_vault" | "mock";
+export type ConnectedIntegrationSource =
+  | "auth0_token_vault"
+  | "secure_backend_fallback"
+  | "mock";
 
 export type DelegatedRiskLevel = "low" | "medium" | "high";
 
@@ -57,6 +60,7 @@ export interface PendingDelegatedAction {
   requiredScopes: string[];
   approvalStatus: PendingApprovalStatus;
   stepUpStatus: PendingStepUpStatus;
+  metadata?: string;
   createdAt: number;
   updatedAt: number;
 }
@@ -91,6 +95,7 @@ export interface SecureRuntimeSnapshot {
   integrations: ConnectedIntegration[];
   policies: DelegatedActionPolicy[];
   pendingActions: PendingDelegatedAction[];
+  executions: import("./delegated-actions").DelegatedActionExecution[];
   runtimeMode: SecureRuntimeMode;
   warnings: string[];
   updatedAt: number;
@@ -102,6 +107,7 @@ export interface DelegatedActionPreviewInput {
   actionKey: string;
   title?: string;
   summary?: string;
+  metadata?: import("./delegated-actions").DelegatedActionMetadata;
 }
 
 export interface PendingDelegatedActionUpdate {
@@ -111,7 +117,8 @@ export interface PendingDelegatedActionUpdate {
 
 export interface SecureActionExecutionResult {
   ok: boolean;
-  pendingAction: PendingDelegatedAction;
+  pendingAction?: PendingDelegatedAction;
+  execution: import("./delegated-actions").DelegatedActionExecution;
   executionMode: "deferred" | "dry_run" | "blocked";
   message: string;
 }

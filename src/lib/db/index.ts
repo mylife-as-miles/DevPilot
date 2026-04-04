@@ -8,6 +8,7 @@ import {
   CodeReviewIssue,
   ConnectedIntegration,
   DelegatedActionPolicy,
+  DelegatedActionExecution,
   DuoAgentInvocation,
   DuoFlowRun,
   GitLabMergeRequestRecord,
@@ -51,6 +52,7 @@ export class DevPilotDB extends Dexie {
   connectedIntegrations!: Table<ConnectedIntegration>;
   delegatedActionPolicies!: Table<DelegatedActionPolicy>;
   pendingDelegatedActions!: Table<PendingDelegatedAction>;
+  delegatedActionExecutions!: Table<DelegatedActionExecution>;
 
   constructor() {
     super('DevPilotDB');
@@ -253,6 +255,34 @@ export class DevPilotDB extends Dexie {
       connectedIntegrations: 'id, provider, status, source, updatedAt',
       delegatedActionPolicies: 'id, provider, actionKey, riskLevel',
       pendingDelegatedActions: 'id, taskId, provider, actionKey, riskLevel, approvalStatus, stepUpStatus, updatedAt, [provider+actionKey]'
+    });
+
+    this.version(12).stores({
+      tasks: 'id, category, status, createdAt',
+      agentMessages: 'id, taskId, timestamp',
+      taskArtifacts: 'id, [taskId+type]',
+      memories: 'id, scope, createdAt',
+      agentRuns: 'id, taskId, status',
+      agentEvents: 'id, taskId, timestamp',
+      runSteps: 'id, runId, taskId, order',
+      taskMemoryHits: 'id, taskId, memoryId',
+      patchProposals: 'id, taskId, status',
+      patchFiles: 'id, proposalId, taskId',
+      verificationPlans: 'id, taskId, proposalId',
+      verificationResults: 'id, taskId, proposalId, status',
+      verificationEvidences: 'id, verificationResultId, taskId, type',
+      duoFlowRuns: 'id, taskId, flowRunId, flowDefinitionId, status, createdAt',
+      duoAgentInvocations: 'id, flowRunId, taskId, agentRole, stepKey, invocationStatus',
+      gitlabRepositoryActions: 'id, taskId, proposalId, actionType, status',
+      gitlabMergeRequestRecords: 'id, taskId, proposalId, mergeRequestIid',
+      gitlabPipelineRecords: 'id, taskId, proposalId, pipelineId, status',
+      codeReviewIssues: 'id, status, category, source, repo, branch, score, createdAt, updatedAt, dedupeKey, linkedTaskId, [repo+branch], [repo+branch+category]',
+      codeReviewBatches: 'id, repo, branch, discoveryMode, createdAt, updatedAt, [repo+branch]',
+      authSessions: 'id, status, runtimeMode, updatedAt',
+      connectedIntegrations: 'id, provider, status, source, updatedAt',
+      delegatedActionPolicies: 'id, provider, actionKey, riskLevel',
+      pendingDelegatedActions: 'id, taskId, provider, actionKey, riskLevel, approvalStatus, stepUpStatus, updatedAt, [provider+actionKey]',
+      delegatedActionExecutions: 'id, taskId, provider, actionKey, status, mode, updatedAt, [provider+actionKey]'
     });
   }
 }

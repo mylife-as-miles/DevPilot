@@ -63,6 +63,7 @@ export default function App() {
     handleProjectChange,
     refreshSecureRuntime,
     previewDelegatedAction,
+    triggerDelegatedAction,
     approvePendingAction,
     rejectPendingAction,
     executePendingAction,
@@ -150,6 +151,7 @@ export default function App() {
             secureRuntimeState={secureRuntimeState}
             onRefreshSecureRuntime={refreshSecureRuntime}
             onPreviewDelegatedAction={previewDelegatedAction}
+            onTriggerDelegatedAction={triggerDelegatedAction}
             onApprovePendingAction={approvePendingAction}
             onRejectPendingAction={rejectPendingAction}
             onExecutePendingAction={executePendingAction}

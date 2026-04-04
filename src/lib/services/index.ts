@@ -92,6 +92,8 @@ export * from './codeReviewIssue.service';
 export * from './codeReviewDiscovery.service';
 export * from './integrationPermissions.service';
 export * from './pendingDelegatedAction.service';
+export * from './delegatedActionExecution.service';
+export * from './secureAction.service';
 
 export * from './gitlabDuo.service';
 export * from './gitlabRepository.service';

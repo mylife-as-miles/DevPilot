@@ -7,8 +7,7 @@ import { config } from "../lib/config/env";
 import { initializeDb } from "../lib/seeds";
 import {
     codeReviewIssueService,
-    integrationPermissionsService,
-    pendingDelegatedActionService,
+    secureActionService,
     taskService,
     runService,
 } from "../lib/services";
@@ -17,6 +16,7 @@ import { runBackgroundCodeReviewDiscoveryWorkflow } from "../lib/workflows/backg
 import {
     AuthSessionSnapshot,
     ConnectedIntegration,
+    DelegatedActionExecution,
     DelegatedActionPolicy,
     DelegatedActionPreviewInput,
     GitLabBranchSummary,
@@ -47,6 +47,7 @@ export interface SecureRuntimeState {
     integrations: ConnectedIntegration[];
     policies: DelegatedActionPolicy[];
     pendingActions: PendingDelegatedAction[];
+    executions: DelegatedActionExecution[];
     runtimeMode: SecureRuntimeMode;
     warnings: string[];
     updatedAt?: number;
@@ -86,6 +87,7 @@ export const useTaskHub = () => {
         integrations: [],
         policies: [],
         pendingActions: [],
+        executions: [],
         runtimeMode: "mock",
         warnings: [],
     });
@@ -189,9 +191,7 @@ export const useTaskHub = () => {
         setSecureRuntimeState((current) => ({ ...current, loading: true }));
         await initializeDb();
 
-        const snapshot = await secureActionAdapter.getRuntimeSnapshot();
-        await integrationPermissionsService.hydrateRuntimeSnapshot(snapshot);
-        await pendingDelegatedActionService.replacePendingActions(snapshot.pendingActions);
+        const snapshot = await secureActionService.refreshRuntimeSnapshot();
 
         setSecureRuntimeState({
             loading: false,
@@ -199,6 +199,7 @@ export const useTaskHub = () => {
             integrations: snapshot.integrations,
             policies: snapshot.policies,
             pendingActions: snapshot.pendingActions,
+            executions: snapshot.executions,
             runtimeMode: snapshot.runtimeMode,
             warnings: snapshot.warnings,
             updatedAt: snapshot.updatedAt,
@@ -424,8 +425,7 @@ export const useTaskHub = () => {
     const previewDelegatedAction = useCallback(async (input: DelegatedActionPreviewInput) => {
         try {
             setDashboardError(null);
-            const pendingAction = await secureActionAdapter.previewDelegatedAction(input);
-            await pendingDelegatedActionService.upsertPendingAction(pendingAction);
+            const pendingAction = await secureActionService.previewDelegatedAction(input);
             await loadSecureRuntimeState();
             return pendingAction;
         } catch (error) {
@@ -440,8 +440,7 @@ export const useTaskHub = () => {
     ) => {
         try {
             setDashboardError(null);
-            const pendingAction = await secureActionAdapter.updatePendingAction(id, updates);
-            await pendingDelegatedActionService.upsertPendingAction(pendingAction);
+            const pendingAction = await secureActionService.updatePendingAction(id, updates);
             await loadSecureRuntimeState();
             return pendingAction;
         } catch (error) {
@@ -461,8 +460,7 @@ export const useTaskHub = () => {
     const executePendingAction = useCallback(async (id: string): Promise<SecureActionExecutionResult | null> => {
         try {
             setDashboardError(null);
-            const result = await secureActionAdapter.executePendingAction(id);
-            await pendingDelegatedActionService.upsertPendingAction(result.pendingAction);
+            const result = await secureActionService.executePendingAction(id);
             await loadSecureRuntimeState();
             return result;
         } catch (error) {
@@ -470,6 +468,22 @@ export const useTaskHub = () => {
             return null;
         }
     }, [loadSecureRuntimeState]);
+
+    const triggerDelegatedAction = useCallback(async (
+        input: DelegatedActionPreviewInput,
+        options?: { executeImmediatelyWhenSafe?: boolean },
+    ) => {
+        const pendingAction = await previewDelegatedAction(input);
+        if (!pendingAction) {
+            return null;
+        }
+
+        if (options?.executeImmediatelyWhenSafe && pendingAction.approvalStatus === "not_required") {
+            return await executePendingAction(pendingAction.id);
+        }
+
+        return pendingAction;
+    }, [executePendingAction, previewDelegatedAction]);
 
     const beginLogin = useCallback((returnTo: string = "/settings") => {
         secureActionAdapter.beginLogin(returnTo);
@@ -510,6 +524,7 @@ export const useTaskHub = () => {
         refreshIntegration: loadIntegrationState,
         refreshSecureRuntime: loadSecureRuntimeState,
         previewDelegatedAction,
+        triggerDelegatedAction,
         approvePendingAction,
         rejectPendingAction,
         executePendingAction,

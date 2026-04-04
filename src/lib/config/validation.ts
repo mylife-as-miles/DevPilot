@@ -10,6 +10,9 @@ const configSchema = z.object({
   VITE_LIVE_REPOSITORY_MODE: booleanFlag,
   VITE_LIVE_AUTH_MODE: booleanFlag,
   VITE_LIVE_DELEGATED_ACTION_MODE: booleanFlag,
+  VITE_LIVE_GITHUB_ACTION_MODE: booleanFlag,
+  VITE_LIVE_GITLAB_ACTION_MODE: booleanFlag,
+  VITE_LIVE_SLACK_ACTION_MODE: booleanFlag,
 
   VITE_GEMINI_API_KEY: z.string().optional(),
 
@@ -24,6 +27,10 @@ const configSchema = z.object({
   VITE_AUTH0_DOMAIN: z.string().optional(),
   VITE_AUTH0_CLIENT_ID: z.string().optional(),
   VITE_AUTH0_AUDIENCE: z.string().optional(),
+  VITE_DEFAULT_GITHUB_OWNER: z.string().optional(),
+  VITE_DEFAULT_GITHUB_REPO: z.string().optional(),
+  VITE_DEFAULT_SLACK_CHANNEL_ID: z.string().optional(),
+  VITE_DEFAULT_SLACK_CHANNEL_NAME: z.string().optional(),
   VITE_AUTH0_TOKEN_VAULT_GITHUB_CONNECTION: z.string().optional(),
   VITE_AUTH0_TOKEN_VAULT_GITLAB_CONNECTION: z.string().optional(),
   VITE_AUTH0_TOKEN_VAULT_SLACK_CONNECTION: z.string().optional(),
@@ -39,6 +46,9 @@ export const validateConfig = (): Config => {
     VITE_LIVE_AUTH_MODE: import.meta.env.VITE_LIVE_AUTH_MODE,
     VITE_LIVE_DELEGATED_ACTION_MODE:
       import.meta.env.VITE_LIVE_DELEGATED_ACTION_MODE,
+    VITE_LIVE_GITHUB_ACTION_MODE: import.meta.env.VITE_LIVE_GITHUB_ACTION_MODE,
+    VITE_LIVE_GITLAB_ACTION_MODE: import.meta.env.VITE_LIVE_GITLAB_ACTION_MODE,
+    VITE_LIVE_SLACK_ACTION_MODE: import.meta.env.VITE_LIVE_SLACK_ACTION_MODE,
     VITE_GEMINI_API_KEY: import.meta.env.VITE_GEMINI_API_KEY,
     VITE_GITLAB_URL: import.meta.env.VITE_GITLAB_URL,
     VITE_GITLAB_TOKEN: import.meta.env.VITE_GITLAB_TOKEN,
@@ -49,6 +59,10 @@ export const validateConfig = (): Config => {
     VITE_AUTH0_DOMAIN: import.meta.env.VITE_AUTH0_DOMAIN,
     VITE_AUTH0_CLIENT_ID: import.meta.env.VITE_AUTH0_CLIENT_ID,
     VITE_AUTH0_AUDIENCE: import.meta.env.VITE_AUTH0_AUDIENCE,
+    VITE_DEFAULT_GITHUB_OWNER: import.meta.env.VITE_DEFAULT_GITHUB_OWNER,
+    VITE_DEFAULT_GITHUB_REPO: import.meta.env.VITE_DEFAULT_GITHUB_REPO,
+    VITE_DEFAULT_SLACK_CHANNEL_ID: import.meta.env.VITE_DEFAULT_SLACK_CHANNEL_ID,
+    VITE_DEFAULT_SLACK_CHANNEL_NAME: import.meta.env.VITE_DEFAULT_SLACK_CHANNEL_NAME,
     VITE_AUTH0_TOKEN_VAULT_GITHUB_CONNECTION:
       import.meta.env.VITE_AUTH0_TOKEN_VAULT_GITHUB_CONNECTION,
     VITE_AUTH0_TOKEN_VAULT_GITLAB_CONNECTION:
