@@ -1,11 +1,13 @@
 import {
   ApprovalRequest,
+  AuthorizationAuditEvent,
   DelegatedActionExecution,
   PendingDelegatedAction,
   StepUpRequirement,
 } from "../src/types";
 import {
   RuntimeApprovalRequestRecord,
+  RuntimeAuthorizationAuditEventRecord,
   LoginStateRecord,
   RuntimeExecutionRecord,
   RuntimePendingActionRecord,
@@ -18,6 +20,7 @@ const pendingActionStore = new Map<string, RuntimePendingActionRecord>();
 const executionStore = new Map<string, RuntimeExecutionRecord>();
 const approvalRequestStore = new Map<string, RuntimeApprovalRequestRecord>();
 const stepUpRequirementStore = new Map<string, RuntimeStepUpRequirementRecord>();
+const authorizationAuditEventStore = new Map<string, RuntimeAuthorizationAuditEventRecord>();
 const loginStateStore = new Map<string, LoginStateRecord>();
 
 export function getSession(sessionId: string): RuntimeSessionRecord | undefined {
@@ -34,6 +37,7 @@ export function deleteSession(sessionId: string): void {
   prunePendingActionsForSession(sessionId);
   pruneApprovalRequestsForSession(sessionId);
   pruneStepUpRequirementsForSession(sessionId);
+  pruneAuthorizationAuditEventsForSession(sessionId);
 }
 
 export function setLoginState(
@@ -217,6 +221,35 @@ export function pruneStepUpRequirementsForSession(sessionId: string): void {
   for (const [stepUpId, record] of stepUpRequirementStore.entries()) {
     if (record.sessionId === sessionId) {
       stepUpRequirementStore.delete(stepUpId);
+    }
+  }
+}
+
+export function storeAuthorizationAuditEvent(
+  sessionId: string,
+  authorizationAuditEvent: AuthorizationAuditEvent,
+): AuthorizationAuditEvent {
+  authorizationAuditEventStore.set(authorizationAuditEvent.id, {
+    sessionId,
+    authorizationAuditEvent,
+  });
+  return authorizationAuditEvent;
+}
+
+export function getAuthorizationAuditEventsForSession(
+  sessionId: string,
+): AuthorizationAuditEvent[] {
+  return Array.from(authorizationAuditEventStore.values())
+    .filter((record) => record.sessionId === sessionId)
+    .map((record) => record.authorizationAuditEvent)
+    .sort((left, right) => right.createdAt - left.createdAt)
+    .slice(0, 120);
+}
+
+export function pruneAuthorizationAuditEventsForSession(sessionId: string): void {
+  for (const [auditId, record] of authorizationAuditEventStore.entries()) {
+    if (record.sessionId === sessionId) {
+      authorizationAuditEventStore.delete(auditId);
     }
   }
 }

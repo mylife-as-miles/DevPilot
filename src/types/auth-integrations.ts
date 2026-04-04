@@ -143,6 +143,7 @@ export interface SecureRuntimeSnapshot {
   executions: import("./delegated-actions").DelegatedActionExecution[];
   approvalRequests: import("./approvals").ApprovalRequest[];
   stepUpRequirements: import("./approvals").StepUpRequirement[];
+  authorizationAuditEvents: import("./authorization-audit").AuthorizationAuditEvent[];
   runtimeMode: SecureRuntimeMode;
   warnings: string[];
   updatedAt: number;

@@ -5,6 +5,8 @@ import { sandboxAdapter } from "../../lib/adapters/sandbox.adapter";
 import { gitlabRepositoryAdapter } from "../../lib/adapters/gitlabRepository.adapter";
 import { config } from "../../lib/config/env";
 import {
+    authorizationAuditService,
+    authorizationInsightService,
     delegatedActionExecutionService,
     integrationPermissionsService,
     gitlabRepositoryService,
@@ -187,6 +189,14 @@ export const TaskDetail: React.FC<TaskDetailProps> = ({
     );
     const secureExecutions = useLiveQuery(
         () => delegatedActionExecutionService.getExecutionsForTask(taskId),
+        [taskId],
+    );
+    const authorizationAuditEvents = useLiveQuery(
+        () => authorizationAuditService.getAuditEventsForTask(taskId),
+        [taskId],
+    );
+    const authorizationInsights = useLiveQuery(
+        () => authorizationInsightService.getInsightsForTask(taskId),
         [taskId],
     );
     const mrRecord = useLiveQuery(
@@ -692,6 +702,8 @@ export const TaskDetail: React.FC<TaskDetailProps> = ({
                                     stepUpRequirements={secureStepUpRequirements || []}
                                     executions={secureExecutions || []}
                                     integrations={secureIntegrations || []}
+                                    authorizationInsights={authorizationInsights || []}
+                                    authorizationAuditEvents={authorizationAuditEvents || []}
                                     canLaunchDemo={Boolean(
                                         latestProposal?.status === "ready_for_review" &&
                                         !(securePendingActions || []).some((action) => action.actionKey === "gitlab.open_draft_pr") &&

@@ -14,6 +14,10 @@ import { githubActionService } from "./githubAction.service";
 import { gitlabActionService } from "./gitlabAction.service";
 import { slackActionService } from "./slackAction.service";
 import { RuntimeEnv, RuntimeSessionRecord } from "../runtime.types";
+import {
+  getAuthorizationAuditTrailForSession,
+  recordAuthorizationAuditEvent,
+} from "./authorizationAudit.service";
 
 export async function buildRuntimeSnapshot(options: {
   env: RuntimeEnv;
@@ -89,6 +93,7 @@ export async function buildRuntimeSnapshot(options: {
       executions,
       approvalRequests,
       stepUpRequirements,
+      authorizationAuditEvents: buildFallbackAuditTrail(session.id, env, updatedAt),
       runtimeMode: "fallback",
       warnings: buildWarnings({
         env,
@@ -136,6 +141,25 @@ export async function buildRuntimeSnapshot(options: {
     updatedAt,
   });
 
+  recordIntegrationCheck(session.id, {
+    provider: githubStatus.provider,
+    status: githubStatus.status,
+    source: githubStatus.source,
+    reason: githubStatus.logs[githubStatus.logs.length - 1],
+  });
+  recordIntegrationCheck(session.id, {
+    provider: slackStatus.provider,
+    status: slackStatus.status,
+    source: slackStatus.source,
+    reason: slackStatus.logs[slackStatus.logs.length - 1],
+  });
+  recordIntegrationCheck(session.id, {
+    provider: gitlabStatus.provider,
+    status: gitlabStatus.status,
+    source: gitlabStatus.source,
+    reason: gitlabStatus.logs[gitlabStatus.logs.length - 1],
+  });
+
   return {
     session: sessionSnapshot,
     integrations: buildConnectedIntegrations({
@@ -171,6 +195,7 @@ export async function buildRuntimeSnapshot(options: {
     executions,
     approvalRequests,
     stepUpRequirements,
+    authorizationAuditEvents: getAuthorizationAuditTrailForSession(session.id),
     runtimeMode: "live",
     warnings: buildWarnings({
       env,
@@ -185,6 +210,97 @@ export async function buildRuntimeSnapshot(options: {
     }),
     updatedAt,
   };
+}
+
+function buildFallbackAuditTrail(
+  sessionId: string,
+  env: RuntimeEnv,
+  now: number,
+) {
+  recordAuthorizationAuditEvent({
+    sessionId,
+    provider: "unknown",
+    eventType: "fallback_used",
+    riskLevel: "medium",
+    summary: "Secure runtime is operating in fallback mode.",
+    reason:
+      "Auth0 live configuration is unavailable, so DevPilot is using its fallback runtime boundaries.",
+    outcome: "fallback",
+    metadata: {
+      runtimeMode: "fallback",
+      liveAuthMode: env.liveAuthMode,
+      liveDelegatedActionMode: env.liveDelegatedActionMode,
+    },
+    dedupeKey: "runtime:fallback",
+    createdAt: now,
+  });
+
+  return getAuthorizationAuditTrailForSession(sessionId);
+}
+
+function recordIntegrationCheck(
+  sessionId: string,
+  options: {
+    provider: "github" | "gitlab" | "slack";
+    status: "connected" | "not_connected" | "expired" | "error";
+    source: string;
+    reason?: string;
+  },
+): void {
+  recordAuthorizationAuditEvent({
+    sessionId,
+    provider: options.provider,
+    eventType: "integration_checked",
+    riskLevel: "low",
+    summary:
+      options.status === "connected"
+        ? `${capitalizeProvider(options.provider)} integration connected for delegated access.`
+        : `${capitalizeProvider(options.provider)} integration check reported ${options.status.replace(/_/g, " ")}.`,
+    reason: options.reason,
+    outcome: options.status === "connected" ? "allowed" : "info",
+    metadata: {
+      status: options.status,
+      source: options.source,
+    },
+    dedupeKey: `integration:${options.provider}:${options.status}:${options.source}`,
+  });
+
+  if (options.source === "secure_backend_fallback") {
+    recordAuthorizationAuditEvent({
+      sessionId,
+      provider: options.provider,
+      eventType: "fallback_used",
+      riskLevel: options.status === "connected" ? "medium" : "low",
+      summary: `${capitalizeProvider(options.provider)} is using the secure backend fallback path.`,
+      reason:
+        options.status === "connected"
+          ? `${capitalizeProvider(options.provider)} is available through a protected backend fallback instead of a live Token Vault exchange.`
+          : options.reason
+            ?? `${capitalizeProvider(options.provider)} could not use its live delegated path, so DevPilot stayed on the secure fallback boundary.`,
+      outcome: "fallback",
+      metadata: {
+        status: options.status,
+        source: options.source,
+      },
+      dedupeKey: `fallback:${options.provider}:${options.status}:${options.source}`,
+    });
+  }
+}
+
+function capitalizeProvider(provider: string): string {
+  if (provider === "gitlab") {
+    return "GitLab";
+  }
+
+  if (provider === "github") {
+    return "GitHub";
+  }
+
+  if (provider === "slack") {
+    return "Slack";
+  }
+
+  return provider;
 }
 
 function buildWarnings(args: {

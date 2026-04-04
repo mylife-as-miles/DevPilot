@@ -504,6 +504,7 @@ export function createMockSecureRuntimeSnapshot(
     policies: delegatedActionPolicies,
     approvalRequests: [] as ApprovalRequest[],
     stepUpRequirements: [] as StepUpRequirement[],
+    authorizationAuditEvents: [],
     executions: [],
     pendingActions: [
       previewTwo,

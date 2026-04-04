@@ -1,6 +1,10 @@
 import React, { useMemo, useState } from "react";
+import { AuthorizationAuditTimeline } from "../secure-actions/AuthorizationAuditTimeline";
+import { AuthorizationInsightList } from "../secure-actions/AuthorizationInsightList";
 import {
   ApprovalRequest,
+  AuthorizationAuditEvent,
+  AuthorizationInsight,
   ConnectedIntegration,
   DelegatedActionExecution,
   PendingDelegatedAction,
@@ -13,6 +17,8 @@ interface SecureActionTaskCardProps {
   stepUpRequirements: StepUpRequirement[];
   executions: DelegatedActionExecution[];
   integrations: ConnectedIntegration[];
+  authorizationInsights: AuthorizationInsight[];
+  authorizationAuditEvents: AuthorizationAuditEvent[];
   canLaunchDemo: boolean;
   isLaunchingDemo?: boolean;
   onLaunchDemo: () => Promise<void>;
@@ -29,6 +35,8 @@ export const SecureActionTaskCard: React.FC<SecureActionTaskCardProps> = ({
   stepUpRequirements,
   executions,
   integrations,
+  authorizationInsights,
+  authorizationAuditEvents,
   canLaunchDemo,
   isLaunchingDemo = false,
   onLaunchDemo,
@@ -73,6 +81,9 @@ export const SecureActionTaskCard: React.FC<SecureActionTaskCardProps> = ({
       execution.status === "failed" ||
       execution.status === "rejected" ||
       execution.status === "expired",
+  );
+  const blockedInsight = authorizationInsights.find(
+    (insight) => insight.severity !== "info",
   );
 
   const runAction = async (
@@ -145,6 +156,16 @@ export const SecureActionTaskCard: React.FC<SecureActionTaskCardProps> = ({
               : undefined;
             const metadata = parseJsonRecord(action.metadata);
             const target = describeTarget(metadata);
+            const actionInsights = authorizationInsights.filter(
+              (insight) =>
+                insight.actionKey === action.actionKey ||
+                (insight.provider === action.provider && !insight.actionKey),
+            );
+            const actionAuditEvents = authorizationAuditEvents.filter(
+              (event) =>
+                event.delegatedActionExecutionId === action.delegatedActionExecutionId ||
+                (event.provider === action.provider && event.taskId === action.taskId),
+            );
 
             return (
               <div
@@ -189,6 +210,16 @@ export const SecureActionTaskCard: React.FC<SecureActionTaskCardProps> = ({
                     <div className="font-semibold text-sky-200">Step-up checkpoint</div>
                     <div>{stepUpRequirement.reason}</div>
                   </div>
+                )}
+
+                {actionInsights.length > 0 && (
+                  <AuthorizationInsightList
+                    insights={actionInsights}
+                    title="Why this action?"
+                    emptyState="No extra security notes for this action."
+                    maxItems={2}
+                    className="mt-3"
+                  />
                 )}
 
                 <div className="mt-3 flex flex-wrap gap-2">
@@ -281,6 +312,16 @@ export const SecureActionTaskCard: React.FC<SecureActionTaskCardProps> = ({
                           : "Execute Secure Action"}
                   </button>
                 </div>
+
+                {actionAuditEvents.length > 0 && (
+                  <AuthorizationAuditTimeline
+                    events={actionAuditEvents}
+                    title="Authorization timeline"
+                    emptyState="Audit events will appear here after DevPilot evaluates this action."
+                    maxItems={4}
+                    className="mt-3"
+                  />
+                )}
               </div>
             );
           })}
@@ -289,6 +330,9 @@ export const SecureActionTaskCard: React.FC<SecureActionTaskCardProps> = ({
             <div className="rounded-xl border border-rose-500/15 bg-rose-500/5 px-4 py-3 text-[12px] leading-relaxed text-rose-100/85">
               <div className="font-semibold text-rose-200">Blocked path surfaced cleanly</div>
               <div className="mt-1">{blockedExecution.summary}</div>
+              {blockedInsight && (
+                <div className="mt-2 text-rose-100/80">{blockedInsight.summary}</div>
+              )}
             </div>
           )}
 
@@ -316,6 +360,24 @@ export const SecureActionTaskCard: React.FC<SecureActionTaskCardProps> = ({
                 </a>
               )}
             </div>
+          )}
+
+          {authorizationInsights.length > 0 && (
+            <AuthorizationInsightList
+              insights={authorizationInsights}
+              title="Security notes"
+              emptyState="Security notes will appear here as delegated actions are evaluated."
+              maxItems={3}
+            />
+          )}
+
+          {authorizationAuditEvents.length > 0 && (
+            <AuthorizationAuditTimeline
+              events={authorizationAuditEvents}
+              title="Task audit trail"
+              emptyState="Authorization checkpoints will appear here once DevPilot evaluates external actions."
+              maxItems={6}
+            />
           )}
         </div>
       )}

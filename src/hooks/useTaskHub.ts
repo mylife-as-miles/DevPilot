@@ -6,6 +6,7 @@ import { secureActionAdapter } from "../lib/adapters/secureAction.adapter";
 import { config } from "../lib/config/env";
 import { initializeDb } from "../lib/seeds";
 import {
+    authorizationInsightService,
     codeReviewIssueService,
     secureActionService,
     taskService,
@@ -18,6 +19,9 @@ import {
     ApprovalRequest,
     ApprovalRequestTransitionResult,
     AuthSessionSnapshot,
+    AuthorizationAuditEvent,
+    AuthorizationInsight,
+    AuthorizationPatternSummary,
     ConnectedIntegration,
     DelegatedActionExecution,
     DelegatedActionPolicy,
@@ -55,6 +59,9 @@ export interface SecureRuntimeState {
     executions: DelegatedActionExecution[];
     approvalRequests: ApprovalRequest[];
     stepUpRequirements: StepUpRequirement[];
+    authorizationAuditEvents: AuthorizationAuditEvent[];
+    authorizationInsights: AuthorizationInsight[];
+    authorizationPatternSummary: AuthorizationPatternSummary;
     runtimeMode: SecureRuntimeMode;
     warnings: string[];
     updatedAt?: number;
@@ -97,6 +104,17 @@ export const useTaskHub = () => {
         executions: [],
         approvalRequests: [],
         stepUpRequirements: [],
+        authorizationAuditEvents: [],
+        authorizationInsights: [],
+        authorizationPatternSummary: {
+            generatedAt: 0,
+            autoAllowedCount: 0,
+            fallbackCount: 0,
+            blockedCount: 0,
+            approvalRequiredCount: 0,
+            highRiskPolicyCount: 0,
+            blockedProviders: [],
+        },
         runtimeMode: "mock",
         warnings: [],
     });
@@ -201,6 +219,9 @@ export const useTaskHub = () => {
         await initializeDb();
 
         const snapshot = await secureActionService.refreshRuntimeSnapshot();
+        const authorizationInsights = await authorizationInsightService.getInsights();
+        const authorizationPatternSummary =
+            authorizationInsightService.buildPatternSummary(snapshot);
 
         setSecureRuntimeState({
             loading: false,
@@ -211,6 +232,9 @@ export const useTaskHub = () => {
             executions: snapshot.executions,
             approvalRequests: snapshot.approvalRequests,
             stepUpRequirements: snapshot.stepUpRequirements,
+            authorizationAuditEvents: snapshot.authorizationAuditEvents,
+            authorizationInsights,
+            authorizationPatternSummary,
             runtimeMode: snapshot.runtimeMode,
             warnings: snapshot.warnings,
             updatedAt: snapshot.updatedAt,

@@ -95,6 +95,9 @@ export * from './pendingDelegatedAction.service';
 export * from './delegatedActionExecution.service';
 export * from './pendingApproval.service';
 export * from './stepUpRequirement.service';
+export * from './authorizationAudit.service';
+export * from './authorizationInsight.service';
+export * from './delegatedActionPolicy.service';
 export * from './secureAction.service';
 
 export * from './gitlabDuo.service';

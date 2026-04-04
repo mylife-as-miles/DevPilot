@@ -18,6 +18,7 @@ import {
   upsertExecution,
 } from "../runtime.store";
 import { RuntimeEnv } from "../runtime.types";
+import { recordAuthorizationAuditEvent } from "./authorizationAudit.service";
 
 export function createApprovalRequestForPendingAction(options: {
   env: RuntimeEnv;
@@ -39,7 +40,7 @@ export function createApprovalRequestForPendingAction(options: {
   const timeoutSeconds =
     options.policy.approvalTimeoutSeconds ?? options.env.approvalTimeoutSeconds;
 
-  return storeApprovalRequest(options.sessionId, {
+  const approvalRequest = storeApprovalRequest(options.sessionId, {
     id: `approval:${crypto.randomUUID()}`,
     taskId: options.pendingAction.taskId,
     pendingActionId: options.pendingAction.id,
@@ -65,6 +66,30 @@ export function createApprovalRequestForPendingAction(options: {
         : "in_app_fallback",
     }),
   });
+
+  recordAuthorizationAuditEvent({
+    sessionId: options.sessionId,
+    taskId: approvalRequest.taskId,
+    delegatedActionExecutionId: approvalRequest.delegatedActionExecutionId,
+    approvalRequestId: approvalRequest.id,
+    provider: approvalRequest.provider,
+    eventType: "approval_requested",
+    riskLevel: approvalRequest.riskLevel,
+    summary: `Approval requested for ${approvalRequest.title}.`,
+    reason:
+      options.policy.approvalReason
+      ?? "This delegated action requires explicit human approval before execution.",
+    scopes: approvalRequest.requiredScopes,
+    outcome: "info",
+    metadata: {
+      approvalChannel: approvalRequest.approvalChannel,
+      approvalTrigger: options.policy.approvalTrigger,
+      expiresAt: approvalRequest.expiresAt,
+      liveAsyncAuthorizationMode: options.env.liveAsyncAuthorizationMode,
+    },
+  });
+
+  return approvalRequest;
 }
 
 export function approveApprovalRequestForSession(options: {
@@ -133,6 +158,28 @@ export function approveApprovalRequestForSession(options: {
       )
     : undefined;
 
+  recordAuthorizationAuditEvent({
+    sessionId: options.sessionId,
+    taskId: nextApprovalRequest.taskId,
+    delegatedActionExecutionId: nextApprovalRequest.delegatedActionExecutionId,
+    approvalRequestId: nextApprovalRequest.id,
+    provider: nextApprovalRequest.provider,
+    eventType: "approval_granted",
+    riskLevel: nextApprovalRequest.riskLevel,
+    summary: `Approval granted for ${nextApprovalRequest.title}.`,
+    reason:
+      stepUpRequirement && stepUpRequirement.status !== "completed"
+        ? "Approval was granted, but step-up authentication must still complete before execution."
+        : "Approval was granted, so the action can proceed within its remaining checkpoints.",
+    scopes: nextApprovalRequest.requiredScopes,
+    outcome: "approved",
+    metadata: {
+      approvalStatus: nextApprovalRequest.status,
+      pendingActionStatus: nextPendingAction?.status,
+      stepUpStatus: stepUpRequirement?.status,
+    },
+  });
+
   return {
     approvalRequest: nextApprovalRequest,
     pendingAction: nextPendingAction,
@@ -193,6 +240,24 @@ export function rejectApprovalRequestForSession(options: {
         }),
       )
     : undefined;
+
+  recordAuthorizationAuditEvent({
+    sessionId: options.sessionId,
+    taskId: nextApprovalRequest.taskId,
+    delegatedActionExecutionId: nextApprovalRequest.delegatedActionExecutionId,
+    approvalRequestId: nextApprovalRequest.id,
+    provider: nextApprovalRequest.provider,
+    eventType: "approval_rejected",
+    riskLevel: nextApprovalRequest.riskLevel,
+    summary: `Approval rejected for ${nextApprovalRequest.title}.`,
+    reason: "The requested delegated action was explicitly rejected by the user.",
+    scopes: nextApprovalRequest.requiredScopes,
+    outcome: "rejected",
+    metadata: {
+      approvalStatus: nextApprovalRequest.status,
+      pendingActionStatus: nextPendingAction?.status,
+    },
+  });
 
   return {
     approvalRequest: nextApprovalRequest,
@@ -257,6 +322,24 @@ export function expireApprovalRequestsForSession(
       pendingAction: nextPendingAction,
       execution: nextExecution,
       message: "Approval request expired.",
+    });
+
+    recordAuthorizationAuditEvent({
+      sessionId,
+      taskId: nextApprovalRequest.taskId,
+      delegatedActionExecutionId: nextApprovalRequest.delegatedActionExecutionId,
+      approvalRequestId: nextApprovalRequest.id,
+      provider: nextApprovalRequest.provider,
+      eventType: "approval_expired",
+      riskLevel: nextApprovalRequest.riskLevel,
+      summary: `Approval expired for ${nextApprovalRequest.title}.`,
+      reason: "The approval window closed before a decision was made.",
+      scopes: nextApprovalRequest.requiredScopes,
+      outcome: "blocked",
+      metadata: {
+        approvalStatus: nextApprovalRequest.status,
+        pendingActionStatus: nextPendingAction?.status,
+      },
     });
   }
 

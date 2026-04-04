@@ -112,6 +112,8 @@ export default function App() {
                 pendingActions={secureRuntimeState.pendingActions}
                 approvalRequests={secureRuntimeState.approvalRequests}
                 stepUpRequirements={secureRuntimeState.stepUpRequirements}
+                authorizationInsights={secureRuntimeState.authorizationInsights}
+                authorizationPatternSummary={secureRuntimeState.authorizationPatternSummary}
                 warnings={secureRuntimeState.warnings}
                 loading={secureRuntimeState.loading}
               />

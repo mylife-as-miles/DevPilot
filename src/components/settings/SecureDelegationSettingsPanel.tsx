@@ -8,6 +8,8 @@ import {
   ShieldCheck,
   Workflow,
 } from "lucide-react";
+import { AuthorizationAuditTimeline } from "../secure-actions/AuthorizationAuditTimeline";
+import { AuthorizationInsightList } from "../secure-actions/AuthorizationInsightList";
 import { SecureRuntimeState } from "../../hooks/useTaskHub";
 import { config } from "../../lib/config/env";
 import {
@@ -200,6 +202,8 @@ export const SecureDelegationSettingsPanel: React.FC<
       stepUpRequirement.status === "required"
       || stepUpRequirement.status === "in_progress",
   ).length;
+  const topInsights = secureRuntimeState.authorizationInsights.slice(0, 6);
+  const latestAuditEvents = secureRuntimeState.authorizationAuditEvents.slice(0, 12);
 
   const refreshRuntime = async () => {
     setIsRefreshingRuntime(true);
@@ -322,6 +326,67 @@ export const SecureDelegationSettingsPanel: React.FC<
       </section>
 
       <section>
+        <div className="mb-1 flex items-center gap-2">
+          <ShieldCheck className="h-5 w-5 text-primary" />
+          <h3 className="text-xl font-bold text-white">Authorization Insights</h3>
+        </div>
+        <p className="mb-6 text-sm text-slate-400">
+          DevPilot explains why actions auto-run, pause for approval, fall back,
+          or stay blocked so the secure agent boundary stays legible.
+        </p>
+
+        <div className="grid gap-4 lg:grid-cols-4">
+          <PatternStatCard
+            label="Auto-allowed"
+            value={String(secureRuntimeState.authorizationPatternSummary.autoAllowedCount)}
+            tone="good"
+          />
+          <PatternStatCard
+            label="Fallback events"
+            value={String(secureRuntimeState.authorizationPatternSummary.fallbackCount)}
+            tone="info"
+          />
+          <PatternStatCard
+            label="Blocked events"
+            value={String(secureRuntimeState.authorizationPatternSummary.blockedCount)}
+            tone="warn"
+          />
+          <PatternStatCard
+            label="Approval policies"
+            value={`${secureRuntimeState.authorizationPatternSummary.approvalRequiredCount}/${secureRuntimeState.authorizationPatternSummary.highRiskPolicyCount} high risk`}
+            tone="neutral"
+          />
+        </div>
+
+        {secureRuntimeState.authorizationPatternSummary.blockedProviders.length > 0 && (
+          <div className="mt-4 rounded-2xl border border-white/[0.06] bg-black/20 px-5 py-4 text-sm text-slate-400">
+            <span className="font-semibold text-white">Most common friction:</span>{" "}
+            {secureRuntimeState.authorizationPatternSummary.blockedProviders
+              .map(
+                (entry) =>
+                  `${entry.provider.toUpperCase()} (${entry.count})`,
+              )
+              .join(" • ")}
+          </div>
+        )}
+
+        <div className="mt-4 grid gap-4 xl:grid-cols-[1.05fr_0.95fr]">
+          <AuthorizationInsightList
+            insights={topInsights}
+            title="Why actions were allowed or blocked"
+            emptyState="Authorization insights will appear here after DevPilot evaluates provider access and policies."
+            maxItems={5}
+          />
+          <AuthorizationAuditTimeline
+            events={latestAuditEvents}
+            title="Audit trail"
+            emptyState="Audit checkpoints will appear here after delegated actions are evaluated."
+            maxItems={7}
+          />
+        </div>
+      </section>
+
+      <section>
         <h3 className="mb-1 text-xl font-bold text-white">Connected Accounts</h3>
         <p className="mb-6 text-sm text-slate-400">
           Provider visibility stays explicit: connection status, relevant scopes,
@@ -329,57 +394,71 @@ export const SecureDelegationSettingsPanel: React.FC<
           fallback.
         </p>
         <div className="space-y-4">
-          {secureRuntimeState.integrations.map((integration) => (
-            <div
-              key={integration.id}
-              className="rounded-2xl border border-border-subtle bg-surface/30 p-5"
-            >
-              <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-                <div>
-                  <div className="flex flex-wrap items-center gap-3">
-                    <h4 className="text-sm font-semibold text-white">
-                      {integration.displayName}
-                    </h4>
-                    <span
-                      className={`rounded-full border px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] ${statusBadgeClass(integration.status)}`}
-                    >
-                      {integration.status.replace(/_/g, " ")}
-                    </span>
-                    <span
-                      className={`rounded-full border px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] ${sourceBadgeClass(integration.source)}`}
-                    >
-                      {sourceLabel(integration.source)}
-                    </span>
+          {secureRuntimeState.integrations.map((integration) => {
+            const providerInsight = secureRuntimeState.authorizationInsights.find(
+              (insight) =>
+                insight.provider === integration.provider &&
+                (insight.category === "provider_status" || insight.category === "fallback"),
+            );
+
+            return (
+              <div
+                key={integration.id}
+                className="rounded-2xl border border-border-subtle bg-surface/30 p-5"
+              >
+                <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                  <div>
+                    <div className="flex flex-wrap items-center gap-3">
+                      <h4 className="text-sm font-semibold text-white">
+                        {integration.displayName}
+                      </h4>
+                      <span
+                        className={`rounded-full border px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] ${statusBadgeClass(integration.status)}`}
+                      >
+                        {integration.status.replace(/_/g, " ")}
+                      </span>
+                      <span
+                        className={`rounded-full border px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] ${sourceBadgeClass(integration.source)}`}
+                      >
+                        {sourceLabel(integration.source)}
+                      </span>
+                    </div>
+                    <p className="mt-2 text-sm text-slate-400">
+                      {integration.accountIdentifier
+                        ? `Connected as ${integration.accountIdentifier}`
+                        : "No provider account is attached yet for delegated actions."}
+                    </p>
+                    <p className="mt-2 text-xs text-slate-500">
+                      {integration.connectedAt
+                        ? `Connected ${formatTimestamp(integration.connectedAt)}`
+                        : "Waiting for provider connection or secure fallback configuration."}
+                    </p>
+                    {providerInsight && (
+                      <div className="mt-3 rounded-xl border border-white/[0.06] bg-black/20 px-4 py-3 text-xs leading-relaxed text-slate-400">
+                        <span className="font-semibold text-white">Security note:</span>{" "}
+                        {providerInsight.summary}
+                      </div>
+                    )}
                   </div>
-                  <p className="mt-2 text-sm text-slate-400">
-                    {integration.accountIdentifier
-                      ? `Connected as ${integration.accountIdentifier}`
-                      : "No provider account is attached yet for delegated actions."}
-                  </p>
-                  <p className="mt-2 text-xs text-slate-500">
-                    {integration.connectedAt
-                      ? `Connected ${formatTimestamp(integration.connectedAt)}`
-                      : "Waiting for provider connection or secure fallback configuration."}
-                  </p>
+
+                  <div className="rounded-xl border border-white/[0.06] bg-black/20 px-4 py-3 text-right text-xs text-slate-400">
+                    Updated {formatTimestamp(integration.updatedAt)}
+                  </div>
                 </div>
 
-                <div className="rounded-xl border border-white/[0.06] bg-black/20 px-4 py-3 text-right text-xs text-slate-400">
-                  Updated {formatTimestamp(integration.updatedAt)}
+                <div className="mt-4 flex flex-wrap gap-2">
+                  {integration.scopes.map((scope) => (
+                    <span
+                      key={scope}
+                      className="rounded-full border border-white/[0.08] bg-white/[0.03] px-2.5 py-1 font-mono text-[11px] text-slate-300"
+                    >
+                      {scope}
+                    </span>
+                  ))}
                 </div>
               </div>
-
-              <div className="mt-4 flex flex-wrap gap-2">
-                {integration.scopes.map((scope) => (
-                  <span
-                    key={scope}
-                    className="rounded-full border border-white/[0.08] bg-white/[0.03] px-2.5 py-1 font-mono text-[11px] text-slate-300"
-                  >
-                    {scope}
-                  </span>
-                ))}
-              </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       </section>
 
@@ -464,6 +543,11 @@ export const SecureDelegationSettingsPanel: React.FC<
             const approvalReason = approvalRequest
               ? parseApprovalReason(approvalRequest)
               : undefined;
+            const actionInsights = secureRuntimeState.authorizationInsights.filter(
+              (insight) =>
+                insight.provider === action.provider &&
+                insight.actionKey === action.actionKey,
+            );
 
             return (
               <div
@@ -546,6 +630,16 @@ export const SecureDelegationSettingsPanel: React.FC<
                       {stepUpRequirement.reason}
                     </div>
                   </div>
+                )}
+
+                {actionInsights.length > 0 && (
+                  <AuthorizationInsightList
+                    insights={actionInsights}
+                    title="Why this action?"
+                    emptyState="No extra policy note for this action."
+                    maxItems={2}
+                    className="mt-4"
+                  />
                 )}
 
                 <div className="mt-5 flex flex-wrap gap-3">
@@ -694,6 +788,23 @@ const MetaChip = ({ label, value }: { label: string; value: string }) => (
     <span className="text-slate-500">{label}</span>
     <span className="ml-2 font-semibold text-slate-200">{value}</span>
   </span>
+);
+
+const PatternStatCard = ({
+  label,
+  value,
+  tone,
+}: {
+  label: string;
+  value: string;
+  tone: "good" | "warn" | "info" | "neutral";
+}) => (
+  <div className="rounded-2xl border border-white/[0.06] bg-black/20 p-4">
+    <div className={`text-[11px] font-semibold uppercase tracking-[0.22em] ${patternToneClass(tone)}`}>
+      {label}
+    </div>
+    <div className="mt-3 text-2xl font-semibold text-white">{value}</div>
+  </div>
 );
 
 const RiskPolicyCard = ({
@@ -1104,6 +1215,19 @@ function executionStatusClass(status: DelegatedActionExecution["status"]): strin
     return "border-rose-500/20 bg-rose-500/10 text-rose-200";
   }
   return "border-white/[0.08] bg-white/[0.03] text-slate-400";
+}
+
+function patternToneClass(tone: "good" | "warn" | "info" | "neutral"): string {
+  if (tone === "good") {
+    return "text-emerald-300";
+  }
+  if (tone === "warn") {
+    return "text-amber-300";
+  }
+  if (tone === "info") {
+    return "text-sky-300";
+  }
+  return "text-slate-500";
 }
 
 function formatTimestamp(timestamp: number): string {

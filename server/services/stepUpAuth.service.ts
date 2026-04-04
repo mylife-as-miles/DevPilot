@@ -16,6 +16,7 @@ import {
   upsertExecution,
 } from "../runtime.store";
 import { RuntimeEnv } from "../runtime.types";
+import { recordAuthorizationAuditEvent } from "./authorizationAudit.service";
 
 export function createStepUpRequirementForPendingAction(options: {
   sessionId: string;
@@ -34,7 +35,7 @@ export function createStepUpRequirementForPendingAction(options: {
 
   const now = options.now ?? Date.now();
 
-  return storeStepUpRequirement(options.sessionId, {
+  const stepUpRequirement = storeStepUpRequirement(options.sessionId, {
     id: `stepup:${crypto.randomUUID()}`,
     taskId: options.pendingAction.taskId,
     pendingActionId: options.pendingAction.id,
@@ -49,6 +50,25 @@ export function createStepUpRequirementForPendingAction(options: {
     createdAt: now,
     updatedAt: now,
   });
+
+  recordAuthorizationAuditEvent({
+    sessionId: options.sessionId,
+    taskId: stepUpRequirement.taskId,
+    delegatedActionExecutionId: stepUpRequirement.delegatedActionExecutionId,
+    provider: stepUpRequirement.provider,
+    eventType: "step_up_required",
+    riskLevel: options.pendingAction.riskLevel,
+    summary: `Step-up required for ${options.pendingAction.title}.`,
+    reason: stepUpRequirement.reason,
+    scopes: options.pendingAction.requiredScopes,
+    outcome: "blocked",
+    metadata: {
+      stepUpTrigger: options.policy.stepUpTrigger,
+      mode: "checkpoint_created",
+    },
+  });
+
+  return stepUpRequirement;
 }
 
 export function startStepUpRequirementForSession(options: {
@@ -98,6 +118,25 @@ export function startStepUpRequirementForSession(options: {
         }),
       )
     : undefined;
+
+  recordAuthorizationAuditEvent({
+    sessionId: options.sessionId,
+    taskId: nextRequirement.taskId,
+    delegatedActionExecutionId: nextRequirement.delegatedActionExecutionId,
+    provider: nextRequirement.provider,
+    eventType: "step_up_started",
+    riskLevel: pendingAction?.riskLevel ?? "high",
+    summary: `Step-up started for ${nextRequirement.actionKey}.`,
+    reason: options.env.liveStepUpMode
+      ? "A stronger authentication checkpoint is now in progress through the live step-up placeholder path."
+      : "A stronger authentication checkpoint is now in progress through the local fallback step-up path.",
+    scopes: pendingAction?.requiredScopes ?? [],
+    outcome: "info",
+    metadata: {
+      status: nextRequirement.status,
+      liveStepUpMode: options.env.liveStepUpMode,
+    },
+  });
 
   return {
     stepUpRequirement: nextRequirement,
@@ -163,6 +202,26 @@ export function completeStepUpRequirementForSession(options: {
         }),
       )
     : undefined;
+
+  recordAuthorizationAuditEvent({
+    sessionId: options.sessionId,
+    taskId: nextRequirement.taskId,
+    delegatedActionExecutionId: nextRequirement.delegatedActionExecutionId,
+    provider: nextRequirement.provider,
+    eventType: "step_up_completed",
+    riskLevel: pendingAction?.riskLevel ?? "high",
+    summary: `Step-up completed for ${nextRequirement.actionKey}.`,
+    reason:
+      nextPendingAction?.status === "approved"
+        ? "Stronger authentication completed, so the action is now ready for execution."
+        : "Stronger authentication completed, but approval is still required before execution.",
+    scopes: pendingAction?.requiredScopes ?? [],
+    outcome: "approved",
+    metadata: {
+      status: nextRequirement.status,
+      pendingActionStatus: nextPendingAction?.status,
+    },
+  });
 
   return {
     stepUpRequirement: nextRequirement,

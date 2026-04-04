@@ -1,5 +1,7 @@
 import { secureActionAdapter } from "../adapters/secureAction.adapter";
 import {
+  authorizationAuditService,
+  authorizationInsightService,
   delegatedActionExecutionService,
   integrationPermissionsService,
   pendingApprovalService,
@@ -31,6 +33,12 @@ export const secureActionService = {
     await pendingApprovalService.replaceApprovalRequests(snapshot.approvalRequests);
     await stepUpRequirementService.replaceStepUpRequirements(
       snapshot.stepUpRequirements,
+    );
+    await authorizationAuditService.replaceAuditEvents(
+      snapshot.authorizationAuditEvents,
+    );
+    await authorizationInsightService.replaceInsights(
+      authorizationInsightService.buildInsights(snapshot),
     );
     return snapshot;
   },

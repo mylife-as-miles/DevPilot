@@ -41,6 +41,7 @@ import {
   completeStepUpRequirementForSession,
   createStepUpRequirementForPendingAction,
 } from "./stepUpAuth.service";
+import { recordAuthorizationAuditEvent } from "./authorizationAudit.service";
 
 export function createPendingActionForSession(options: {
   env: RuntimeEnv;
@@ -104,6 +105,53 @@ export function createPendingActionForSession(options: {
 
   storePendingAction(options.sessionId, action);
   upsertExecution(options.sessionId, execution);
+
+  recordAuthorizationAuditEvent({
+    sessionId: options.sessionId,
+    taskId: action.taskId,
+    delegatedActionExecutionId: execution.id,
+    approvalRequestId: approvalRequest?.id,
+    provider: action.provider,
+    eventType: "scope_evaluated",
+    riskLevel: action.riskLevel,
+    summary: `Evaluated access boundary for ${action.title}.`,
+    reason: `Required scopes: ${action.requiredScopes.join(", ") || "none"}.`,
+    scopes: action.requiredScopes,
+    outcome: "info",
+    metadata: {
+      actionKey: action.actionKey,
+      title: action.title,
+    },
+  });
+
+  recordAuthorizationAuditEvent({
+    sessionId: options.sessionId,
+    taskId: action.taskId,
+    delegatedActionExecutionId: execution.id,
+    approvalRequestId: approvalRequest?.id,
+    provider: action.provider,
+    eventType: "policy_matched",
+    riskLevel: action.riskLevel,
+    summary: `Matched authorization policy for ${action.title}.`,
+    reason: buildPolicyReason({
+      pendingAction: action,
+      policy,
+    }),
+    scopes: action.requiredScopes,
+    outcome:
+      policy.safeToAutoExecute && !policy.requiresApproval && !policy.requiresStepUp
+        ? "allowed"
+        : "info",
+    metadata: {
+      actionKey: action.actionKey,
+      approvalRequired: policy.requiresApproval,
+      stepUpRequired: policy.requiresStepUp,
+      approvalTrigger: policy.approvalTrigger,
+      stepUpTrigger: policy.stepUpTrigger,
+      safeToAutoExecute: policy.safeToAutoExecute,
+    },
+  });
+
   return action;
 }
 
@@ -172,7 +220,9 @@ export async function executePendingActionForSession(options: {
       status: "blocked",
       summary: "Authentication is required before DevPilot can act on your behalf.",
       log: "[SECURE_ACTION] Blocked because the user is not authenticated.",
-    });
+      reason:
+        "The secure runtime needs an authenticated Auth0 session before it can exchange delegated provider access server-side.",
+      });
   }
 
   if (
@@ -187,6 +237,7 @@ export async function executePendingActionForSession(options: {
       status: "awaiting_approval",
       summary: "This action is waiting for explicit approval.",
       log: "[SECURE_ACTION] Execution paused while waiting for approval.",
+      reason: "Human approval must be granted before this delegated action can continue.",
     });
   }
 
@@ -200,6 +251,7 @@ export async function executePendingActionForSession(options: {
       summary: "This action was rejected and cannot be executed.",
       log: "[SECURE_ACTION] Blocked because approval was rejected.",
       completedAt: Date.now(),
+      reason: "The approval request for this delegated action was rejected.",
     });
   }
 
@@ -213,6 +265,7 @@ export async function executePendingActionForSession(options: {
       summary: "This action can no longer run because its approval request expired.",
       log: "[SECURE_ACTION] Blocked because approval expired.",
       completedAt: Date.now(),
+      reason: "The approval window expired before a decision was made.",
     });
   }
 
@@ -226,6 +279,7 @@ export async function executePendingActionForSession(options: {
       summary: "This action was cancelled and will not run.",
       log: "[SECURE_ACTION] Blocked because the approval request was cancelled.",
       completedAt: Date.now(),
+      reason: "The delegated action was cancelled before execution.",
     });
   }
 
@@ -242,6 +296,7 @@ export async function executePendingActionForSession(options: {
       status: "awaiting_step_up",
       summary: "Step-up authentication is required before this action can run.",
       log: "[SECURE_ACTION] Execution paused while waiting for step-up authentication.",
+      reason: "A stronger authentication checkpoint must complete before this high-risk action can continue.",
     });
   }
 
@@ -255,6 +310,7 @@ export async function executePendingActionForSession(options: {
       summary: "Step-up authentication failed, so the action cannot proceed.",
       log: "[SECURE_ACTION] Blocked because step-up authentication failed.",
       completedAt: Date.now(),
+      reason: "The stronger authentication checkpoint failed, so the action remained blocked.",
     });
   }
 
@@ -272,6 +328,25 @@ export async function executePendingActionForSession(options: {
       "[SECURE_ACTION] Governance checks passed. Dispatching provider action.",
     ],
     updatedAt: Date.now(),
+  });
+
+  recordAuthorizationAuditEvent({
+    sessionId: options.session.id,
+    taskId: executingPendingAction.taskId,
+    delegatedActionExecutionId: execution.id,
+    approvalRequestId: approvalRequest?.id,
+    provider: executingPendingAction.provider,
+    eventType: "action_started",
+    riskLevel: executingPendingAction.riskLevel,
+    summary: `Started secure execution for ${executingPendingAction.title}.`,
+    reason: "All required authorization checkpoints passed, so the backend started the delegated provider call.",
+    scopes: executingPendingAction.requiredScopes,
+    outcome: "allowed",
+    metadata: {
+      actionKey: executingPendingAction.actionKey,
+      provider: executingPendingAction.provider,
+      executionMode: execution.mode,
+    },
   });
 
   try {
@@ -304,6 +379,13 @@ export async function executePendingActionForSession(options: {
     };
 
     upsertExecution(options.session.id, completedExecution);
+    recordExecutionOutcomeAudit({
+      sessionId: options.session.id,
+      pendingAction: executingPendingAction,
+      execution: completedExecution,
+      approvalRequest,
+      outcome,
+    });
 
     if (outcome.status === "completed") {
       deletePendingAction(options.session.id, executingPendingAction.id);
@@ -355,6 +437,26 @@ export async function executePendingActionForSession(options: {
     });
 
     upsertExecution(options.session.id, failedExecution);
+    recordAuthorizationAuditEvent({
+      sessionId: options.session.id,
+      taskId: blockedPendingAction.taskId,
+      delegatedActionExecutionId: failedExecution.id,
+      approvalRequestId: approvalRequest?.id,
+      provider: blockedPendingAction.provider,
+      eventType: "action_failed",
+      riskLevel: blockedPendingAction.riskLevel,
+      summary: `Delegated action failed for ${blockedPendingAction.title}.`,
+      reason:
+        error instanceof Error
+          ? error.message
+          : "The delegated action failed unexpectedly.",
+      scopes: blockedPendingAction.requiredScopes,
+      outcome: "failed",
+      metadata: {
+        actionKey: blockedPendingAction.actionKey,
+        mode: failedExecution.mode,
+      },
+    });
     return {
       ok: false,
       pendingAction: blockedPendingAction,
@@ -441,6 +543,7 @@ function finalizeBlockedExecution(
     summary: string;
     log: string;
     completedAt?: number;
+    reason?: string;
   },
 ): SecureActionExecutionResult {
   const nextExecution: DelegatedActionExecution = {
@@ -453,6 +556,28 @@ function finalizeBlockedExecution(
   };
 
   upsertExecution(sessionId, nextExecution);
+  recordAuthorizationAuditEvent({
+    sessionId,
+    taskId: options.pendingAction.taskId,
+    delegatedActionExecutionId: nextExecution.id,
+    approvalRequestId: options.approvalRequest?.id,
+    provider: options.pendingAction.provider,
+    eventType: "action_blocked",
+    riskLevel: options.pendingAction.riskLevel,
+    summary: options.summary,
+    reason: options.reason ?? options.summary,
+    scopes: options.pendingAction.requiredScopes,
+    outcome:
+      options.status === "rejected"
+        ? "rejected"
+        : "blocked",
+    metadata: {
+      status: options.status,
+      approvalStatus: options.pendingAction.approvalStatus,
+      stepUpStatus: options.pendingAction.stepUpStatus,
+    },
+    dedupeKey: `blocked:${nextExecution.id}:${options.status}`,
+  });
   return {
     ok: false,
     pendingAction: options.pendingAction,
@@ -585,4 +710,102 @@ function resolvePolicyForInput(
   }
 
   return policy;
+}
+
+function buildPolicyReason(args: {
+  pendingAction: PendingDelegatedAction;
+  policy: DelegatedActionPolicy;
+}): string {
+  const { pendingAction, policy } = args;
+
+  if (policy.requiresApproval && policy.requiresStepUp) {
+    return (
+      policy.approvalReason
+      ?? policy.stepUpReason
+      ?? `${pendingAction.title} is high risk and must pause for approval plus stronger authentication before execution.`
+    );
+  }
+
+  if (policy.requiresApproval) {
+    return (
+      policy.approvalReason
+      ?? `${pendingAction.title} changes external state, so it requires human approval before execution.`
+    );
+  }
+
+  if (policy.requiresStepUp) {
+    return (
+      policy.stepUpReason
+      ?? `${pendingAction.title} requires stronger authentication before execution.`
+    );
+  }
+
+  return `${pendingAction.title} stays inside the allowed ${policy.riskLevel}-risk delegated boundary.`;
+}
+
+function recordExecutionOutcomeAudit(args: {
+  sessionId: string;
+  pendingAction: PendingDelegatedAction;
+  execution: DelegatedActionExecution;
+  approvalRequest?: ApprovalRequest;
+  outcome: Awaited<ReturnType<typeof dispatchProviderAction>>;
+}): void {
+  const { sessionId, pendingAction, execution, approvalRequest, outcome } = args;
+
+  if (outcome.mode === "fallback") {
+    recordAuthorizationAuditEvent({
+      sessionId,
+      taskId: pendingAction.taskId,
+      delegatedActionExecutionId: execution.id,
+      approvalRequestId: approvalRequest?.id,
+      provider: pendingAction.provider,
+      eventType: "fallback_used",
+      riskLevel: pendingAction.riskLevel,
+      summary: `Secure fallback path used for ${pendingAction.title}.`,
+      reason:
+        outcome.status === "completed"
+          ? "The live delegated path was unavailable, but a protected fallback completed the action safely."
+          : "The live delegated path was unavailable, so DevPilot stayed on a protected fallback boundary.",
+      scopes: pendingAction.requiredScopes,
+      outcome: "fallback",
+      metadata: {
+        status: outcome.status,
+        actionKey: pendingAction.actionKey,
+      },
+      dedupeKey: `fallback:${execution.id}:${outcome.status}`,
+    });
+  }
+
+  const eventType =
+    outcome.status === "completed"
+      ? "action_completed"
+      : outcome.status === "blocked"
+        ? "action_blocked"
+        : "action_failed";
+  const auditOutcome =
+    outcome.status === "completed"
+      ? "allowed"
+      : outcome.status === "blocked"
+        ? "blocked"
+        : "failed";
+
+  recordAuthorizationAuditEvent({
+    sessionId,
+    taskId: pendingAction.taskId,
+    delegatedActionExecutionId: execution.id,
+    approvalRequestId: approvalRequest?.id,
+    provider: pendingAction.provider,
+    eventType,
+    riskLevel: pendingAction.riskLevel,
+    summary: execution.summary,
+    reason: outcome.summary,
+    scopes: pendingAction.requiredScopes,
+    outcome: auditOutcome,
+    metadata: {
+      mode: outcome.mode,
+      status: outcome.status,
+      externalRef: outcome.externalRef,
+      externalUrl: outcome.externalUrl,
+    },
+  });
 }

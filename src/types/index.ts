@@ -229,3 +229,4 @@ export * from './code-review';
 export * from './auth-integrations';
 export * from './delegated-actions';
 export * from './approvals';
+export * from './authorization-audit';

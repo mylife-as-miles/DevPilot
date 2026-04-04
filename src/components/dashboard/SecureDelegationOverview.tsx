@@ -10,6 +10,8 @@ import {
 import {
   ApprovalRequest,
   AuthSessionSnapshot,
+  AuthorizationInsight,
+  AuthorizationPatternSummary,
   ConnectedIntegration,
   DelegatedActionPolicy,
   PendingDelegatedAction,
@@ -23,6 +25,8 @@ interface SecureDelegationOverviewProps {
   pendingActions: PendingDelegatedAction[];
   approvalRequests: ApprovalRequest[];
   stepUpRequirements: StepUpRequirement[];
+  authorizationInsights: AuthorizationInsight[];
+  authorizationPatternSummary: AuthorizationPatternSummary;
   warnings: string[];
   loading?: boolean;
 }
@@ -34,6 +38,8 @@ export const SecureDelegationOverview: React.FC<SecureDelegationOverviewProps> =
   pendingActions,
   approvalRequests,
   stepUpRequirements,
+  authorizationInsights,
+  authorizationPatternSummary,
   warnings,
   loading = false,
 }) => {
@@ -49,6 +55,9 @@ export const SecureDelegationOverview: React.FC<SecureDelegationOverviewProps> =
   const highRiskCount = policies.filter(
     (policy) => policy.riskLevel === "high",
   ).length;
+  const primaryInsight = authorizationInsights.find(
+    (insight) => insight.severity === "important",
+  ) ?? authorizationInsights[0];
 
   return (
     <section className="mt-8">
@@ -136,6 +145,11 @@ export const SecureDelegationOverview: React.FC<SecureDelegationOverviewProps> =
                 <p className="mt-1 text-sm text-slate-400">
                   Pending approvals across {highRiskCount} high-risk delegated actions.
                 </p>
+                {pendingActions.length > 0 && (
+                  <p className="mt-1 text-[11px] text-slate-500">
+                    {pendingActions.length} delegated action{pendingActions.length === 1 ? "" : "s"} currently staged.
+                  </p>
+                )}
               </div>
               <div className="space-y-2 text-right">
                 <div className="rounded-full border border-rose-500/20 bg-rose-500/10 px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.18em] text-rose-300">
@@ -157,6 +171,43 @@ export const SecureDelegationOverview: React.FC<SecureDelegationOverviewProps> =
             <span>{warnings[0]}</span>
           </div>
         )}
+
+        {(primaryInsight || authorizationPatternSummary.generatedAt > 0) && (
+          <div className="mt-4 grid gap-3 lg:grid-cols-[1.1fr_0.9fr]">
+            <div className="rounded-2xl border border-white/[0.06] bg-black/[0.18] px-4 py-3">
+              <div className="text-[11px] font-semibold uppercase tracking-[0.22em] text-slate-500">
+                Why Actions Pause
+              </div>
+              <div className="mt-2 text-sm font-semibold text-white">
+                {primaryInsight?.title ?? "Secure runtime summary"}
+              </div>
+              <p className="mt-1 text-sm leading-relaxed text-slate-400">
+                {primaryInsight?.summary
+                  ?? "Delegated actions stay inside explicit policy, approval, and step-up boundaries."}
+              </p>
+            </div>
+
+            <div className="rounded-2xl border border-white/[0.06] bg-black/[0.18] px-4 py-3">
+              <div className="text-[11px] font-semibold uppercase tracking-[0.22em] text-slate-500">
+                Authorization Pattern
+              </div>
+              <div className="mt-3 flex flex-wrap gap-2">
+                <PatternPill
+                  label="Auto-allowed"
+                  value={String(authorizationPatternSummary.autoAllowedCount)}
+                />
+                <PatternPill
+                  label="Fallback"
+                  value={String(authorizationPatternSummary.fallbackCount)}
+                />
+                <PatternPill
+                  label="Blocked"
+                  value={String(authorizationPatternSummary.blockedCount)}
+                />
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </section>
   );
@@ -172,3 +223,10 @@ const StatusDot = ({ tone }: { tone: "good" | "warn" | "neutral" }) => {
 
   return <span className={`mt-1 inline-flex h-2.5 w-2.5 rounded-full ${toneClass}`} />;
 };
+
+const PatternPill = ({ label, value }: { label: string; value: string }) => (
+  <span className="rounded-full border border-white/[0.08] bg-white/[0.03] px-3 py-1.5 text-[11px] text-slate-300">
+    <span className="text-slate-500">{label}</span>
+    <span className="ml-2 font-semibold text-white">{value}</span>
+  </span>
+);

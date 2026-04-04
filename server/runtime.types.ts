@@ -1,5 +1,6 @@
 import {
   ApprovalRequest,
+  AuthorizationAuditEvent,
   AuthenticatedUserSummary,
   ConnectedIntegrationSource,
   ConnectedIntegrationStatus,
@@ -83,6 +84,11 @@ export interface RuntimeApprovalRequestRecord {
 export interface RuntimeStepUpRequirementRecord {
   sessionId: string;
   stepUpRequirement: StepUpRequirement;
+}
+
+export interface RuntimeAuthorizationAuditEventRecord {
+  sessionId: string;
+  authorizationAuditEvent: AuthorizationAuditEvent;
 }
 
 export interface LoginStateRecord {
