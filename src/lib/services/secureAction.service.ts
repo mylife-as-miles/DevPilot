@@ -2,16 +2,24 @@ import { secureActionAdapter } from "../adapters/secureAction.adapter";
 import {
   delegatedActionExecutionService,
   integrationPermissionsService,
+  pendingApprovalService,
   pendingDelegatedActionService,
-  taskService,
+  stepUpRequirementService,
 } from ".";
 import {
-  DelegatedActionExecution,
+  appendApprovalTransitionTimeline,
+  appendSecureActionExecutionTimeline,
+  appendSecureActionPreparedTimeline,
+  appendStepUpTransitionTimeline,
+} from "../workflows/asyncApproval.workflow";
+import {
+  ApprovalRequestTransitionResult,
   DelegatedActionPreviewInput,
   PendingDelegatedAction,
   PendingDelegatedActionUpdate,
   SecureActionExecutionResult,
   SecureRuntimeSnapshot,
+  StepUpRequirementTransitionResult,
 } from "../../types";
 
 export const secureActionService = {
@@ -20,6 +28,10 @@ export const secureActionService = {
     await integrationPermissionsService.hydrateRuntimeSnapshot(snapshot);
     await pendingDelegatedActionService.replacePendingActions(snapshot.pendingActions);
     await delegatedActionExecutionService.replaceExecutions(snapshot.executions);
+    await pendingApprovalService.replaceApprovalRequests(snapshot.approvalRequests);
+    await stepUpRequirementService.replaceStepUpRequirements(
+      snapshot.stepUpRequirements,
+    );
     return snapshot;
   },
 
@@ -27,20 +39,23 @@ export const secureActionService = {
     input: DelegatedActionPreviewInput,
   ): Promise<PendingDelegatedAction> {
     const pendingAction = await secureActionAdapter.previewDelegatedAction(input);
-    await pendingDelegatedActionService.upsertPendingAction(pendingAction);
+    const snapshot = await this.refreshRuntimeSnapshot();
+    const approvalRequest = pendingAction.approvalRequestId
+      ? snapshot.approvalRequests.find(
+          (request) => request.id === pendingAction.approvalRequestId,
+        )
+      : undefined;
+    const stepUpRequirement = pendingAction.stepUpRequirementId
+      ? snapshot.stepUpRequirements.find(
+          (requirement) => requirement.id === pendingAction.stepUpRequirementId,
+        )
+      : undefined;
 
-    if (pendingAction.taskId) {
-      await taskService.appendAgentMessage({
-        taskId: pendingAction.taskId,
-        sender: "system",
-        content:
-          pendingAction.approvalStatus === "pending"
-            ? `Queued delegated action for approval: ${pendingAction.title}.`
-            : `Prepared delegated action: ${pendingAction.title}.`,
-        kind: pendingAction.approvalStatus === "pending" ? "warning" : "info",
-        timestamp: Date.now(),
-      });
-    }
+    await appendSecureActionPreparedTimeline({
+      pendingAction,
+      approvalRequest,
+      stepUpRequirement,
+    });
 
     return pendingAction;
   },
@@ -54,34 +69,48 @@ export const secureActionService = {
     return pendingAction;
   },
 
+  async approveApprovalRequest(
+    id: string,
+  ): Promise<ApprovalRequestTransitionResult> {
+    const result = await secureActionAdapter.approveApprovalRequest(id);
+    await this.refreshRuntimeSnapshot();
+    await appendApprovalTransitionTimeline(result);
+    return result;
+  },
+
+  async rejectApprovalRequest(
+    id: string,
+  ): Promise<ApprovalRequestTransitionResult> {
+    const result = await secureActionAdapter.rejectApprovalRequest(id);
+    await this.refreshRuntimeSnapshot();
+    await appendApprovalTransitionTimeline(result);
+    return result;
+  },
+
+  async startStepUpRequirement(
+    id: string,
+  ): Promise<StepUpRequirementTransitionResult> {
+    const result = await secureActionAdapter.startStepUpRequirement(id);
+    await this.refreshRuntimeSnapshot();
+    await appendStepUpTransitionTimeline(result);
+    return result;
+  },
+
+  async completeStepUpRequirement(
+    id: string,
+  ): Promise<StepUpRequirementTransitionResult> {
+    const result = await secureActionAdapter.completeStepUpRequirement(id);
+    await this.refreshRuntimeSnapshot();
+    await appendStepUpTransitionTimeline(result);
+    return result;
+  },
+
   async executePendingAction(
     id: string,
   ): Promise<SecureActionExecutionResult> {
     const result = await secureActionAdapter.executePendingAction(id);
-    await delegatedActionExecutionService.upsertExecution(result.execution);
-
-    if (result.pendingAction) {
-      await pendingDelegatedActionService.upsertPendingAction(result.pendingAction);
-    } else {
-      await pendingDelegatedActionService.removePendingAction(id);
-    }
-
-    if (result.execution.taskId) {
-      await appendExecutionMessage(result.execution);
-    }
-
+    await this.refreshRuntimeSnapshot();
+    await appendSecureActionExecutionTimeline(result);
     return result;
   },
 };
-
-async function appendExecutionMessage(
-  execution: DelegatedActionExecution,
-): Promise<void> {
-  await taskService.appendAgentMessage({
-    taskId: execution.taskId!,
-    sender: "system",
-    content: `[${execution.provider.toUpperCase()}] ${execution.summary}`,
-    kind: execution.status === "completed" ? "success" : "warning",
-    timestamp: Date.now(),
-  });
-}

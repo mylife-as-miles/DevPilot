@@ -485,6 +485,8 @@ export async function runPostFixVerificationWorkflow(
           "Medium-risk delegated Slack update with the latest verification outcome.",
         metadata: {
           channelId: config.defaultSlackChannelId,
+          notificationClass: "narrow_status",
+          notificationCategory: "verification_summary",
           text: [
             `DevPilot verification ${finalStatus.toUpperCase()} for "${task.title}".`,
             `Summary: ${comparisonResult.summary}`,
@@ -492,7 +494,7 @@ export async function runPostFixVerificationWorkflow(
             `Confidence: ${Math.round(comparisonResult.confidence * 100)}%`,
           ].join("\n"),
         },
-      });
+      }, { executeImmediatelyWhenSafe: true });
     } else if (config.liveSlackActionMode) {
       await taskService.appendAgentMessage({
         taskId,

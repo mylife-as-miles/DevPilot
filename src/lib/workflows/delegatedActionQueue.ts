@@ -1,16 +1,31 @@
-import { DelegatedActionPreviewInput, PendingDelegatedAction } from "../../types";
+import {
+  DelegatedActionPreviewInput,
+  PendingDelegatedAction,
+  SecureActionExecutionResult,
+} from "../../types";
 import { secureActionService, taskService } from "../services";
 
 export async function queueWorkflowDelegatedAction(
   taskId: string,
   input: Omit<DelegatedActionPreviewInput, "taskId"> &
     Partial<Pick<DelegatedActionPreviewInput, "taskId">>,
-): Promise<PendingDelegatedAction | null> {
+  options?: { executeImmediatelyWhenSafe?: boolean },
+): Promise<PendingDelegatedAction | SecureActionExecutionResult | null> {
   try {
-    return await secureActionService.previewDelegatedAction({
+    const pendingAction = await secureActionService.previewDelegatedAction({
       ...input,
       taskId: input.taskId ?? taskId,
     });
+
+    if (
+      options?.executeImmediatelyWhenSafe &&
+      pendingAction.approvalStatus === "not_required" &&
+      pendingAction.stepUpStatus === "not_required"
+    ) {
+      return await secureActionService.executePendingAction(pendingAction.id);
+    }
+
+    return pendingAction;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     await taskService.appendAgentMessage({

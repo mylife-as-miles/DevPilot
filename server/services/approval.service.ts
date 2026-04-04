@@ -60,7 +60,9 @@ export function createApprovalRequestForPendingAction(options: {
         ?? "This delegated action requires explicit human approval.",
       approvalTrigger: options.policy.approvalTrigger,
       requestedScopes: options.pendingAction.requiredScopes,
-      mode: options.env.liveAsyncAuthorizationMode ? "in_app_fallback" : "in_app",
+      mode: options.env.liveAsyncAuthorizationMode
+        ? "live_async_placeholder"
+        : "in_app_fallback",
     }),
   });
 }

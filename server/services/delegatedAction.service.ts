@@ -8,6 +8,7 @@ import {
   DelegatedActionExecution,
   DelegatedActionExecutionStatus,
   DelegatedActionMetadata,
+  DelegatedActionPolicy,
   DelegatedActionPreviewInput,
   PendingDelegatedAction,
   PendingDelegatedActionUpdate,
@@ -46,15 +47,16 @@ export function createPendingActionForSession(options: {
   sessionId: string;
   input: DelegatedActionPreviewInput;
 }): PendingDelegatedAction {
-  const policy = getDelegatedActionPolicy(
+  const basePolicy = getDelegatedActionPolicy(
     options.input.provider,
     options.input.actionKey,
   );
-  if (!policy) {
+  if (!basePolicy) {
     throw new Error(
       `Unknown delegated action policy for ${options.input.provider}:${options.input.actionKey}.`,
     );
   }
+  const policy = resolvePolicyForInput(basePolicy, options.input);
 
   const now = Date.now();
   let action = createPendingDelegatedAction(options.input, policy, now);
@@ -273,6 +275,7 @@ export async function executePendingActionForSession(options: {
   });
 
   try {
+    const requestMetadata = parseMetadata(executingPendingAction.metadata);
     const outcome = await dispatchProviderAction({
       env: options.env,
       session: options.session,
@@ -287,7 +290,10 @@ export async function executePendingActionForSession(options: {
       logs: [...execution.logs, ...outcome.logs],
       externalRef: outcome.externalRef,
       externalUrl: outcome.externalUrl,
-      metadata: JSON.stringify(outcome.metadata ?? {}),
+      metadata: JSON.stringify({
+        request: requestMetadata,
+        response: outcome.metadata ?? {},
+      }),
       updatedAt: Date.now(),
       completedAt:
         outcome.status === "completed"
@@ -552,4 +558,31 @@ function summarizePendingAction(action: PendingDelegatedAction): string {
   }
 
   return `Prepared delegated action: ${action.title}.`;
+}
+
+function resolvePolicyForInput(
+  policy: DelegatedActionPolicy,
+  input: DelegatedActionPreviewInput,
+): DelegatedActionPolicy {
+  if (
+    input.provider === "slack" &&
+    (input.actionKey === "slack.post_status_message"
+      || input.actionKey === "slack.post_verification_summary") &&
+    input.metadata?.notificationClass === "narrow_status"
+  ) {
+    return {
+      ...policy,
+      riskLevel: "low",
+      requiresApproval: false,
+      requiresStepUp: false,
+      approvalTrigger: "never",
+      stepUpTrigger: "never",
+      canRunInBackgroundBeforeApproval: true,
+      safeToAutoExecute: true,
+      approvalReason:
+        "Narrow engineering status updates can auto-execute when they stay within the configured review channel.",
+    };
+  }
+
+  return policy;
 }

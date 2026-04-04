@@ -13,7 +13,10 @@ import {
 } from "../lib/services";
 import { devpilotFlow } from "../lib/gitlab-duo/flows/devpilot.flow";
 import { runBackgroundCodeReviewDiscoveryWorkflow } from "../lib/workflows/backgroundCodeReviewDiscovery.workflow";
+import { continueSecureActionDemoWorkflow } from "../lib/workflows/secureActionDemo.workflow";
 import {
+    ApprovalRequest,
+    ApprovalRequestTransitionResult,
     AuthSessionSnapshot,
     ConnectedIntegration,
     DelegatedActionExecution,
@@ -24,6 +27,8 @@ import {
     PendingDelegatedAction,
     SecureActionExecutionResult,
     SecureRuntimeMode,
+    StepUpRequirement,
+    StepUpRequirementTransitionResult,
     Task,
 } from "../types";
 
@@ -48,6 +53,8 @@ export interface SecureRuntimeState {
     policies: DelegatedActionPolicy[];
     pendingActions: PendingDelegatedAction[];
     executions: DelegatedActionExecution[];
+    approvalRequests: ApprovalRequest[];
+    stepUpRequirements: StepUpRequirement[];
     runtimeMode: SecureRuntimeMode;
     warnings: string[];
     updatedAt?: number;
@@ -88,6 +95,8 @@ export const useTaskHub = () => {
         policies: [],
         pendingActions: [],
         executions: [],
+        approvalRequests: [],
+        stepUpRequirements: [],
         runtimeMode: "mock",
         warnings: [],
     });
@@ -200,6 +209,8 @@ export const useTaskHub = () => {
             policies: snapshot.policies,
             pendingActions: snapshot.pendingActions,
             executions: snapshot.executions,
+            approvalRequests: snapshot.approvalRequests,
+            stepUpRequirements: snapshot.stepUpRequirements,
             runtimeMode: snapshot.runtimeMode,
             warnings: snapshot.warnings,
             updatedAt: snapshot.updatedAt,
@@ -434,33 +445,67 @@ export const useTaskHub = () => {
         }
     }, [loadSecureRuntimeState]);
 
-    const updatePendingAction = useCallback(async (
+    const approveApprovalRequest = useCallback(async (
         id: string,
-        updates: { approvalStatus?: PendingDelegatedAction["approvalStatus"]; stepUpStatus?: PendingDelegatedAction["stepUpStatus"] },
-    ) => {
+    ): Promise<ApprovalRequestTransitionResult | null> => {
         try {
             setDashboardError(null);
-            const pendingAction = await secureActionService.updatePendingAction(id, updates);
+            const result = await secureActionService.approveApprovalRequest(id);
             await loadSecureRuntimeState();
-            return pendingAction;
+            return result;
         } catch (error) {
             setDashboardError(error instanceof Error ? error.message : String(error));
             return null;
         }
     }, [loadSecureRuntimeState]);
 
-    const approvePendingAction = useCallback(async (id: string) => {
-        return updatePendingAction(id, { approvalStatus: "approved" });
-    }, [updatePendingAction]);
+    const rejectApprovalRequest = useCallback(async (
+        id: string,
+    ): Promise<ApprovalRequestTransitionResult | null> => {
+        try {
+            setDashboardError(null);
+            const result = await secureActionService.rejectApprovalRequest(id);
+            await loadSecureRuntimeState();
+            return result;
+        } catch (error) {
+            setDashboardError(error instanceof Error ? error.message : String(error));
+            return null;
+        }
+    }, [loadSecureRuntimeState]);
 
-    const rejectPendingAction = useCallback(async (id: string) => {
-        return updatePendingAction(id, { approvalStatus: "rejected" });
-    }, [updatePendingAction]);
+    const startStepUpRequirement = useCallback(async (
+        id: string,
+    ): Promise<StepUpRequirementTransitionResult | null> => {
+        try {
+            setDashboardError(null);
+            const result = await secureActionService.startStepUpRequirement(id);
+            await loadSecureRuntimeState();
+            return result;
+        } catch (error) {
+            setDashboardError(error instanceof Error ? error.message : String(error));
+            return null;
+        }
+    }, [loadSecureRuntimeState]);
+
+    const completeStepUpRequirement = useCallback(async (
+        id: string,
+    ): Promise<StepUpRequirementTransitionResult | null> => {
+        try {
+            setDashboardError(null);
+            const result = await secureActionService.completeStepUpRequirement(id);
+            await loadSecureRuntimeState();
+            return result;
+        } catch (error) {
+            setDashboardError(error instanceof Error ? error.message : String(error));
+            return null;
+        }
+    }, [loadSecureRuntimeState]);
 
     const executePendingAction = useCallback(async (id: string): Promise<SecureActionExecutionResult | null> => {
         try {
             setDashboardError(null);
             const result = await secureActionService.executePendingAction(id);
+            await continueSecureActionDemoWorkflow(result);
             await loadSecureRuntimeState();
             return result;
         } catch (error) {
@@ -478,7 +523,11 @@ export const useTaskHub = () => {
             return null;
         }
 
-        if (options?.executeImmediatelyWhenSafe && pendingAction.approvalStatus === "not_required") {
+        if (
+            options?.executeImmediatelyWhenSafe &&
+            pendingAction.approvalStatus === "not_required" &&
+            pendingAction.stepUpStatus === "not_required"
+        ) {
             return await executePendingAction(pendingAction.id);
         }
 
@@ -525,8 +574,10 @@ export const useTaskHub = () => {
         refreshSecureRuntime: loadSecureRuntimeState,
         previewDelegatedAction,
         triggerDelegatedAction,
-        approvePendingAction,
-        rejectPendingAction,
+        approveApprovalRequest,
+        rejectApprovalRequest,
+        startStepUpRequirement,
+        completeStepUpRequirement,
         executePendingAction,
         beginLogin,
         beginLogout,

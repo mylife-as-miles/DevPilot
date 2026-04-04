@@ -1,11 +1,13 @@
 import { config } from "../config/env";
 import { createMockSecureRuntimeSnapshot } from "../secure-actions/catalog";
 import {
+  ApprovalRequestTransitionResult,
   DelegatedActionPreviewInput,
   PendingDelegatedAction,
   PendingDelegatedActionUpdate,
   SecureActionExecutionResult,
   SecureRuntimeSnapshot,
+  StepUpRequirementTransitionResult,
 } from "../../types";
 
 type JsonResponse<T> = {
@@ -100,6 +102,50 @@ export const secureActionAdapter = {
   ): Promise<SecureActionExecutionResult> {
     return requestJson<SecureActionExecutionResult>(
       `/api/secure-runtime/pending-actions/${encodeURIComponent(id)}/execute`,
+      {
+        method: "POST",
+      },
+    );
+  },
+
+  async approveApprovalRequest(
+    id: string,
+  ): Promise<ApprovalRequestTransitionResult> {
+    return requestJson<ApprovalRequestTransitionResult>(
+      `/api/secure-runtime/approvals/${encodeURIComponent(id)}/approve`,
+      {
+        method: "POST",
+      },
+    );
+  },
+
+  async rejectApprovalRequest(
+    id: string,
+  ): Promise<ApprovalRequestTransitionResult> {
+    return requestJson<ApprovalRequestTransitionResult>(
+      `/api/secure-runtime/approvals/${encodeURIComponent(id)}/reject`,
+      {
+        method: "POST",
+      },
+    );
+  },
+
+  async startStepUpRequirement(
+    id: string,
+  ): Promise<StepUpRequirementTransitionResult> {
+    return requestJson<StepUpRequirementTransitionResult>(
+      `/api/secure-runtime/step-up/${encodeURIComponent(id)}/start`,
+      {
+        method: "POST",
+      },
+    );
+  },
+
+  async completeStepUpRequirement(
+    id: string,
+  ): Promise<StepUpRequirementTransitionResult> {
+    return requestJson<StepUpRequirementTransitionResult>(
+      `/api/secure-runtime/step-up/${encodeURIComponent(id)}/complete`,
       {
         method: "POST",
       },

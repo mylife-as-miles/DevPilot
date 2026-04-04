@@ -11,6 +11,15 @@ export const gitlabActionService = {
   async validateConnection(
     context: ProviderActionContext,
   ): Promise<ProviderConnectionResult> {
+    if (!context.env.liveDelegatedActionMode || !context.env.liveGitLabActionMode) {
+      return {
+        provider: "gitlab",
+        status: "not_connected",
+        source: "secure_backend_fallback",
+        logs: ["[GITLAB] Live GitLab delegated action mode is disabled."],
+      };
+    }
+
     const token = context.env.serverTokens.gitlab;
     if (!token) {
       return {
@@ -49,6 +58,15 @@ export const gitlabActionService = {
     actionKey: string,
     context: ProviderActionContext,
   ): Promise<ProviderActionOutcome> {
+    if (!context.env.liveDelegatedActionMode || !context.env.liveGitLabActionMode) {
+      return {
+        mode: "fallback",
+        status: "blocked",
+        summary: "GitLab delegated execution is disabled in this environment.",
+        logs: ["[GITLAB] Live GitLab delegated execution mode is disabled."],
+      };
+    }
+
     const token = context.env.serverTokens.gitlab;
     if (!token) {
       return {
@@ -68,6 +86,8 @@ export const gitlabActionService = {
         return createDraftIssue(context, token);
       case "gitlab.comment_on_mr":
         return commentOnMergeRequest(context, token);
+      case "gitlab.open_draft_pr":
+        return openDraftMergeRequest(context, token);
       default:
         return {
           mode: "fallback",
@@ -198,6 +218,58 @@ async function commentOnMergeRequest(
   };
 }
 
+async function openDraftMergeRequest(
+  context: ProviderActionContext,
+  token: string,
+): Promise<ProviderActionOutcome> {
+  const projectId = requiredString(context.metadata.projectId, "projectId");
+  const sourceBranch = requiredString(context.metadata.sourceBranch, "sourceBranch");
+  const targetBranch = requiredString(context.metadata.targetBranch, "targetBranch");
+  const title = normalizeDraftTitle(requiredString(context.metadata.title, "title"));
+  const description = asOptionalString(context.metadata.description) ?? "";
+  const removeSourceBranch = context.metadata.removeSourceBranch === true;
+
+  const mergeRequest = await gitlabFetch<{
+    iid: number;
+    web_url: string;
+    title: string;
+    source_branch: string;
+    target_branch: string;
+  }>(
+    context.env.gitlabUrl,
+    `/api/v4/projects/${encodeURIComponent(projectId)}/merge_requests`,
+    token,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        source_branch: sourceBranch,
+        target_branch: targetBranch,
+        title,
+        description,
+        remove_source_branch: removeSourceBranch,
+      }),
+    },
+  );
+
+  return {
+    mode: "fallback",
+    status: "completed",
+    summary: `Created draft GitLab merge request !${mergeRequest.iid} for ${sourceBranch} to ${targetBranch}.`,
+    logs: [
+      `[GITLAB] Created draft merge request !${mergeRequest.iid} for ${sourceBranch} -> ${targetBranch}.`,
+    ],
+    externalRef: String(mergeRequest.iid),
+    externalUrl: mergeRequest.web_url,
+    metadata: {
+      iid: mergeRequest.iid,
+      title: mergeRequest.title,
+      webUrl: mergeRequest.web_url,
+      sourceBranch: mergeRequest.source_branch,
+      targetBranch: mergeRequest.target_branch,
+    },
+  };
+}
+
 async function gitlabFetch<T>(
   gitlabUrl: string,
   path: string,
@@ -231,4 +303,8 @@ function requiredString(value: unknown, field: string): string {
 
 function asOptionalString(value: unknown): string | undefined {
   return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+function normalizeDraftTitle(title: string): string {
+  return /^draft:/i.test(title) ? title : `Draft: ${title}`;
 }

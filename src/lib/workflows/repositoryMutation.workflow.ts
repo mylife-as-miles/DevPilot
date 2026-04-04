@@ -378,6 +378,8 @@ export async function runRepositoryMutationWorkflow(
         "Medium-risk delegated Slack update for the newly created merge request.",
       metadata: {
         channelId: config.defaultSlackChannelId,
+        notificationClass: "narrow_status",
+        notificationCategory: "review_ready",
         text: [
           `DevPilot created a review-ready GitLab merge request for "${task.title}".`,
           `MR !${mrResult.data.mergeRequestIid}: ${mrResult.data.webUrl}`,
@@ -386,7 +388,7 @@ export async function runRepositoryMutationWorkflow(
             : "Pipeline was skipped because no CI configuration was detected.",
         ].join("\n"),
       },
-    });
+    }, { executeImmediatelyWhenSafe: true });
   } else if (config.liveSlackActionMode) {
     await taskService.appendAgentMessage({
       taskId,

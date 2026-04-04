@@ -243,6 +243,10 @@ function buildWarnings(args: {
     warnings.push("GitHub delegated actions are disabled for this environment.");
   }
 
+  if (!env.liveGitLabActionMode) {
+    warnings.push("GitLab delegated actions are disabled for this environment.");
+  }
+
   if (!env.liveSlackActionMode) {
     warnings.push("Slack delegated actions are disabled for this environment.");
   }

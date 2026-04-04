@@ -443,6 +443,8 @@ export function createMockSecureRuntimeSnapshot(
     auth0Configured: false,
     liveAuthEnabled: false,
     liveDelegatedActionEnabled: false,
+    liveAsyncAuthorizationEnabled: false,
+    liveStepUpEnabled: false,
     tokenVaultReady: false,
     user: {
       sub: "local-devpilot-user",

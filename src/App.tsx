@@ -64,8 +64,10 @@ export default function App() {
     refreshSecureRuntime,
     previewDelegatedAction,
     triggerDelegatedAction,
-    approvePendingAction,
-    rejectPendingAction,
+    approveApprovalRequest,
+    rejectApprovalRequest,
+    startStepUpRequirement,
+    completeStepUpRequirement,
     executePendingAction,
     beginLogin,
     beginLogout,
@@ -88,7 +90,7 @@ export default function App() {
             <Header
               authSession={secureRuntimeState.session}
               connectedIntegrations={secureRuntimeState.integrations}
-              pendingApprovalCount={secureRuntimeState.pendingActions.filter((action) => action.approvalStatus === "pending").length}
+              pendingApprovalCount={secureRuntimeState.approvalRequests.filter((request) => request.status === "pending").length}
             />
             <main className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
               <DashboardHeroComposer
@@ -108,6 +110,8 @@ export default function App() {
                 integrations={secureRuntimeState.integrations}
                 policies={secureRuntimeState.policies}
                 pendingActions={secureRuntimeState.pendingActions}
+                approvalRequests={secureRuntimeState.approvalRequests}
+                stepUpRequirements={secureRuntimeState.stepUpRequirements}
                 warnings={secureRuntimeState.warnings}
                 loading={secureRuntimeState.loading}
               />
@@ -152,8 +156,10 @@ export default function App() {
             onRefreshSecureRuntime={refreshSecureRuntime}
             onPreviewDelegatedAction={previewDelegatedAction}
             onTriggerDelegatedAction={triggerDelegatedAction}
-            onApprovePendingAction={approvePendingAction}
-            onRejectPendingAction={rejectPendingAction}
+            onApproveApprovalRequest={approveApprovalRequest}
+            onRejectApprovalRequest={rejectApprovalRequest}
+            onStartStepUpRequirement={startStepUpRequirement}
+            onCompleteStepUpRequirement={completeStepUpRequirement}
             onExecutePendingAction={executePendingAction}
             onLogin={beginLogin}
             onLogout={beginLogout}

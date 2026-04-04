@@ -5,8 +5,14 @@ import { sandboxAdapter } from "../../lib/adapters/sandbox.adapter";
 import { gitlabRepositoryAdapter } from "../../lib/adapters/gitlabRepository.adapter";
 import { config } from "../../lib/config/env";
 import {
+    delegatedActionExecutionService,
+    integrationPermissionsService,
     gitlabRepositoryService,
+    pendingApprovalService,
     patchProposalService,
+    pendingDelegatedActionService,
+    secureActionService,
+    stepUpRequirementService,
     taskService,
     verificationService,
     memoryService,
@@ -14,9 +20,14 @@ import {
 } from "../../lib/services";
 import { PatchDiff } from "./PatchDiff";
 import { RunStepsProgress } from "./RunStepsProgress";
+import { SecureActionTaskCard } from "./SecureActionTaskCard";
 import { runUiInspectionWorkflow } from "../../lib/workflows/uiInspection.workflow";
 import { runVerificationPreparationWorkflow } from "../../lib/workflows/verificationPreparation.workflow";
 import { runFollowUpWorkflow, runExecuteCodeFixWorkflow } from "../../lib/workflows";
+import {
+    continueSecureActionDemoWorkflow,
+    startSecureActionDemoWorkflow,
+} from "../../lib/workflows/secureActionDemo.workflow";
 import {
     Task,
 } from "../../types";
@@ -136,12 +147,17 @@ export const TaskDetail: React.FC<TaskDetailProps> = ({
         "diff",
     );
     const [isApproving, setIsApproving] = useState(false);
+    const [isLaunchingSecureDemo, setIsLaunchingSecureDemo] = useState(false);
     const workflowTriggeredRef = useRef(false);
 
     const task = useLiveQuery(() => taskService.getTaskById(taskId), [taskId]);
     const messages = useLiveQuery(() => taskService.getMessagesByTaskId(taskId), [taskId]);
     const run = useLiveQuery(() => taskService.getActiveAgentRun(taskId), [taskId]);
     const memoryHits = useLiveQuery(() => memoryService.getTaskMemoryHits(taskId), [taskId]);
+    const secureIntegrations = useLiveQuery(
+        () => integrationPermissionsService.getConnectedIntegrations(),
+        [],
+    );
     const latestProposal = useLiveQuery(
         () => patchProposalService.getLatestProposalForTask(taskId),
         [taskId],
@@ -156,6 +172,22 @@ export const TaskDetail: React.FC<TaskDetailProps> = ({
     const runSteps = useLiveQuery(
         () => (run?.id ? runService.getRunStepsByRunId(run.id) : Promise.resolve([])),
         [run?.id],
+    );
+    const securePendingActions = useLiveQuery(
+        () => pendingDelegatedActionService.getPendingActionsForTask(taskId),
+        [taskId],
+    );
+    const secureApprovalRequests = useLiveQuery(
+        () => pendingApprovalService.getApprovalRequestsForTask(taskId),
+        [taskId],
+    );
+    const secureStepUpRequirements = useLiveQuery(
+        () => stepUpRequirementService.getStepUpRequirementsForTask(taskId),
+        [taskId],
+    );
+    const secureExecutions = useLiveQuery(
+        () => delegatedActionExecutionService.getExecutionsForTask(taskId),
+        [taskId],
     );
     const mrRecord = useLiveQuery(
         () => gitlabRepositoryService.getMRRecordForTask(taskId),
@@ -218,6 +250,10 @@ export const TaskDetail: React.FC<TaskDetailProps> = ({
 
     useEffect(() => {
         workflowTriggeredRef.current = false;
+    }, [taskId]);
+
+    useEffect(() => {
+        void secureActionService.refreshRuntimeSnapshot().catch(() => { });
     }, [taskId]);
 
     useEffect(() => {
@@ -318,6 +354,98 @@ export const TaskDetail: React.FC<TaskDetailProps> = ({
             await runVerificationPreparationWorkflow(taskId, latestProposal.id);
         } finally {
             setIsApproving(false);
+        }
+    };
+
+    const handleLaunchSecureDemo = async () => {
+        if (!latestProposal || latestProposal.status !== "ready_for_review") {
+            return;
+        }
+
+        setIsLaunchingSecureDemo(true);
+        try {
+            await startSecureActionDemoWorkflow(taskId, latestProposal.id);
+        } catch (error) {
+            await taskService.appendAgentMessage({
+                taskId,
+                sender: "system",
+                content: `Secure handoff demo could not start: ${error instanceof Error ? error.message : String(error)}`,
+                kind: "warning",
+                timestamp: Date.now(),
+            });
+        } finally {
+            setIsLaunchingSecureDemo(false);
+        }
+    };
+
+    const handleApproveApprovalRequest = async (approvalRequestId: string) => {
+        try {
+            await secureActionService.approveApprovalRequest(approvalRequestId);
+        } catch (error) {
+            await taskService.appendAgentMessage({
+                taskId,
+                sender: "system",
+                content: `Approval transition failed: ${error instanceof Error ? error.message : String(error)}`,
+                kind: "warning",
+                timestamp: Date.now(),
+            });
+        }
+    };
+
+    const handleRejectApprovalRequest = async (approvalRequestId: string) => {
+        try {
+            await secureActionService.rejectApprovalRequest(approvalRequestId);
+        } catch (error) {
+            await taskService.appendAgentMessage({
+                taskId,
+                sender: "system",
+                content: `Rejection failed: ${error instanceof Error ? error.message : String(error)}`,
+                kind: "warning",
+                timestamp: Date.now(),
+            });
+        }
+    };
+
+    const handleStartStepUpRequirement = async (stepUpRequirementId: string) => {
+        try {
+            await secureActionService.startStepUpRequirement(stepUpRequirementId);
+        } catch (error) {
+            await taskService.appendAgentMessage({
+                taskId,
+                sender: "system",
+                content: `Step-up start failed: ${error instanceof Error ? error.message : String(error)}`,
+                kind: "warning",
+                timestamp: Date.now(),
+            });
+        }
+    };
+
+    const handleCompleteStepUpRequirement = async (stepUpRequirementId: string) => {
+        try {
+            await secureActionService.completeStepUpRequirement(stepUpRequirementId);
+        } catch (error) {
+            await taskService.appendAgentMessage({
+                taskId,
+                sender: "system",
+                content: `Step-up completion failed: ${error instanceof Error ? error.message : String(error)}`,
+                kind: "warning",
+                timestamp: Date.now(),
+            });
+        }
+    };
+
+    const handleExecuteSecureAction = async (pendingActionId: string) => {
+        try {
+            const result = await secureActionService.executePendingAction(pendingActionId);
+            await continueSecureActionDemoWorkflow(result);
+        } catch (error) {
+            await taskService.appendAgentMessage({
+                taskId,
+                sender: "system",
+                content: `Secure action execution failed: ${error instanceof Error ? error.message : String(error)}`,
+                kind: "warning",
+                timestamp: Date.now(),
+            });
         }
     };
 
@@ -449,6 +577,14 @@ export const TaskDetail: React.FC<TaskDetailProps> = ({
                                 Reject Plan
                             </button>
                             <button
+                                onClick={() => void handleLaunchSecureDemo()}
+                                disabled={isLaunchingSecureDemo}
+                                className="flex items-center gap-2 rounded-lg border border-primary/20 bg-primary/10 px-4 py-2 text-sm font-bold text-primary transition-colors hover:bg-primary/15 disabled:opacity-50"
+                            >
+                                <span className="material-symbols-outlined text-[18px]">shield_lock</span>
+                                {isLaunchingSecureDemo ? "Preparing Secure Demo..." : "Secure Approval Demo"}
+                            </button>
+                            <button
                                 onClick={() => runExecuteCodeFixWorkflow(task.id, latestProposal.id)}
                                 className="flex items-center gap-2 rounded-lg bg-primary px-6 py-2 text-sm font-bold text-background-dark hover:bg-primary/90 transition-all shadow-[0_0_20px_rgba(var(--color-primary),0.3)] hover:shadow-[0_0_30px_rgba(var(--color-primary),0.5)]"
                             >
@@ -550,6 +686,25 @@ export const TaskDetail: React.FC<TaskDetailProps> = ({
                         {isAgentOpen && (
                             <div className="flex-1 space-y-5 overflow-y-auto p-4 custom-scrollbar">
                                 {runSteps && runSteps.length > 0 && <RunStepsProgress steps={runSteps} />}
+                                <SecureActionTaskCard
+                                    pendingActions={securePendingActions || []}
+                                    approvalRequests={secureApprovalRequests || []}
+                                    stepUpRequirements={secureStepUpRequirements || []}
+                                    executions={secureExecutions || []}
+                                    integrations={secureIntegrations || []}
+                                    canLaunchDemo={Boolean(
+                                        latestProposal?.status === "ready_for_review" &&
+                                        !(securePendingActions || []).some((action) => action.actionKey === "gitlab.open_draft_pr") &&
+                                        !isLaunchingSecureDemo
+                                    )}
+                                    isLaunchingDemo={isLaunchingSecureDemo}
+                                    onLaunchDemo={handleLaunchSecureDemo}
+                                    onApproveApprovalRequest={handleApproveApprovalRequest}
+                                    onRejectApprovalRequest={handleRejectApprovalRequest}
+                                    onStartStepUpRequirement={handleStartStepUpRequirement}
+                                    onCompleteStepUpRequirement={handleCompleteStepUpRequirement}
+                                    onExecutePendingAction={handleExecuteSecureAction}
+                                />
                                 {(messages || []).map((message) => {
                                     // Determine styling based on sender role
                                     let icon = "smart_toy";

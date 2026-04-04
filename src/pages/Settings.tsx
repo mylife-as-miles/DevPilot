@@ -1,7 +1,13 @@
 import React, { useEffect, useState } from 'react';
 import { SecureDelegationSettingsPanel } from '../components/settings/SecureDelegationSettingsPanel';
 import { SecureRuntimeState, UserConfig } from '../hooks/useTaskHub';
-import { DelegatedActionPreviewInput, PendingDelegatedAction, SecureActionExecutionResult } from '../types';
+import {
+  ApprovalRequestTransitionResult,
+  DelegatedActionPreviewInput,
+  PendingDelegatedAction,
+  SecureActionExecutionResult,
+  StepUpRequirementTransitionResult,
+} from '../types';
 
 export const Settings = ({
   onBack,
@@ -11,8 +17,10 @@ export const Settings = ({
   onRefreshSecureRuntime,
   onPreviewDelegatedAction,
   onTriggerDelegatedAction,
-  onApprovePendingAction,
-  onRejectPendingAction,
+  onApproveApprovalRequest,
+  onRejectApprovalRequest,
+  onStartStepUpRequirement,
+  onCompleteStepUpRequirement,
   onExecutePendingAction,
   onLogin,
   onLogout,
@@ -27,8 +35,10 @@ export const Settings = ({
     input: DelegatedActionPreviewInput,
     options?: { executeImmediatelyWhenSafe?: boolean }
   ) => Promise<PendingDelegatedAction | SecureActionExecutionResult | null>;
-  onApprovePendingAction: (id: string) => Promise<PendingDelegatedAction | null>;
-  onRejectPendingAction: (id: string) => Promise<PendingDelegatedAction | null>;
+  onApproveApprovalRequest: (id: string) => Promise<ApprovalRequestTransitionResult | null>;
+  onRejectApprovalRequest: (id: string) => Promise<ApprovalRequestTransitionResult | null>;
+  onStartStepUpRequirement: (id: string) => Promise<StepUpRequirementTransitionResult | null>;
+  onCompleteStepUpRequirement: (id: string) => Promise<StepUpRequirementTransitionResult | null>;
   onExecutePendingAction: (id: string) => Promise<SecureActionExecutionResult | null>;
   onLogin: (returnTo?: string) => void;
   onLogout: (returnTo?: string) => void;
@@ -250,8 +260,10 @@ export const Settings = ({
                 onRefreshSecureRuntime={onRefreshSecureRuntime}
                 onPreviewDelegatedAction={onPreviewDelegatedAction}
                 onTriggerDelegatedAction={onTriggerDelegatedAction}
-                onApprovePendingAction={onApprovePendingAction}
-                onRejectPendingAction={onRejectPendingAction}
+                onApproveApprovalRequest={onApproveApprovalRequest}
+                onRejectApprovalRequest={onRejectApprovalRequest}
+                onStartStepUpRequirement={onStartStepUpRequirement}
+                onCompleteStepUpRequirement={onCompleteStepUpRequirement}
                 onExecutePendingAction={onExecutePendingAction}
                 onLogin={onLogin}
                 onLogout={onLogout}

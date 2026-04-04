@@ -8,10 +8,12 @@ import {
   ShieldCheck,
 } from "lucide-react";
 import {
+  ApprovalRequest,
   AuthSessionSnapshot,
   ConnectedIntegration,
   DelegatedActionPolicy,
   PendingDelegatedAction,
+  StepUpRequirement,
 } from "../../types";
 
 interface SecureDelegationOverviewProps {
@@ -19,6 +21,8 @@ interface SecureDelegationOverviewProps {
   integrations: ConnectedIntegration[];
   policies: DelegatedActionPolicy[];
   pendingActions: PendingDelegatedAction[];
+  approvalRequests: ApprovalRequest[];
+  stepUpRequirements: StepUpRequirement[];
   warnings: string[];
   loading?: boolean;
 }
@@ -28,14 +32,19 @@ export const SecureDelegationOverview: React.FC<SecureDelegationOverviewProps> =
   integrations,
   policies,
   pendingActions,
+  approvalRequests,
+  stepUpRequirements,
   warnings,
   loading = false,
 }) => {
   const connectedCount = integrations.filter(
     (integration) => integration.status === "connected",
   ).length;
-  const approvalQueue = pendingActions.filter(
-    (action) => action.approvalStatus === "pending",
+  const approvalQueue = approvalRequests.filter(
+    (request) => request.status === "pending",
+  ).length;
+  const stepUpQueue = stepUpRequirements.filter(
+    (requirement) => requirement.status === "required" || requirement.status === "in_progress",
   ).length;
   const highRiskCount = policies.filter(
     (policy) => policy.riskLevel === "high",
@@ -128,8 +137,15 @@ export const SecureDelegationOverview: React.FC<SecureDelegationOverviewProps> =
                   Pending approvals across {highRiskCount} high-risk delegated actions.
                 </p>
               </div>
-              <div className="rounded-full border border-rose-500/20 bg-rose-500/10 px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.18em] text-rose-300">
-                Server-side gate
+              <div className="space-y-2 text-right">
+                <div className="rounded-full border border-rose-500/20 bg-rose-500/10 px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.18em] text-rose-300">
+                  Server-side gate
+                </div>
+                {stepUpQueue > 0 && (
+                  <div className="text-[11px] font-medium text-amber-300">
+                    {stepUpQueue} step-up checkpoint{stepUpQueue === 1 ? "" : "s"}
+                  </div>
+                )}
               </div>
             </div>
           </article>

@@ -11,12 +11,15 @@ import {
 import { SecureRuntimeState } from "../../hooks/useTaskHub";
 import { config } from "../../lib/config/env";
 import {
+  ApprovalRequest,
+  ApprovalRequestTransitionResult,
   ConnectedIntegration,
   DelegatedActionExecution,
   DelegatedActionPolicy,
   DelegatedActionPreviewInput,
   PendingDelegatedAction,
   SecureActionExecutionResult,
+  StepUpRequirementTransitionResult,
 } from "../../types";
 
 const quickReadTemplates: DelegatedActionPreviewInput[] = [
@@ -99,8 +102,18 @@ interface SecureDelegationSettingsPanelProps {
     input: DelegatedActionPreviewInput,
     options?: { executeImmediatelyWhenSafe?: boolean },
   ) => Promise<PendingDelegatedAction | SecureActionExecutionResult | null>;
-  onApprovePendingAction: (id: string) => Promise<PendingDelegatedAction | null>;
-  onRejectPendingAction: (id: string) => Promise<PendingDelegatedAction | null>;
+  onApproveApprovalRequest: (
+    id: string,
+  ) => Promise<ApprovalRequestTransitionResult | null>;
+  onRejectApprovalRequest: (
+    id: string,
+  ) => Promise<ApprovalRequestTransitionResult | null>;
+  onStartStepUpRequirement: (
+    id: string,
+  ) => Promise<StepUpRequirementTransitionResult | null>;
+  onCompleteStepUpRequirement: (
+    id: string,
+  ) => Promise<StepUpRequirementTransitionResult | null>;
   onExecutePendingAction: (id: string) => Promise<SecureActionExecutionResult | null>;
   onLogin: (returnTo?: string) => void;
   onLogout: (returnTo?: string) => void;
@@ -113,8 +126,10 @@ export const SecureDelegationSettingsPanel: React.FC<
   onRefreshSecureRuntime,
   onPreviewDelegatedAction,
   onTriggerDelegatedAction,
-  onApprovePendingAction,
-  onRejectPendingAction,
+  onApproveApprovalRequest,
+  onRejectApprovalRequest,
+  onStartStepUpRequirement,
+  onCompleteStepUpRequirement,
   onExecutePendingAction,
   onLogin,
   onLogout,
@@ -157,8 +172,33 @@ export const SecureDelegationSettingsPanel: React.FC<
   const connectedCount = secureRuntimeState.integrations.filter(
     (integration) => integration.status === "connected",
   ).length;
-  const pendingApprovalCount = secureRuntimeState.pendingActions.filter(
-    (action) => action.approvalStatus === "pending",
+  const pendingApprovalCount = secureRuntimeState.approvalRequests.filter(
+    (approvalRequest) => approvalRequest.status === "pending",
+  ).length;
+  const approvalRequestsById = useMemo(
+    () =>
+      new Map(
+        secureRuntimeState.approvalRequests.map((approvalRequest) => [
+          approvalRequest.id,
+          approvalRequest,
+        ]),
+      ),
+    [secureRuntimeState.approvalRequests],
+  );
+  const stepUpRequirementsById = useMemo(
+    () =>
+      new Map(
+        secureRuntimeState.stepUpRequirements.map((stepUpRequirement) => [
+          stepUpRequirement.id,
+          stepUpRequirement,
+        ]),
+      ),
+    [secureRuntimeState.stepUpRequirements],
+  );
+  const pendingStepUpCount = secureRuntimeState.stepUpRequirements.filter(
+    (stepUpRequirement) =>
+      stepUpRequirement.status === "required"
+      || stepUpRequirement.status === "in_progress",
   ).length;
 
   const refreshRuntime = async () => {
@@ -227,6 +267,10 @@ export const SecureDelegationSettingsPanel: React.FC<
                 <MetaChip
                   label="Pending approvals"
                   value={String(pendingApprovalCount)}
+                />
+                <MetaChip
+                  label="Step-up gates"
+                  value={String(pendingStepUpCount)}
                 />
                 <MetaChip
                   label="Token Vault ready"
@@ -376,6 +420,13 @@ export const SecureDelegationSettingsPanel: React.FC<
           user's behalf.
         </p>
 
+        <div className="mb-4 rounded-2xl border border-white/[0.06] bg-black/20 px-5 py-4 text-sm leading-relaxed text-slate-400">
+          Golden path: connect GitLab or GitHub plus Slack, queue the delegated
+          repo write, approve the high-risk action, complete step-up if required,
+          then let DevPilot execute the provider call server-side and post the
+          follow-up status.
+        </div>
+
         <ActionGroup
           title="Quick live reads"
           templates={quickReadTemplates}
@@ -401,89 +452,167 @@ export const SecureDelegationSettingsPanel: React.FC<
         />
 
         <div className="mt-4 space-y-4">
-          {secureRuntimeState.pendingActions.map((action) => (
-            <div
-              key={action.id}
-              className="rounded-2xl border border-border-subtle bg-surface/30 p-5"
-            >
-              <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-                <div>
-                  <div className="flex flex-wrap items-center gap-3">
-                    <h4 className="text-sm font-semibold text-white">{action.title}</h4>
-                    <span
-                      className={`rounded-full border px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] ${riskBadgeClass(action.riskLevel)}`}
-                    >
-                      {action.riskLevel} risk
-                    </span>
-                    <span
-                      className={`rounded-full border px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] ${approvalBadgeClass(action.approvalStatus)}`}
-                    >
-                      {action.approvalStatus.replace(/_/g, " ")}
-                    </span>
-                    <span
-                      className={`rounded-full border px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] ${stepUpBadgeClass(action.stepUpStatus)}`}
-                    >
-                      {action.stepUpStatus.replace(/_/g, " ")}
-                    </span>
+          {secureRuntimeState.pendingActions.map((action) => {
+            const approvalRequest = action.approvalRequestId
+              ? approvalRequestsById.get(action.approvalRequestId)
+              : undefined;
+            const stepUpRequirement = action.stepUpRequirementId
+              ? stepUpRequirementsById.get(action.stepUpRequirementId)
+              : undefined;
+            const actionMetadata = parseJsonRecord(action.metadata);
+            const actionTarget = describeActionTarget(actionMetadata);
+            const approvalReason = approvalRequest
+              ? parseApprovalReason(approvalRequest)
+              : undefined;
+
+            return (
+              <div
+                key={action.id}
+                className="rounded-2xl border border-border-subtle bg-surface/30 p-5"
+              >
+                <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                  <div>
+                    <div className="flex flex-wrap items-center gap-3">
+                      <h4 className="text-sm font-semibold text-white">{action.title}</h4>
+                      <span
+                        className={`rounded-full border px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] ${riskBadgeClass(action.riskLevel)}`}
+                      >
+                        {action.riskLevel} risk
+                      </span>
+                      <span
+                        className={`rounded-full border px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] ${approvalBadgeClass(action.approvalStatus)}`}
+                      >
+                        {action.approvalStatus.replace(/_/g, " ")}
+                      </span>
+                      <span
+                        className={`rounded-full border px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] ${stepUpBadgeClass(action.stepUpStatus)}`}
+                      >
+                        {action.stepUpStatus.replace(/_/g, " ")}
+                      </span>
+                      <span
+                        className={`rounded-full border px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] ${lifecycleBadgeClass(action.status)}`}
+                      >
+                        {action.status.replace(/_/g, " ")}
+                      </span>
+                    </div>
+                    <p className="mt-2 text-sm leading-relaxed text-slate-400">
+                      {action.summary}
+                    </p>
+                    <p className="mt-2 text-xs text-slate-500">
+                      {action.provider.toUpperCase()} / {action.actionKey}
+                      {action.taskId ? ` / Task ${action.taskId}` : ""}
+                    </p>
+                    {actionTarget && (
+                      <p className="mt-2 text-xs text-slate-400">{actionTarget}</p>
+                    )}
                   </div>
-                  <p className="mt-2 text-sm leading-relaxed text-slate-400">
-                    {action.summary}
-                  </p>
-                  <p className="mt-2 text-xs text-slate-500">
-                    {action.provider.toUpperCase()} / {action.actionKey}
-                    {action.taskId ? ` / Task ${action.taskId}` : ""}
-                  </p>
+
+                  <div className="text-xs text-slate-500">
+                    Updated {formatTimestamp(action.updatedAt)}
+                  </div>
                 </div>
 
-                <div className="text-xs text-slate-500">
-                  Updated {formatTimestamp(action.updatedAt)}
+                <div className="mt-4 flex flex-wrap gap-2">
+                  {action.requiredScopes.map((scope) => (
+                    <span
+                      key={scope}
+                      className="rounded-full border border-white/[0.08] bg-white/[0.03] px-2.5 py-1 font-mono text-[11px] text-slate-300"
+                    >
+                      {scope}
+                    </span>
+                  ))}
                 </div>
-              </div>
 
-              <div className="mt-4 flex flex-wrap gap-2">
-                {action.requiredScopes.map((scope) => (
-                  <span
-                    key={scope}
-                    className="rounded-full border border-white/[0.08] bg-white/[0.03] px-2.5 py-1 font-mono text-[11px] text-slate-300"
-                  >
-                    {scope}
-                  </span>
-                ))}
-              </div>
-
-              <div className="mt-5 flex flex-wrap gap-3">
-                {action.approvalStatus === "pending" && (
-                  <>
-                    <button
-                      type="button"
-                      onClick={() => void onApprovePendingAction(action.id)}
-                      className="rounded-lg border border-emerald-500/20 bg-emerald-500/10 px-4 py-2 text-sm font-medium text-emerald-200 transition-colors hover:bg-emerald-500/15"
-                    >
-                      Approve
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => void onRejectPendingAction(action.id)}
-                      className="rounded-lg border border-rose-500/20 bg-rose-500/10 px-4 py-2 text-sm font-medium text-rose-200 transition-colors hover:bg-rose-500/15"
-                    >
-                      Reject
-                    </button>
-                  </>
+                {approvalRequest && (
+                  <div className="mt-4 rounded-xl border border-amber-500/15 bg-amber-500/5 px-4 py-3 text-sm text-amber-100/90">
+                    <div className="font-medium text-amber-200">
+                      Approval via {approvalRequest.approvalChannel.replace(/_/g, " ")}
+                    </div>
+                    <div className="mt-1 text-xs leading-relaxed text-amber-100/75">
+                      {approvalReason ?? "Explicit human approval is required before DevPilot can continue."}
+                    </div>
+                    {approvalRequest.expiresAt && (
+                      <div className="mt-2 text-[11px] text-amber-200/75">
+                        Expires {formatTimestamp(approvalRequest.expiresAt)}
+                      </div>
+                    )}
+                  </div>
                 )}
 
-                <button
-                  type="button"
-                  onClick={() => void executeAction(action.id)}
-                  disabled={executingActionId === action.id}
-                  className="rounded-lg border border-border-subtle bg-surface-dark px-4 py-2 text-sm font-medium text-slate-200 transition-colors hover:bg-white/5 disabled:cursor-not-allowed disabled:opacity-60"
-                >
-                  {executingActionId === action.id
-                    ? "Running..."
-                    : "Run through secure boundary"}
-                </button>
+                {stepUpRequirement && (
+                  <div className="mt-4 rounded-xl border border-sky-500/15 bg-sky-500/5 px-4 py-3 text-sm text-sky-100/90">
+                    <div className="font-medium text-sky-200">Step-up checkpoint</div>
+                    <div className="mt-1 text-xs leading-relaxed text-sky-100/75">
+                      {stepUpRequirement.reason}
+                    </div>
+                  </div>
+                )}
+
+                <div className="mt-5 flex flex-wrap gap-3">
+                  {approvalRequest?.status === "pending" && (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => void onApproveApprovalRequest(approvalRequest.id)}
+                        className="rounded-lg border border-emerald-500/20 bg-emerald-500/10 px-4 py-2 text-sm font-medium text-emerald-200 transition-colors hover:bg-emerald-500/15"
+                      >
+                        Approve
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void onRejectApprovalRequest(approvalRequest.id)}
+                        className="rounded-lg border border-rose-500/20 bg-rose-500/10 px-4 py-2 text-sm font-medium text-rose-200 transition-colors hover:bg-rose-500/15"
+                      >
+                        Reject
+                      </button>
+                    </>
+                  )}
+
+                  {stepUpRequirement?.status === "required" && (
+                    <button
+                      type="button"
+                      onClick={() => void onStartStepUpRequirement(stepUpRequirement.id)}
+                      className="rounded-lg border border-sky-500/20 bg-sky-500/10 px-4 py-2 text-sm font-medium text-sky-100 transition-colors hover:bg-sky-500/15"
+                    >
+                      Start step-up
+                    </button>
+                  )}
+
+                  {stepUpRequirement?.status === "in_progress" && (
+                    <button
+                      type="button"
+                      onClick={() => void onCompleteStepUpRequirement(stepUpRequirement.id)}
+                      className="rounded-lg border border-sky-500/20 bg-sky-500/10 px-4 py-2 text-sm font-medium text-sky-100 transition-colors hover:bg-sky-500/15"
+                    >
+                      Complete step-up
+                    </button>
+                  )}
+
+                  <button
+                    type="button"
+                    onClick={() => void executeAction(action.id)}
+                    disabled={
+                      executingActionId === action.id ||
+                      action.approvalStatus === "pending" ||
+                      action.stepUpStatus === "required" ||
+                      action.stepUpStatus === "in_progress"
+                    }
+                    className="rounded-lg border border-border-subtle bg-surface-dark px-4 py-2 text-sm font-medium text-slate-200 transition-colors hover:bg-white/5 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {executingActionId === action.id
+                      ? "Running..."
+                      : action.approvalStatus === "pending"
+                        ? "Awaiting approval"
+                        : action.stepUpStatus === "required"
+                          ? "Awaiting step-up"
+                          : action.stepUpStatus === "in_progress"
+                            ? "Step-up in progress"
+                            : "Run through secure boundary"}
+                  </button>
+                </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
 
           {secureRuntimeState.pendingActions.length === 0 && (
             <div className="rounded-2xl border border-border-subtle bg-surface/20 px-6 py-10 text-center text-slate-500">
@@ -701,62 +830,82 @@ const ActionTemplateCard = ({
   );
 };
 
-const ExecutionCard = ({ execution }: { execution: DelegatedActionExecution }) => (
-  <div className="rounded-2xl border border-border-subtle bg-surface/30 p-5">
-    <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-      <div>
-        <div className="flex flex-wrap items-center gap-3">
-          <h4 className="text-sm font-semibold text-white">{execution.summary}</h4>
-          <span
-            className={`rounded-full border px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] ${executionStatusClass(execution.status)}`}
-          >
-            {execution.status}
-          </span>
-          <span
-            className={`rounded-full border px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] ${
-              execution.mode === "live"
-                ? "border-emerald-500/20 bg-emerald-500/10 text-emerald-200"
-                : "border-sky-500/20 bg-sky-500/10 text-sky-200"
-            }`}
-          >
-            {execution.mode}
-          </span>
-        </div>
-        <p className="mt-2 text-xs text-slate-500">
-          {execution.provider.toUpperCase()} / {execution.actionKey}
-          {execution.taskId ? ` / Task ${execution.taskId}` : ""}
-        </p>
-        <div className="mt-3 flex flex-wrap gap-2">
-          {execution.logs.slice(0, 4).map((log) => (
-            <span
-              key={log}
-              className="rounded-full border border-white/[0.08] bg-white/[0.03] px-2.5 py-1 text-[10px] text-slate-300"
-            >
-              {log}
-            </span>
-          ))}
-        </div>
-        {execution.externalUrl && (
-          <a
-            href={execution.externalUrl}
-            target="_blank"
-            rel="noreferrer"
-            className="mt-4 inline-flex items-center gap-2 text-xs font-medium text-primary transition-colors hover:text-primary/80"
-          >
-            Open provider record
-            <ExternalLink className="h-3.5 w-3.5" />
-          </a>
-        )}
-      </div>
+const ExecutionCard = ({ execution }: { execution: DelegatedActionExecution }) => {
+  const metadata = parseJsonRecord(execution.metadata);
+  const request = parseNestedRecord(metadata.request);
+  const response = parseNestedRecord(metadata.response);
+  const actionTarget = describeActionTarget(request ?? response ?? metadata);
 
-      <div className="text-xs text-slate-500">
-        {execution.completedAt
-          ? `Completed ${formatTimestamp(execution.completedAt)}`
-          : `Updated ${formatTimestamp(execution.updatedAt)}`}
+  return (
+    <div className="rounded-2xl border border-border-subtle bg-surface/30 p-5">
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+        <div>
+          <div className="flex flex-wrap items-center gap-3">
+            <h4 className="text-sm font-semibold text-white">{execution.summary}</h4>
+            <span
+              className={`rounded-full border px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] ${executionStatusClass(execution.status)}`}
+            >
+              {execution.status}
+            </span>
+            <span
+              className={`rounded-full border px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] ${
+                execution.mode === "live"
+                  ? "border-emerald-500/20 bg-emerald-500/10 text-emerald-200"
+                  : "border-sky-500/20 bg-sky-500/10 text-sky-200"
+              }`}
+            >
+              {execution.mode}
+            </span>
+            <span
+              className={`rounded-full border px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] ${approvalBadgeClass(execution.approvalStatus)}`}
+            >
+              {execution.approvalStatus.replace(/_/g, " ")}
+            </span>
+            <span
+              className={`rounded-full border px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] ${stepUpBadgeClass(execution.stepUpStatus)}`}
+            >
+              {execution.stepUpStatus.replace(/_/g, " ")}
+            </span>
+          </div>
+          <p className="mt-2 text-xs text-slate-500">
+            {execution.provider.toUpperCase()} / {execution.actionKey}
+            {execution.taskId ? ` / Task ${execution.taskId}` : ""}
+          </p>
+          {actionTarget && (
+            <p className="mt-2 text-xs text-slate-400">{actionTarget}</p>
+          )}
+          <div className="mt-3 flex flex-wrap gap-2">
+            {execution.logs.slice(0, 4).map((log) => (
+              <span
+                key={log}
+                className="rounded-full border border-white/[0.08] bg-white/[0.03] px-2.5 py-1 text-[10px] text-slate-300"
+              >
+                {log}
+              </span>
+            ))}
+          </div>
+          {execution.externalUrl && (
+            <a
+              href={execution.externalUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="mt-4 inline-flex items-center gap-2 text-xs font-medium text-primary transition-colors hover:text-primary/80"
+            >
+              Open provider record
+              <ExternalLink className="h-3.5 w-3.5" />
+            </a>
+          )}
+        </div>
+
+        <div className="text-xs text-slate-500">
+          {execution.completedAt
+            ? `Completed ${formatTimestamp(execution.completedAt)}`
+            : `Updated ${formatTimestamp(execution.updatedAt)}`}
+        </div>
       </div>
     </div>
-  </div>
-);
+  );
+};
 
 function getTemplateDisabledReason(
   template: DelegatedActionPreviewInput,
@@ -779,6 +928,74 @@ function getTemplateDisabledReason(
   return undefined;
 }
 
+function parseJsonRecord(value?: string): Record<string, unknown> {
+  if (!value) {
+    return {};
+  }
+
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      return parsed as Record<string, unknown>;
+    }
+  } catch {
+    return {};
+  }
+
+  return {};
+}
+
+function parseNestedRecord(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined;
+}
+
+function parseApprovalReason(
+  approvalRequest: ApprovalRequest,
+): string | undefined {
+  const metadata = parseJsonRecord(approvalRequest.metadata);
+  return typeof metadata.reason === "string" ? metadata.reason : undefined;
+}
+
+function describeActionTarget(metadata: Record<string, unknown>): string | undefined {
+  const owner = asNonEmptyString(metadata.owner);
+  const repo = asNonEmptyString(metadata.repo) ?? asNonEmptyString(metadata.repoPath);
+  const sourceBranch = asNonEmptyString(metadata.sourceBranch);
+  const targetBranch = asNonEmptyString(metadata.targetBranch);
+  const channelId = asNonEmptyString(metadata.channelId);
+  const category = asNonEmptyString(metadata.notificationCategory)
+    ?? asNonEmptyString(metadata.notificationClass);
+
+  if (owner && repo) {
+    return sourceBranch && targetBranch
+      ? `Target: ${owner}/${repo} from ${sourceBranch} to ${targetBranch}`
+      : `Target: ${owner}/${repo}`;
+  }
+
+  if (repo) {
+    return sourceBranch && targetBranch
+      ? `Target: ${repo} from ${sourceBranch} to ${targetBranch}`
+      : `Target: ${repo}`;
+  }
+
+  if (sourceBranch && targetBranch) {
+    return `Target branches: ${sourceBranch} to ${targetBranch}`;
+  }
+
+  if (channelId) {
+    return category
+      ? `Target channel: ${channelId} / ${category.replace(/_/g, " ")}`
+      : `Target channel: ${channelId}`;
+  }
+
+  return undefined;
+}
+
+function asNonEmptyString(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim().length > 0 ? value : undefined;
+}
+
 function riskContainerClass(tone: "low" | "medium" | "high"): string {
   if (tone === "low") {
     return "border-emerald-500/15 bg-emerald-500/5";
@@ -799,11 +1016,27 @@ function riskBadgeClass(riskLevel: "low" | "medium" | "high"): string {
   return "border-rose-500/20 bg-rose-500/10 text-rose-200";
 }
 
+function lifecycleBadgeClass(status: PendingDelegatedAction["status"]): string {
+  if (status === "approved") {
+    return "border-emerald-500/20 bg-emerald-500/10 text-emerald-200";
+  }
+  if (status === "awaiting_approval" || status === "awaiting_step_up") {
+    return "border-amber-500/20 bg-amber-500/10 text-amber-200";
+  }
+  if (status === "blocked" || status === "rejected" || status === "expired") {
+    return "border-rose-500/20 bg-rose-500/10 text-rose-200";
+  }
+  if (status === "executing") {
+    return "border-primary/20 bg-primary/10 text-primary";
+  }
+  return "border-white/[0.08] bg-white/[0.03] text-slate-400";
+}
+
 function approvalBadgeClass(status: PendingDelegatedAction["approvalStatus"]): string {
   if (status === "approved" || status === "not_required") {
     return "border-emerald-500/20 bg-emerald-500/10 text-emerald-200";
   }
-  if (status === "rejected") {
+  if (status === "rejected" || status === "expired" || status === "cancelled") {
     return "border-rose-500/20 bg-rose-500/10 text-rose-200";
   }
   return "border-amber-500/20 bg-amber-500/10 text-amber-200";
@@ -812,6 +1045,9 @@ function approvalBadgeClass(status: PendingDelegatedAction["approvalStatus"]): s
 function stepUpBadgeClass(status: PendingDelegatedAction["stepUpStatus"]): string {
   if (status === "completed" || status === "not_required") {
     return "border-emerald-500/20 bg-emerald-500/10 text-emerald-200";
+  }
+  if (status === "failed") {
+    return "border-rose-500/20 bg-rose-500/10 text-rose-200";
   }
   return "border-primary/20 bg-primary/10 text-primary";
 }
@@ -857,6 +1093,9 @@ function executionStatusClass(status: DelegatedActionExecution["status"]): strin
   }
   if (status === "running") {
     return "border-primary/20 bg-primary/10 text-primary";
+  }
+  if (status === "awaiting_approval" || status === "awaiting_step_up" || status === "approved") {
+    return "border-amber-500/20 bg-amber-500/10 text-amber-200";
   }
   if (status === "blocked") {
     return "border-amber-500/20 bg-amber-500/10 text-amber-200";
