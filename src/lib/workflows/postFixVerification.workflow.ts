@@ -12,8 +12,10 @@ import {
   verificationComparisonService,
   verificationService,
 } from "../services";
+import { config } from "../config/env";
 import { memoryService } from "../services/memory.service";
 import { runService } from "../services/run.service";
+import { queueWorkflowDelegatedAction } from "./delegatedActionQueue";
 
 function summarizeOriginalIssue(analysisContent?: string): string {
   if (!analysisContent) {
@@ -175,7 +177,6 @@ export async function runPostFixVerificationWorkflow(
       timestamp: Date.now(),
     });
 
-    const { config } = await import("../config/env");
     const gitlabUrl = task.gitlabProjectWebUrl
       || (task.repo.startsWith("http") ? task.repo : `${config.gitlabUrl}/${task.repo}`);
     if (!gitlabUrl) {
@@ -460,7 +461,7 @@ export async function runPostFixVerificationWorkflow(
     await taskService.appendAgentMessage({
       taskId,
       sender: "system",
-      content: `Verification ${finalStatus.toUpperCase()}: ${comparisonResult.summary}`,
+      content: formatVerificationOutcomeMessage(finalStatus, comparisonResult.summary),
       kind: finalStatus === "passed" ? "success" : "warning",
       timestamp: Date.now(),
     });
@@ -474,6 +475,36 @@ export async function runPostFixVerificationWorkflow(
       metadata: JSON.stringify({ verificationResultId }),
       timestamp: Date.now(),
     });
+
+    if (config.defaultSlackChannelId) {
+      await queueWorkflowDelegatedAction(taskId, {
+        provider: "slack",
+        actionKey: "slack.post_verification_summary",
+        title: "Queue Slack verification summary",
+        summary:
+          "Medium-risk delegated Slack update with the latest verification outcome.",
+        metadata: {
+          channelId: config.defaultSlackChannelId,
+          notificationClass: "narrow_status",
+          notificationCategory: "verification_summary",
+          text: [
+            `DevPilot verification ${finalStatus.toUpperCase()} for "${task.title}".`,
+            `Summary: ${comparisonResult.summary}`,
+            comparisonResult.explanation,
+            `Confidence: ${Math.round(comparisonResult.confidence * 100)}%`,
+          ].join("\n"),
+        },
+      }, { executeImmediatelyWhenSafe: true });
+    } else if (config.liveSlackActionMode) {
+      await taskService.appendAgentMessage({
+        taskId,
+        sender: "system",
+        content:
+          "Slack verification summary was not queued because no default Slack channel is configured.",
+        kind: "info",
+        timestamp: Date.now(),
+      });
+    }
 
     await completeStep(4, `Verification finalized with status: ${finalStatus}.`);
     await runService.updateAgentRunProgress(
@@ -510,4 +541,23 @@ export async function runPostFixVerificationWorkflow(
     await sandboxAdapter.stopBackgroundCommand(serverId).catch(() => { });
     await sandboxAdapter.closeSession(taskId);
   }
+}
+
+function formatVerificationOutcomeMessage(
+  status: "passed" | "failed" | "regression_detected" | "inconclusive",
+  summary: string,
+): string {
+  if (status === "passed") {
+    return `Verification completed; no regression detected. ${summary}`;
+  }
+
+  if (status === "regression_detected") {
+    return `Verification detected a regression. ${summary}`;
+  }
+
+  if (status === "inconclusive") {
+    return `Verification was inconclusive. ${summary}`;
+  }
+
+  return `Verification needs attention. ${summary}`;
 }

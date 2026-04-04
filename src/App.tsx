@@ -8,6 +8,7 @@ import { Routes, Route, useNavigate, useParams, Navigate } from "react-router-do
 import { Header } from "./components/layout/Header";
 import { Footer } from "./components/layout/Footer";
 import { DashboardHeroComposer } from "./components/DashboardHeroComposer";
+import { SecureDelegationOverview } from "./components/dashboard/SecureDelegationOverview";
 import { Tabs } from "./components/dashboard/Tabs";
 import { TaskList } from "./components/dashboard/TaskList";
 import { TaskDetail } from "./components/dashboard/TaskDetail";
@@ -47,9 +48,12 @@ const TaskDetailRoute = ({ projects, branches }: { projects: string[]; branches:
 export default function App() {
   const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState<Task["category"]>("tasks");
+  const [isLaunchingDemo, setIsLaunchingDemo] = useState(false);
 
   const {
     integrationState,
+    secureRuntimeState,
+    demoReadiness,
     selectedBranch,
     setSelectedBranch,
     isCreatingTask,
@@ -59,11 +63,34 @@ export default function App() {
     createTask,
     startCodeReviewIssue,
     handleProjectChange,
+    refreshSecureRuntime,
+    launchHackathonDemo,
+    previewDelegatedAction,
+    triggerDelegatedAction,
+    approveApprovalRequest,
+    rejectApprovalRequest,
+    startStepUpRequirement,
+    completeStepUpRequirement,
+    executePendingAction,
+    beginLogin,
+    beginLogout,
   } = useTaskHub();
 
   const handleCreateTask = async (prompt: string) => {
     const taskId = await createTask(prompt);
     if (taskId) navigate(`/task/${taskId}`);
+  };
+
+  const handleLaunchHackathonDemo = async () => {
+    setIsLaunchingDemo(true);
+    try {
+      const taskId = await launchHackathonDemo();
+      if (taskId) {
+        navigate(`/task/${taskId}`);
+      }
+    } finally {
+      setIsLaunchingDemo(false);
+    }
   };
 
   const projectPath = integrationState.project?.pathWithNamespace || "";
@@ -75,7 +102,11 @@ export default function App() {
         path="/"
         element={
           <div className="min-h-screen bg-background-dark font-display text-slate-100 selection:bg-primary/30">
-            <Header />
+            <Header
+              authSession={secureRuntimeState.session}
+              connectedIntegrations={secureRuntimeState.integrations}
+              pendingApprovalCount={secureRuntimeState.approvalRequests.filter((request) => request.status === "pending").length}
+            />
             <main className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
               <DashboardHeroComposer
                 onSubmit={handleCreateTask}
@@ -87,6 +118,22 @@ export default function App() {
                 branches={branchNames}
                 onProjectChange={handleProjectChange}
                 onBranchChange={setSelectedBranch}
+              />
+
+              <SecureDelegationOverview
+                session={secureRuntimeState.session}
+                integrations={secureRuntimeState.integrations}
+                policies={secureRuntimeState.policies}
+                pendingActions={secureRuntimeState.pendingActions}
+                approvalRequests={secureRuntimeState.approvalRequests}
+                stepUpRequirements={secureRuntimeState.stepUpRequirements}
+                authorizationInsights={secureRuntimeState.authorizationInsights}
+                authorizationPatternSummary={secureRuntimeState.authorizationPatternSummary}
+                warnings={secureRuntimeState.warnings}
+                loading={secureRuntimeState.loading}
+                demoReadiness={demoReadiness}
+                onLaunchDemo={handleLaunchHackathonDemo}
+                isLaunchingDemo={isLaunchingDemo}
               />
 
               <section className="mt-16">
@@ -120,7 +167,24 @@ export default function App() {
       <Route path="/changelog" element={<Changelog onBack={() => navigate("/")} />} />
       <Route
         path="/settings"
-        element={<Settings onBack={() => navigate("/")} userConfig={userConfig} onUpdateConfig={setUserConfig} />}
+        element={(
+          <Settings
+            onBack={() => navigate("/")}
+            userConfig={userConfig}
+            onUpdateConfig={setUserConfig}
+            secureRuntimeState={secureRuntimeState}
+            onRefreshSecureRuntime={refreshSecureRuntime}
+            onPreviewDelegatedAction={previewDelegatedAction}
+            onTriggerDelegatedAction={triggerDelegatedAction}
+            onApproveApprovalRequest={approveApprovalRequest}
+            onRejectApprovalRequest={rejectApprovalRequest}
+            onStartStepUpRequirement={startStepUpRequirement}
+            onCompleteStepUpRequirement={completeStepUpRequirement}
+            onExecutePendingAction={executePendingAction}
+            onLogin={beginLogin}
+            onLogout={beginLogout}
+          />
+        )}
       />
       <Route
         path="/privacy"

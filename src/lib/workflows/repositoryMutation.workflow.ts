@@ -2,8 +2,10 @@ import { taskService, patchProposalService, gitlabRepositoryService } from "../s
 import { gitlabDuoService } from "../services/gitlabDuo.service";
 import { runService } from "../services/run.service";
 import { gitlabRepositoryAdapter } from "../adapters/gitlabRepository.adapter";
+import { config } from "../config/env";
 import { db } from "../db";
 import { GitLabAdapterResult } from "../../types";
+import { queueWorkflowDelegatedAction } from "./delegatedActionQueue";
 
 export interface RepositoryMutationWorkflowResult {
   branchName: string;
@@ -346,6 +348,57 @@ export async function runRepositoryMutationWorkflow(
     kind: "info",
     timestamp: Date.now(),
   });
+
+  await queueWorkflowDelegatedAction(taskId, {
+    provider: "gitlab",
+    actionKey: "gitlab.comment_on_mr",
+    title: `Queue review note for GitLab MR !${mrResult.data.mergeRequestIid}`,
+    summary:
+      "Medium-risk delegated GitLab note that keeps the review-ready handoff behind the secure backend boundary.",
+    metadata: {
+      projectId: task.gitlabProjectId,
+      mergeRequestIid: String(mrResult.data.mergeRequestIid),
+      body: [
+        `DevPilot prepared this merge request for "${proposal.title}".`,
+        proposal.summary,
+        pipelineResult.data.pipelineId > 0
+          ? `Initial validation pipeline: #${pipelineResult.data.pipelineId}.`
+          : "Initial validation pipeline was skipped because this repository has no CI configuration.",
+        `Merge request: ${mrResult.data.webUrl}`,
+      ].join("\n\n"),
+    },
+  });
+
+  if (config.defaultSlackChannelId) {
+    await queueWorkflowDelegatedAction(taskId, {
+      provider: "slack",
+      actionKey: "slack.post_status_message",
+      title: "Queue Slack review-ready status",
+      summary:
+        "Medium-risk delegated Slack update for the newly created merge request.",
+      metadata: {
+        channelId: config.defaultSlackChannelId,
+        notificationClass: "narrow_status",
+        notificationCategory: "review_ready",
+        text: [
+          `DevPilot created a review-ready GitLab merge request for "${task.title}".`,
+          `MR !${mrResult.data.mergeRequestIid}: ${mrResult.data.webUrl}`,
+          pipelineResult.data.pipelineId > 0
+            ? `Pipeline #${pipelineResult.data.pipelineId}: ${pipelineResult.data.webUrl}`
+            : "Pipeline was skipped because no CI configuration was detected.",
+        ].join("\n"),
+      },
+    }, { executeImmediatelyWhenSafe: true });
+  } else if (config.liveSlackActionMode) {
+    await taskService.appendAgentMessage({
+      taskId,
+      sender: "system",
+      content:
+        "Slack delegated notification was not queued because no default Slack channel is configured.",
+      kind: "info",
+      timestamp: Date.now(),
+    });
+  }
 
   return {
     branchName,

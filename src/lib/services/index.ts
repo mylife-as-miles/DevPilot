@@ -90,6 +90,17 @@ export * from './memory.service';
 export * from './timeline.service';
 export * from './codeReviewIssue.service';
 export * from './codeReviewDiscovery.service';
+export * from './integrationPermissions.service';
+export * from './pendingDelegatedAction.service';
+export * from './delegatedActionExecution.service';
+export * from './pendingApproval.service';
+export * from './stepUpRequirement.service';
+export * from './authorizationAudit.service';
+export * from './authorizationInsight.service';
+export * from './delegatedActionPolicy.service';
+export * from './demoScenario.service';
+export * from './demoReadiness.service';
+export * from './secureAction.service';
 
 export * from './gitlabDuo.service';
 export * from './gitlabRepository.service';
