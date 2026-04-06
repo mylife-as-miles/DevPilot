@@ -56,7 +56,7 @@ export const config = {
   sandboxUrl: readEnv("VITE_SANDBOX_URL", "http://localhost:8080"),
   targetAppBaseUrl: readEnv("VITE_TARGET_APP_BASE_URL", "http://localhost:3000"),
   secureActionBffUrl: stripTrailingSlash(
-    readEnv("VITE_SECURE_ACTION_BFF_URL", "http://localhost:3201"),
+    readEnv("VITE_SECURE_ACTION_BFF_URL", ""),
   ),
 
   auth0Domain: readEnv("VITE_AUTH0_DOMAIN"),
