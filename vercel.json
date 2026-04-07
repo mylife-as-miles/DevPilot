@@ -1,6 +1,10 @@
 {
     "rewrites": [
         {
+            "source": "/api/secure-runtime/(.*)",
+            "destination": "/api/secure-runtime/index.ts"
+        },
+        {
             "source": "/(.*)",
             "destination": "/index.html"
         }

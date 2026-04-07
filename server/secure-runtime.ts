@@ -76,11 +76,15 @@ app.use(
   },
 );
 
-app.listen(env.port, () => {
-  console.log(
-    `[secure-runtime] Listening on ${env.secureActionBaseUrl} | liveAuth=${env.liveAuthMode} | liveDelegatedActions=${env.liveDelegatedActionMode}`,
-  );
-});
+export default app;
+
+if (process.env.VITE_RUN_STANDALONE === "true" || process.env.NODE_ENV !== "production") {
+  app.listen(env.port, () => {
+    console.log(
+      `[secure-runtime] Listening on ${env.secureActionBaseUrl} | liveAuth=${env.liveAuthMode} | liveDelegatedActions=${env.liveDelegatedActionMode}`,
+    );
+  });
+}
 
 function resolveAllowedOrigin(request: Request): string {
   const requestOrigin = request.headers.origin;

@@ -72,6 +72,8 @@ export default function App() {
     startStepUpRequirement,
     completeStepUpRequirement,
     executePendingAction,
+    updateConfig,
+    fetchSlackChannels,
     beginLogin,
     beginLogout,
   } = useTaskHub();
@@ -171,7 +173,6 @@ export default function App() {
           <Settings
             onBack={() => navigate("/")}
             userConfig={userConfig}
-            onUpdateConfig={setUserConfig}
             secureRuntimeState={secureRuntimeState}
             onRefreshSecureRuntime={refreshSecureRuntime}
             onPreviewDelegatedAction={previewDelegatedAction}
@@ -183,6 +184,8 @@ export default function App() {
             onExecutePendingAction={executePendingAction}
             onLogin={beginLogin}
             onLogout={beginLogout}
+            fetchSlackChannels={fetchSlackChannels}
+            onUpdateConfig={updateConfig}
           />
         )}
       />

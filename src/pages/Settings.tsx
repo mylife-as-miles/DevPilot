@@ -24,10 +24,11 @@ export const Settings = ({
   onExecutePendingAction,
   onLogin,
   onLogout,
+  fetchSlackChannels,
 }: {
   onBack: () => void;
   userConfig: UserConfig;
-  onUpdateConfig: (config: UserConfig) => void;
+  onUpdateConfig: (updates: Partial<UserConfig>) => void;
   secureRuntimeState: SecureRuntimeState;
   onRefreshSecureRuntime: () => Promise<void>;
   onPreviewDelegatedAction: (input: DelegatedActionPreviewInput) => Promise<PendingDelegatedAction | null>;
@@ -42,6 +43,7 @@ export const Settings = ({
   onExecutePendingAction: (id: string) => Promise<SecureActionExecutionResult | null>;
   onLogin: (returnTo?: string) => void;
   onLogout: (returnTo?: string) => void;
+  fetchSlackChannels: () => Promise<Array<{ id: string; name: string }>>;
 }) => {
   const [activeTab, setActiveTab] = useState('profile');
   const [isSaved, setIsSaved] = useState(false);
@@ -267,6 +269,9 @@ export const Settings = ({
                 onExecutePendingAction={onExecutePendingAction}
                 onLogin={onLogin}
                 onLogout={onLogout}
+                userConfig={userConfig}
+                onUpdateConfig={onUpdateConfig}
+                onFetchSlackChannels={fetchSlackChannels}
               />
             </div>
           )}
