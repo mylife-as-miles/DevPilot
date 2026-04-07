@@ -23,6 +23,9 @@ import {
   SecureActionExecutionResult,
   StepUpRequirementTransitionResult,
 } from "../../types";
+import { UserConfig } from "../../hooks/useTaskHub";
+import { SlackChannelSelector } from "./SlackChannelSelector";
+
 
 const quickReadTemplates: DelegatedActionPreviewInput[] = [
   {
@@ -119,6 +122,9 @@ interface SecureDelegationSettingsPanelProps {
   onExecutePendingAction: (id: string) => Promise<SecureActionExecutionResult | null>;
   onLogin: (returnTo?: string) => void;
   onLogout: (returnTo?: string) => void;
+  userConfig: UserConfig;
+  onUpdateConfig: (updates: Partial<UserConfig>) => void;
+  onFetchSlackChannels: () => Promise<Array<{ id: string; name: string }>>;
 }
 
 export const SecureDelegationSettingsPanel: React.FC<
@@ -135,6 +141,9 @@ export const SecureDelegationSettingsPanel: React.FC<
   onExecutePendingAction,
   onLogin,
   onLogout,
+  userConfig,
+  onUpdateConfig,
+  onFetchSlackChannels,
 }) => {
   const [isRefreshingRuntime, setIsRefreshingRuntime] = useState(false);
   const [executingActionId, setExecutingActionId] = useState<string | null>(null);
@@ -222,6 +231,30 @@ export const SecureDelegationSettingsPanel: React.FC<
       setExecutingActionId(null);
     }
   };
+
+  const resolveTemplate = (template: DelegatedActionPreviewInput) => {
+    if (template.provider === "slack" && userConfig.slackDefaultChannelId) {
+      return {
+        ...template,
+        metadata: {
+          ...template.metadata,
+          channelId: userConfig.slackDefaultChannelId,
+        },
+      };
+    }
+    return template;
+  };
+
+  const resolvedQuickReads = useMemo(
+    () => quickReadTemplates.map(resolveTemplate),
+    [userConfig.slackDefaultChannelId],
+  );
+
+  const resolvedQueuedActions = useMemo(
+    () => queuedActionTemplates.map(resolveTemplate),
+    [userConfig.slackDefaultChannelId],
+  );
+
 
   return (
     <div className="space-y-10">
@@ -500,15 +533,32 @@ export const SecureDelegationSettingsPanel: React.FC<
         </p>
 
         <div className="mb-4 rounded-2xl border border-white/[0.06] bg-black/20 px-5 py-4 text-sm leading-relaxed text-slate-400">
-          Golden path: connect GitLab or GitHub plus Slack, queue the delegated
-          repo write, approve the high-risk action, complete step-up if required,
           then let DevPilot execute the provider call server-side and post the
           follow-up status.
         </div>
 
+        {connectedCount > 0 &&
+          secureRuntimeState.integrations.some(
+            (i) => i.provider === "slack" && i.status === "connected",
+          ) && (
+            <div className="mb-8 rounded-2xl border border-border-subtle bg-surface/30 p-6">
+              <SlackChannelSelector
+                selectedChannelId={userConfig.slackDefaultChannelId}
+                onSelect={(id, name) =>
+                  onUpdateConfig({
+                    slackDefaultChannelId: id,
+                    slackDefaultChannelName: name,
+                  })
+                }
+                onFetchChannels={onFetchSlackChannels}
+                disabled={secureRuntimeState.session?.status !== "authenticated"}
+              />
+            </div>
+          )}
+
         <ActionGroup
           title="Quick live reads"
-          templates={quickReadTemplates}
+          templates={resolvedQuickReads}
           policiesByActionKey={policiesByActionKey}
           integrationsByProvider={integrationsByProvider}
           buttonLabel="Run now"
@@ -521,7 +571,7 @@ export const SecureDelegationSettingsPanel: React.FC<
 
         <ActionGroup
           title="Approval-backed writes"
-          templates={queuedActionTemplates}
+          templates={resolvedQueuedActions}
           policiesByActionKey={policiesByActionKey}
           integrationsByProvider={integrationsByProvider}
           buttonLabel="Queue approval"

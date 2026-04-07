@@ -43,6 +43,8 @@ import { DemoReadinessReport } from "../lib/services/demoReadiness.service";
 export interface UserConfig {
     targetAppBaseUrl: string;
     gitlabDefaultBranch: string;
+    slackDefaultChannelId?: string;
+    slackDefaultChannelName?: string;
 }
 
 export interface IntegrationState {
@@ -143,6 +145,30 @@ export const useTaskHub = () => {
             gitlabDefaultBranch: config.gitlabDefaultBranch || "main",
         };
     });
+
+    const updateConfig = (updates: Partial<UserConfig>) => {
+        const next = { ...userConfig, ...updates };
+        setUserConfig(next);
+        localStorage.setItem(CONFIG_STORAGE_KEY, JSON.stringify(next));
+    };
+
+    const fetchSlackChannels = async () => {
+        try {
+            const response = await fetch(`${config.secureActionBffUrl}/api/slack/channels`, {
+                credentials: "include",
+            });
+            if (!response.ok) {
+                const errorData = await response.json().catch(() => ({}));
+                throw new Error(errorData.error || "Failed to fetch Slack channels");
+            }
+            const { data } = await response.json();
+            return data as Array<{ id: string; name: string }>;
+        } catch (error) {
+            console.error("Slack channel fetch failed", error);
+            throw error;
+        }
+    };
+
 
     const demoReadiness = useMemo<DemoReadinessReport>(() =>
         demoReadinessService.evaluate({
@@ -734,5 +760,7 @@ export const useTaskHub = () => {
         executePendingAction,
         beginLogin,
         beginLogout,
+        updateConfig,
+        fetchSlackChannels,
     };
 };
