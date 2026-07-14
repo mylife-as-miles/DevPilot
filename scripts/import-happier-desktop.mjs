@@ -43,7 +43,9 @@ const excludedDirectoryNames = new Set([
   '.git',
   '.cache',
   '.expo',
+  '.idea',
   '.project',
+  '.vscode',
   'build',
   'coverage',
   'dist',
@@ -52,12 +54,14 @@ const excludedDirectoryNames = new Set([
 ]);
 
 const excludedBasenames = new Set([
+  '.DS_Store',
   '.easignore',
   'eas.json',
   'google-services.json',
   'GoogleService-Info.plist',
   'release-dev.sh',
   'release-production.sh',
+  'Thumbs.db',
 ]);
 
 const excludedSecretExtensions = new Set([

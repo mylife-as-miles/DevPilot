@@ -156,6 +156,7 @@ test('source must be ignored and exclusion rules reject repository and secret pa
   await assert.rejects(runImport({ targetRoot, sourceRoot, dryRun: true, entries: [] }), /must be ignored/i);
 
   assert.equal(isExcludedImportPath('apps/ui/.git/config'), true);
+  assert.equal(isExcludedImportPath('apps/ui/.vscode/launch.json'), true);
   assert.equal(isExcludedImportPath('apps/ui/node_modules/react/index.js'), true);
   assert.equal(isExcludedImportPath('apps/ui/.env.production'), true);
   assert.equal(isExcludedImportPath('apps/ui/sources/app.ts'), false);

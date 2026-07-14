@@ -1,0 +1,804 @@
+import { z } from 'zod'
+import { UsageSchema } from '@/api/usage'
+import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc'
+import { SentFromSchema } from '@happier-dev/protocol'
+import type { ExecutionRunPublicState } from '@happier-dev/protocol'
+import type {
+  AcpConfigOptionOverridesV1,
+  AcpSessionModeOverrideV1,
+  ConnectedServiceBindingsV1,
+  ConnectedServiceMaterializationIdentityV1,
+  DirectSessionsSource,
+  ModelOverrideV1,
+  MachineReplacementReason,
+  PrimaryTurnStatusV1,
+  ContentPublicKeyFingerprint,
+  SessionRollbackRangesV1,
+  SessionUsageLimitRecoveryV1,
+  SessionTerminalMetadata,
+  SessionMessageRole,
+  SessionContinuationRecoveryV1,
+} from '@happier-dev/protocol'
+import {
+  ContentPublicKeyFingerprintSchema,
+  MachineInstallationPublicKeySchema,
+  MachineInstallationProofV1Schema,
+  MachineReplacementReasonSchema,
+} from '@happier-dev/protocol'
+import { SESSION_PERMISSION_MODES, createSessionPermissionModeSchema } from '@happier-dev/protocol'
+import { SessionStoredMessageContentSchema, type SessionStoredMessageContent } from '@happier-dev/protocol'
+
+export {
+  EphemeralUpdateSchema,
+  MessageAckResponseSchema,
+  SessionEndAckResponseSchema,
+  UpdateMetadataAckResponseSchema,
+  UpdateStateAckResponseSchema,
+} from '@happier-dev/protocol/updates'
+
+import {
+  SessionBroadcastContainerSchema,
+  UpdateBodySchema as ProtocolUpdateBodySchema,
+  UpdateContainerSchema as ProtocolUpdateContainerSchema,
+} from '@happier-dev/protocol/updates'
+import type {
+  EphemeralUpdate,
+  MessageAckResponse,
+  SessionEndAckResponse,
+  SessionBroadcastContainer,
+  UpdateBody as ProtocolUpdateBody,
+  UpdateContainer as ProtocolUpdateContainer,
+  UpdateMetadataAckResponse,
+  UpdateStateAckResponse,
+} from '@happier-dev/protocol/updates'
+
+/**
+ * Permission mode values - includes both Claude and Codex modes
+ * Must match MessageMetaSchema.permissionMode enum values
+ *
+ * Claude modes: default, acceptEdits, bypassPermissions, plan
+ * Codex modes: read-only, safe-yolo, yolo
+ *
+ * When calling Claude SDK, Codex modes are mapped at the SDK boundary:
+ * - yolo → bypassPermissions
+ * - safe-yolo → auto
+ * - read-only → dontAsk
+ */
+export const PERMISSION_MODES = SESSION_PERMISSION_MODES
+
+const CODEX_GEMINI_NON_DEFAULT_PERMISSION_MODES = ['read-only', 'safe-yolo', 'yolo'] as const
+export const CODEX_GEMINI_PERMISSION_MODES = ['default', ...CODEX_GEMINI_NON_DEFAULT_PERMISSION_MODES] as const
+
+export type PermissionMode = (typeof PERMISSION_MODES)[number]
+
+export function isPermissionMode(value: string): value is PermissionMode {
+  return PERMISSION_MODES.includes(value as PermissionMode)
+}
+
+export type CodexGeminiPermissionMode = (typeof CODEX_GEMINI_PERMISSION_MODES)[number]
+
+export function isCodexGeminiPermissionMode(value: PermissionMode): value is CodexGeminiPermissionMode {
+  return (CODEX_GEMINI_PERMISSION_MODES as readonly string[]).includes(value)
+}
+
+// Codex supports the Codex/Gemini subset, plus bypassPermissions as an alias for yolo/full access.
+export const CODEX_PERMISSION_MODES = [
+  'default',
+  'read-only',
+  'safe-yolo',
+  'yolo',
+  'bypassPermissions',
+] as const
+
+export type CodexPermissionMode = (typeof CODEX_PERMISSION_MODES)[number]
+
+export function isCodexPermissionMode(value: PermissionMode): value is CodexPermissionMode {
+  return (CODEX_PERMISSION_MODES as readonly string[]).includes(value)
+}
+
+export type UpdateReadCursorPayload =
+  | { sid: string, lastViewedSessionSeq: number, operation?: undefined }
+  | { sid: string, operation: 'mark-read' | 'mark-unread', lastViewedSessionSeq?: number }
+
+export type UpdateReadCursorAckResponse = {
+  result: 'success' | 'forbidden' | 'error',
+  lastViewedSessionSeq?: number,
+  didChange?: boolean,
+  readState?: 'read' | 'unread' | 'empty',
+}
+
+/**
+ * Usage data type from Claude
+ */
+export type Usage = z.infer<typeof UsageSchema>
+
+/**
+ * Session message content envelopes
+ */
+export const SessionMessageContentSchema = SessionStoredMessageContentSchema
+export type SessionMessageContent = SessionStoredMessageContent
+
+/**
+ * Update events
+ */
+export const UpdateBodySchema = ProtocolUpdateBodySchema
+export type UpdateBody = ProtocolUpdateBody
+
+export const UpdateSchema = ProtocolUpdateContainerSchema
+export type Update = ProtocolUpdateContainer
+
+export type UpdateMachineBody = Extract<Update['body'], { t: 'update-machine' }>
+
+export const SessionBroadcastSchema = SessionBroadcastContainerSchema
+export type SessionBroadcast = SessionBroadcastContainer
+
+export interface SocketRpcRequestPayload {
+  method: string
+  params: unknown
+}
+
+export interface SocketRpcCallPayload extends SocketRpcRequestPayload {
+  timeoutMs?: number
+}
+
+export interface SocketRpcCallResponse {
+  ok: boolean
+  result?: unknown
+  error?: string
+  errorCode?: string
+}
+
+/**
+ * Socket events from server to client
+ */
+export interface ServerToClientEvents {
+  update: (data: Update) => void
+  session: (data: SessionBroadcast) => void
+  [SOCKET_RPC_EVENTS.REQUEST]: (data: SocketRpcRequestPayload, callback: (response: unknown) => void) => void
+  [SOCKET_RPC_EVENTS.REGISTERED]: (data: { method: string }) => void
+  [SOCKET_RPC_EVENTS.UNREGISTERED]: (data: { method: string }) => void
+  [SOCKET_RPC_EVENTS.ERROR]: (data: { type: string, error: string }) => void
+  ephemeral: (data: EphemeralUpdate) => void
+  auth: (data: { success: boolean, user: string }) => void
+  error: (data: { message: string }) => void
+}
+
+
+/**
+ * Socket events from client to server
+ */
+export interface ClientToServerEvents {
+  message: (
+    data: { sid: string, message: string | SessionMessageContent, localId?: string | null, sidechainId?: string | null, echoToSender?: boolean, messageRole?: SessionMessageRole },
+    cb?: (answer: MessageAckResponse) => void
+  ) => void
+  'session-alive': (data: {
+    sid: string;
+    time: number;
+    thinking: boolean;
+    mode?: 'local' | 'remote';
+  }) => void
+  'session-end': (data: { sid: string, time: number }, cb?: (answer: SessionEndAckResponse) => void) => void,
+  'pending-materialize-next': (data: { sid: string; pendingVersion?: number }, cb?: (answer: {
+    ok: boolean;
+    didMaterialize?: boolean;
+    didWrite?: boolean;
+    pendingCount?: number;
+    pendingVersion?: number;
+    message?: {
+      id?: string;
+      seq?: number;
+      localId?: string;
+      messageRole?: SessionMessageRole;
+      content?: SessionMessageContent;
+      createdAt?: number;
+      updatedAt?: number;
+    };
+    error?: string;
+  }) => void) => void,
+  'execution-run-updated': (data: {
+    sid: string;
+    run: ExecutionRunPublicState;
+  }) => void
+  'transcript-stream-segment': (data: {
+    sid: string;
+    message: {
+      localId: string;
+      messageRole?: SessionMessageRole | null;
+      sidechainId?: string | null;
+      content: string | SessionMessageContent;
+      createdAt: number;
+      updatedAt: number;
+    };
+  }) => void
+  'update-metadata': (data: { sid: string, expectedVersion: number, metadata: string }, cb: (answer: UpdateMetadataAckResponse) => void) => void,
+  'update-state': (data: {
+    sid: string,
+    expectedVersion: number,
+    agentState: string | null,
+    activitySummaryV1?: {
+      pendingPermissionRequestCount: number,
+      pendingUserActionRequestCount: number,
+    },
+  }, cb: (answer: UpdateStateAckResponse) => void) => void,
+  'update-read-cursor': (data: UpdateReadCursorPayload, cb: (answer: UpdateReadCursorAckResponse) => void) => void,
+  'ping': (callback: () => void) => void
+  [SOCKET_RPC_EVENTS.REGISTER]: (data: { method: string }) => void
+  [SOCKET_RPC_EVENTS.UNREGISTER]: (data: { method: string }) => void
+  [SOCKET_RPC_EVENTS.CALL]: (data: SocketRpcCallPayload, callback: (response: SocketRpcCallResponse) => void) => void
+  'usage-report': (data: {
+    key: string
+    sessionId: string
+    tokens: {
+      total: number
+      [key: string]: number
+    }
+    cost: {
+      total: number
+      [key: string]: number
+    }
+  }) => void
+}
+
+/**
+ * Session information
+ */
+type SessionSharedFields = Readonly<{
+  id: string;
+  seq: number;
+  initialTranscriptAfterSeq?: number;
+  metadata: Metadata;
+  metadataVersion: number;
+  agentState: AgentState | null;
+  agentStateVersion: number;
+  pendingCount?: number;
+  pendingVersion?: number;
+  latestTurnStatus?: PrimaryTurnStatusV1 | null;
+  latestTurnStatusObservedAt?: number | null;
+}>;
+
+export type Session =
+  | (SessionSharedFields & Readonly<{ encryptionMode: 'plain' }>)
+  | (SessionSharedFields & Readonly<{ encryptionMode: 'e2ee'; encryptionKey: Uint8Array; encryptionVariant: 'legacy' | 'dataKey' }>);
+
+/**
+ * Machine metadata - static information (rarely changes)
+ */
+export const MachineMetadataSchema = z.object({
+  host: z.string(),
+  platform: z.string(),
+  happyCliVersion: z.string(),
+  homeDir: z.string(),
+  happyHomeDir: z.string(),
+  happyLibDir: z.string()
+})
+
+export type MachineMetadata = z.infer<typeof MachineMetadataSchema>
+
+export const MachineRegistrationIdentitySchema = z.object({
+  installationId: z.string().trim().min(1),
+  installationPublicKey: MachineInstallationPublicKeySchema,
+  installationProof: MachineInstallationProofV1Schema,
+  replacesMachineId: z.string().trim().min(1).optional(),
+  replacementReason: MachineReplacementReasonSchema.optional(),
+  contentPublicKeyFingerprint: ContentPublicKeyFingerprintSchema.optional(),
+  replacementCandidateAccountId: z.string().trim().min(1).optional(),
+});
+
+export type MachineRegistrationIdentity = Readonly<
+  Omit<z.infer<typeof MachineRegistrationIdentitySchema>, 'replacementReason' | 'contentPublicKeyFingerprint'>
+  & {
+    replacementReason?: MachineReplacementReason;
+    contentPublicKeyFingerprint?: ContentPublicKeyFingerprint;
+  }
+>
+
+/**
+ * Daemon state - dynamic runtime information (frequently updated)
+ */
+export const DaemonStateSchema = z.object({
+  status: z.union([
+    z.enum(['running', 'shutting-down']),
+    z.string() // Forward compatibility
+  ]),
+  pid: z.number().optional(),
+  httpPort: z.number().optional(),
+  startedAt: z.number().optional(),
+  shutdownRequestedAt: z.number().optional(),
+  shutdownSource:
+    z.union([
+      z.enum(['mobile-app', 'cli', 'os-signal', 'unknown']),
+      z.string() // Forward compatibility
+    ]).optional()
+})
+
+export type DaemonState = z.infer<typeof DaemonStateSchema>
+
+export type Machine = {
+  id: string,
+  encryptionKey: Uint8Array;
+  encryptionVariant: 'legacy' | 'dataKey';
+  metadata: MachineMetadata | null,
+  metadataVersion: number,
+  daemonState: DaemonState | null,
+  daemonStateVersion: number,
+}
+
+/**
+ * Session message from API
+ */
+export const SessionMessageSchema = z.object({
+  content: SessionMessageContentSchema,
+  createdAt: z.number(),
+  id: z.string(),
+  localId: z.string().nullable(),
+  seq: z.number(),
+  sidechainId: z.string().nullable(),
+  updatedAt: z.number()
+}).passthrough()
+
+export type SessionMessage = z.infer<typeof SessionMessageSchema>
+
+/**
+ * Message metadata schema
+ */
+export const MessageMetaSchema = z.object({
+  sentFrom: SentFromSchema.optional(), // Source identifier
+  /**
+   * High-level origin of the message. This is used to prevent reliability features
+   * (ACK, retries, local mirroring) from accidentally turning self-sent CLI writes
+   * into inbound "user prompt" events.
+   *
+   * Forward-compatible: unknown strings are allowed.
+   */
+  source: z.union([z.enum(['cli', 'ui']), z.string()]).optional(),
+  permissionMode: createSessionPermissionModeSchema(z).optional(), // Permission mode for this message
+  model: z.string().nullable().optional(), // Model name for this message (null = reset)
+  fallbackModel: z.string().nullable().optional(), // Fallback model for this message (null = reset)
+  customSystemPrompt: z.string().nullable().optional(), // Custom system prompt for this message (null = reset)
+  appendSystemPrompt: z.string().nullable().optional(), // Append to system prompt for this message (null = reset)
+  allowedTools: z.array(z.string()).nullable().optional(), // Allowed tools for this message (null = reset)
+  disallowedTools: z.array(z.string()).nullable().optional() // Disallowed tools for this message (null = reset)
+}).passthrough()
+
+export type MessageMeta = z.infer<typeof MessageMetaSchema>
+
+/**
+ * API response types
+ */
+export const CreateSessionResponseSchema = z.object({
+  session: z.object({
+    id: z.string(),
+    tag: z.string(),
+    seq: z.number(),
+    createdAt: z.number(),
+    updatedAt: z.number(),
+    metadata: z.string(),
+    metadataVersion: z.number(),
+    agentState: z.string().nullable(),
+    agentStateVersion: z.number(),
+    dataEncryptionKey: z.string().nullable().optional(),
+  }).passthrough(),
+})
+
+export type CreateSessionResponse = z.infer<typeof CreateSessionResponseSchema>
+
+export const UserMessageSchema = z.object({
+  role: z.literal('user'),
+  content: z.object({
+    type: z.literal('text'),
+    text: z.string()
+  }).passthrough(),
+  /**
+   * Server-created timestamp for this message (ms since epoch).
+   *
+   * This is *not* part of the encrypted message body; it is attached by the transport layer
+   * so consumers (CLI backends) can make timestamped precedence decisions (e.g. permissions).
+   */
+  createdAt: z.number().optional(),
+  localId: z.string().nullish().optional(),
+  localKey: z.string().optional(), // Mobile messages include this
+  meta: MessageMetaSchema.optional()
+}).passthrough()
+
+export type UserMessage = z.infer<typeof UserMessageSchema>
+
+export const AgentMessageSchema = z.object({
+  role: z.literal('agent'),
+  content: z.object({
+    type: z.literal('output'),
+    data: z.any()
+  }).passthrough(),
+  meta: MessageMetaSchema.optional()
+}).passthrough()
+
+export type AgentMessage = z.infer<typeof AgentMessageSchema>
+
+export const MessageContentSchema = z.union([UserMessageSchema, AgentMessageSchema])
+
+export type MessageContent = z.infer<typeof MessageContentSchema>
+
+export type DirectSessionMetadataV1 = {
+  v: 1,
+  providerId: string,
+  machineId: string,
+  remoteSessionId: string,
+  source: DirectSessionsSource,
+  linkedAtMs: number,
+  lastKnownActivityAtMs?: number,
+  followPolicyV1?: {
+    v: 1,
+    policy: 'attached_only' | 'background_follow',
+    updatedAtMs?: number,
+  },
+  codexBackendMode?: 'mcp' | 'acp' | 'appServer',
+  agentRuntimeDescriptorV1?: unknown,
+};
+
+export type ExternalHistoryImportMetadataV1 = {
+  v: 1,
+  providerId: string,
+  remoteSessionId: string,
+  importedAtMs: number,
+  source: DirectSessionsSource,
+};
+
+export type SessionHandoffMetadataV1 = {
+  v: 1,
+  sourceMachineId: string,
+  targetMachineId: string,
+  providerId: string,
+  sessionStorageBefore: 'direct' | 'persisted',
+  sessionStorageAfter: 'direct' | 'persisted',
+  transportStrategy: 'direct_peer' | 'server_routed_stream',
+  completedAtMs: number,
+};
+
+export type Metadata = {
+  path: string,
+  host: string,
+  version?: string,
+  name?: string,
+  os?: string,
+  /**
+   * Terminal/attach metadata for this Happy session (non-secret).
+   * Used by the UI (Session Details) and CLI attach flows.
+   */
+  terminal?: SessionTerminalMetadata,
+  /**
+   * Session-scoped profile identity (non-secret).
+   * Used for display/debugging across devices; runtime behavior is still driven by env vars at spawn.
+   * Null indicates "no profile".
+   */
+  profileId?: string | null,
+  summary?: {
+    text: string,
+    updatedAt: number
+  },
+  machineId?: string,
+  claudeSessionId?: string, // Claude Code session ID
+  claudeTranscriptPath?: string | null, // Claude Code transcript path (hooks)
+  claudeLastCheckpointId?: string | null, // Claude SDK file checkpoint UUID (remote)
+  claudeLastAssistantUuid?: string | null, // Claude SDK assistant message UUID (resume anchoring)
+  codexSessionId?: string, // Codex session/conversation ID (uuid)
+  codexBackendMode?: 'mcp' | 'acp' | 'appServer',
+  agentRuntimeDescriptorV1?: unknown,
+  geminiSessionId?: string, // Gemini ACP session ID (opaque)
+  opencodeSessionId?: string, // OpenCode ACP session ID (opaque)
+  opencodeBackendMode?: 'server' | 'acp',
+  opencodeServerBaseUrl?: string,
+  opencodeServerBaseUrlExplicit?: true,
+  directSessionV1?: DirectSessionMetadataV1,
+  directSessionAttentionV1?: {
+    v: 1,
+    observedProgressToken?: string,
+    viewedProgressToken?: string,
+    observedAtMs?: number,
+    viewedAtMs?: number,
+  },
+  externalHistoryImportV1?: ExternalHistoryImportMetadataV1,
+  handoffV1?: SessionHandoffMetadataV1,
+  auggieSessionId?: string, // Auggie ACP session ID (opaque)
+  qwenSessionId?: string, // Qwen Code ACP session ID (opaque)
+  kimiSessionId?: string, // Kimi ACP session ID (opaque)
+  kiloSessionId?: string, // Kilo ACP session ID (opaque)
+  piSessionId?: string, // Pi RPC session ID (opaque)
+  piSessionFile?: string, // Absolute Pi session file path (preferred resume primitive)
+  sessionUsageLimitRecoveryV1?: SessionUsageLimitRecoveryV1,
+  copilotSessionId?: string, // Copilot ACP session ID (opaque)
+  cursorSessionId?: string, // Cursor ACP session ID (opaque)
+  auggieAllowIndexing?: boolean, // Auggie indexing enablement (spawn-time)
+  tools?: string[],
+  slashCommands?: string[],
+  slashCommandDetails?: Array<{
+    command: string,
+    description?: string
+  }>,
+  acpHistoryImportV1?: {
+    v: 1,
+    provider: 'gemini' | 'codex' | 'opencode' | string,
+    remoteSessionId: string,
+    importedAt: number,
+    lastImportedFingerprint?: string
+  },
+  acpTransportV1?: {
+    v: 1,
+    provider: string
+  },
+  /**
+   * ACP session modes (if supported by the provider's ACP agent).
+   *
+   * Used to expose provider-native "plan/code" style runtime modes to the UI.
+   */
+  acpSessionModesV1?: {
+    v: 1,
+    provider: string,
+    updatedAt: number,
+    currentModeId: string,
+    availableModes: Array<{
+      id: string,
+      name: string,
+      description?: string,
+    }>,
+  },
+  sessionModesV1?: {
+    v: 1,
+    provider: string,
+    updatedAt: number,
+    currentModeId: string,
+    availableModes: Array<{
+      id: string,
+      name: string,
+      description?: string,
+    }>,
+  },
+  /**
+   * ACP session models (if supported by the provider's ACP agent).
+   *
+   * Used to expose provider-native model selection to the UI.
+   *
+   * NOTE: This is an UNSTABLE ACP feature and may be unsupported by some agents.
+   */
+  acpSessionModelsV1?: {
+    v: 1,
+    provider: string,
+    updatedAt: number,
+    currentModelId: string,
+    availableModels: Array<{
+      id: string,
+      name: string,
+      description?: string,
+      contextWindowTokens?: number,
+      modelOptions?: Array<{
+        id: string,
+        name: string,
+        description?: string,
+        category?: string,
+        type: string,
+        currentValue: string | number | boolean | null,
+        options?: Array<{
+          value: string | number | boolean | null,
+          name: string,
+          description?: string,
+        }>,
+      }>,
+    }>,
+  },
+  sessionModelsV1?: {
+    v: 1,
+    provider: string,
+    updatedAt: number,
+    currentModelId: string,
+    availableModels: Array<{
+      id: string,
+      name: string,
+      description?: string,
+      contextWindowTokens?: number,
+      modelOptions?: Array<{
+        id: string,
+        name: string,
+        description?: string,
+        category?: string,
+        type: string,
+        currentValue: string | number | boolean | null,
+        options?: Array<{
+          value: string | number | boolean | null,
+          name: string,
+          description?: string,
+        }>,
+      }>,
+    }>,
+  },
+  /**
+   * ACP session configuration options (if supported by the provider's ACP agent).
+   *
+   * Used to expose provider-native runtime configuration controls to the UI.
+   */
+  acpConfigOptionsV1?: {
+    v: 1,
+    provider: string,
+    updatedAt: number,
+    configOptions: Array<{
+      id: string,
+      name: string,
+      description?: string,
+      category?: string,
+      type: string,
+      currentValue: string | number | boolean | null,
+      options?: Array<{
+        value: string | number | boolean | null,
+        name: string,
+        description?: string,
+      }>,
+    }>,
+  },
+  sessionConfigOptionsV1?: {
+    v: 1,
+    provider: string,
+    updatedAt: number,
+    configOptions: Array<{
+      id: string,
+      name: string,
+      description?: string,
+      category?: string,
+      type: string,
+      currentValue: string | number | boolean | null,
+      options?: Array<{
+        value: string | number | boolean | null,
+        name: string,
+        description?: string,
+      }>,
+    }>,
+  },
+  /**
+   * Desired ACP session mode override selected by the user (UI/CLI).
+   *
+   * Distinct from `acpSessionModesV1` (which mirrors agent-reported current state).
+   */
+  acpSessionModeOverrideV1?: AcpSessionModeOverrideV1,
+  sessionModeOverrideV1?: AcpSessionModeOverrideV1,
+  /**
+   * Desired ACP configuration option overrides selected by the user (UI/CLI).
+   *
+   * This is a best-effort mechanism to keep ACP "configOptions" selections consistent across devices.
+   */
+  acpConfigOptionOverridesV1?: AcpConfigOptionOverridesV1,
+  sessionConfigOptionOverridesV1?: AcpConfigOptionOverridesV1,
+  homeDir: string,
+  happyHomeDir: string,
+  happyLibDir: string,
+  happyToolsDir: string,
+  startedFromDaemon?: boolean,
+  hostPid?: number,
+  sessionLogPath?: string,
+  startedBy?: 'daemon' | 'terminal',
+  // Lifecycle state management
+  lifecycleState?: 'running' | 'archiveRequested' | 'archived' | string,
+  lifecycleStateSince?: number,
+  archivedBy?: string,
+  archiveReason?: string,
+  flavor?: string,
+  /**
+   * Current permission mode for the session, published by the CLI so the app can seed UI state
+   * even when there are no user messages carrying meta.permissionMode yet (e.g. local-only start).
+   */
+  permissionMode?: PermissionMode,
+  /** Timestamp (ms) for permissionMode, used for "latest wins" arbitration across devices. */
+  permissionModeUpdatedAt?: number,
+  sessionRollbackRangesV1?: SessionRollbackRangesV1,
+  sessionContinuationRecoveryV1?: SessionContinuationRecoveryV1,
+  /**
+   * Session-scoped connected-service auth binding selected for this agent.
+   *
+   * Non-secret; spawn paths use this to rematerialize the correct account/group across
+   * forks, resumes, and runtime-auth recovery.
+   */
+  connectedServices?: ConnectedServiceBindingsV1,
+  connectedServicesUpdatedAt?: number,
+  connectedServiceMaterializationIdentityV1?: ConnectedServiceMaterializationIdentityV1,
+  /**
+   * Desired model override selected by the user (UI/CLI), if supported by the agent.
+   *
+   * This is session-scoped and should be applied by runners in a capability-driven way
+   * (some agents support live model switching; others may require a new session).
+   */
+  modelOverrideV1?: ModelOverrideV1,
+  /**
+   * Owed-delivery watermark (QA A-F2/D15b): highest user-row seq actually handed to the runner's
+   * agent loop. Daemon attach paths clamp the resume catch-up cursor to this value so user rows
+   * committed while the runner was down are redelivered instead of silently skipped.
+   */
+  deliveredUserMessageSeqV1?: number,
+};
+
+/**
+ * Reason class for "cannot steer the in-flight turn right now" (lane P, O-design Seam A):
+ * - `backend_unsupported`: the runtime/backend never supports in-flight steering.
+ * - `unsafe_window`: steering is supported but the current window cannot accept a steer
+ *   (Codex steer-context mismatch, Claude screen veto / composer-not-ready, ACP between turns).
+ * - `turn_settling`: the turn is ending / in a stale-recovery window (canonical turn inactive).
+ * - `user_terminal_draft`: steering is starved by a draft sitting in the terminal composer
+ *   (lane X, incident cmq8y3nlx) — published after the bounded starvation escalation.
+ */
+export type InFlightSteerUnavailableReason = 'backend_unsupported' | 'unsafe_window' | 'turn_settling' | 'user_terminal_draft';
+
+export type AgentState = {
+  controlledByUser?: boolean | null | undefined
+  localControl?: {
+    attached?: boolean | null | undefined
+    topology?: 'exclusive' | 'shared' | null | undefined
+    remoteWritable?: boolean | null | undefined
+    canAttach?: boolean | null | undefined
+    canDetach?: boolean | null | undefined
+  } | null | undefined
+  capabilities?: {
+    askUserQuestionAnswersInPermission?: boolean | null | undefined
+    inFlightSteer?: boolean | null | undefined
+    inFlightSteerSupported?: boolean | null | undefined
+    inFlightSteerAvailable?: boolean | null | undefined
+    /**
+     * Why in-flight steering is currently unavailable (lane P, O-design Seam A). Present only when
+     * `inFlightSteerAvailable === false`; absence means an older CLI (back-compat by optionality).
+     * `mode_change_refused` is deliberately NOT a published reason — it is a property of the
+     * payload, computed UI-locally.
+     */
+    inFlightSteerUnavailableReason?: InFlightSteerUnavailableReason | null | undefined
+    /** Timestamp (ms) of the last steerability evaluation — staleness guard for the UI. */
+    inFlightSteerStateAt?: number | null | undefined
+    /**
+     * Lane Q: the runtime can apply a steered message's config delta (permission/plan mode) to the
+     * RUNNING turn, so a mode-carrying message may steer without interrupting. Lets the UI offer
+     * "Apply setting & steer now". Absence means an older CLI / unsupported backend (fail-closed).
+     */
+    inFlightConfigApplySupported?: boolean | null | undefined
+    /**
+     * Provider-neutral terminal composer controls. Runtimes that own an injectable terminal may
+     * publish these so the UI can offer explicit, user-authorized draft clearing without
+     * provider-specific branching.
+     */
+    terminalComposerClearSupported?: boolean | null | undefined
+    terminalComposerDraftPresent?: boolean | null | undefined
+    localPermissionBridgeInLocalMode?: boolean | null | undefined
+    permissionsInUiWhileLocal?: boolean | null | undefined
+  } | null | undefined
+      requests?: {
+        [id: string]: {
+          tool: string,
+        /**
+         * Categorizes pending agent requests for UI/notifications.
+         *
+         * - `permission`: classic tool approval prompts (Bash/Edit/etc)
+         * - `user_action`: structured user input prompts (AskUserQuestion/ExitPlanMode/etc)
+         */
+          kind?: 'permission' | 'user_action' | string,
+          arguments: any,
+          createdAt: number
+          /**
+           * Optional provider-provided permission suggestions for this request.
+           * (e.g. Claude Agent SDK `permission_suggestions`).
+           */
+          permissionSuggestions?: unknown
+          /**
+           * Timestamp (ms) when a push notification was sent for this permission request.
+           * Used to avoid duplicate notifications across restarts/resumes.
+           */
+          pushNotifiedAt?: number
+        }
+      }
+      completedRequests?: {
+        [id: string]: {
+        tool: string,
+        kind?: 'permission' | 'user_action' | string,
+        arguments: any,
+        createdAt: number,
+        completedAt: number,
+        status: 'canceled' | 'denied' | 'approved',
+      reason?: string,
+      mode?: PermissionMode,
+        decision?: 'approved' | 'approved_for_session' | 'approved_execpolicy_amendment' | 'denied' | 'abort',
+        allowedTools?: string[]
+        allowTools?: string[] // legacy alias
+        updatedPermissions?: unknown
+      }
+    }
+  }

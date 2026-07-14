@@ -1,0 +1,6097 @@
+import Constants from 'expo-constants';
+import { apiSocket } from '@/sync/api/session/apiSocket';
+import { resumeSession } from '@/sync/ops';
+import { type AuthCredentials } from '@/auth/storage/tokenStorage';
+import type { DirectTranscriptRawMessageV1 } from '@happier-dev/protocol';
+import { createEncryptionFromAuthCredentials } from '@/auth/encryption/createEncryptionFromAuthCredentials';
+import { Encryption } from '@/sync/encryption/encryption';
+import { encodeBase64 } from '@/encryption/base64';
+import {
+    clearActiveViewingSessionsForServerScopeReset,
+    getActiveViewingSessionId,
+    getVisibleSessionIds,
+} from '@/sync/domains/session/activeViewingSession';
+import { resolveSessionActionDefaultBackend } from '@/sync/domains/session/resolveSessionActionDefaultBackend';
+import { storage } from './domains/state/storage';
+import { ApiMessage } from './api/types/apiTypes';
+import type { ApiEphemeralActivityUpdate } from './api/types/apiTypes';
+import { Session, Machine, MetadataSchema, type Metadata } from './domains/state/storageTypes';
+import { InvalidateSync } from '@/utils/sessions/sync';
+import { PauseController } from '@/utils/timing/pauseController';
+import {
+    invalidateAllServerReachabilitySupervisors,
+    setServerReachabilityNetworkAllowed,
+    stopServerReachabilitySupervisors,
+} from '@/sync/runtime/connectivity/serverReachabilitySupervisorPool';
+import { bindManagedConnectionStateToRealtimeStore } from '@/sync/runtime/connectivity/bindManagedConnectionStateToRealtimeStore';
+import { assertEndpointAuthenticatedWithProbe } from '@/sync/runtime/connectivity/assertEndpointAuthenticatedWithProbe';
+import { isTerminalAuthError } from '@/sync/runtime/connectivity/authErrors';
+import { applyInitialAppStateConnectivityGate } from '@/sync/runtime/connectivity/appStateConnectivityGate';
+import { loadSyncTuning, type SyncTuning } from '@/sync/runtime/syncTuning';
+import {
+    computeSessionMessagesPaginationUpdateFromPage,
+    type SessionMessagesPaginationState,
+} from '@/sync/runtime/sessionMessagesPagination';
+import {
+    acknowledgeStaleTranscriptRepair,
+    clearDeferredTranscriptStateForSession,
+    createDeferredTranscriptState,
+    hasStaleTranscriptMarkers,
+    markDeferredTranscriptRemoteSeq,
+    markTranscriptDeferred,
+    markTranscriptStale,
+    readDeferredTranscriptDurableSeq,
+    readStaleTranscriptMessageIds,
+    readStaleTranscriptMinSeq,
+    type DeferredTranscriptMarker,
+    type DeferredTranscriptState,
+} from '@/sync/domains/session/realtime/deferredTranscriptState';
+import {
+    clearDeferredSessionStateHydration,
+    createDeferredSessionStateHydrationState,
+    hasDeferredSessionStateHydration,
+    markSessionStateHydrationDeferred,
+    type DeferredSessionStateHydrationState,
+} from '@/sync/domains/session/realtime/deferredSessionStateHydration';
+import { normalizeSessionListAttentionPromotionMode } from '@/sync/domains/session/listing/attentionPromotion/sessionListAttentionPromotion';
+import { ActivityUpdateAccumulator, type ActivityUpdateAccumulatorFlushOptions } from './reducer/activityUpdateAccumulator';
+import { MachineActivityAccumulator, type MachineActivityUpdate } from './reducer/machineActivityAccumulator';
+import { randomUUID } from '@/platform/randomUUID';
+import { Platform, AppState } from 'react-native';
+import type { ManagedEndpointSupervisor, ManagedEndpointSupervisorState } from '@happier-dev/connection-supervisor';
+import { resolveSentFrom } from './domains/messages/sentFrom';
+import { NormalizedMessage, normalizeRawMessage, RawRecord, RawRecordSchema } from './typesRaw';
+import { applySettings, Settings, settingsDefaults, settingsParse, SUPPORTED_SCHEMA_VERSION } from './domains/settings/settings';
+import { Profile, profileDefaults } from './domains/profiles/profile';
+import {
+    loadSessionMaterializedMaxSeqById,
+    saveSessionMaterializedMaxSeqById,
+    loadChangesCursor,
+    loadDirectSessionTailCursor,
+    loadProfile as loadPersistedProfile,
+    pruneStaleInstanceChangesCursors,
+    saveDirectSessionTailCursor,
+    type ChangesCursorScope,
+} from './domains/state/persistence';
+import {
+    loadPendingAccountSettings,
+    savePendingAccountSettings,
+} from './domains/state/accountSettingsPersistence';
+import {
+    deletePersistedSessionViewport,
+    loadPersistedSessionViewports,
+    upsertPersistedSessionViewport,
+} from './domains/state/sessionViewportPersistence';
+import { sessionViewportStorageKey } from './domains/state/sessionLocalStateKeys';
+import { getActiveServerAccountScope } from './domains/scope/activeServerAccountScope';
+import {
+    areAccountSettingsScopesEqual,
+    createAccountSettingsScope,
+    type AccountSettingsScope,
+} from './domains/settings/scope/accountSettingsScope';
+
+type LoadOlderMessagesOptions = Readonly<{
+    limit?: number;
+}>;
+
+import { createSyncGenerationGuard } from './domains/scope/syncGenerationGuard';
+import {
+    clearWarmCacheAccountScope,
+    loadMachineDisplayWarmCacheEntries,
+    loadSessionListWarmCacheEntries,
+    resolveWarmCacheAccountScope,
+    setWarmCacheAccountScope,
+} from './domains/state/warmCachePersistence';
+import {
+    buildMachineDisplayCacheEntriesFromRenderables,
+    buildMachineDisplayRenderableFromCacheEntry,
+    buildSessionListCacheEntriesFromRenderables,
+    buildSessionListRenderableFromCacheEntry,
+} from './domains/state/warmCacheAdapters';
+import {
+    isTerminalTaskLifecycleEventType,
+    type TaskLifecycleEvent,
+} from '@/sync/engine/sessions/taskLifecycle';
+import { initializeTracking, tracking } from '@/track';
+import { applyCrashReportsOptOut } from '@/utils/system/sentry';
+import { parseToken } from '@/utils/auth/parseToken';
+import { fireAndForget } from '@/utils/system/fireAndForget';
+import { isTauriDesktop } from '@/utils/platform/tauri';
+import { RevenueCat } from './domains/purchases';
+import { purchasesDefaults } from './domains/purchases/purchases';
+import { trackPaywallPresented, trackPaywallPurchased, trackPaywallCancelled, trackPaywallRestored, trackPaywallError } from '@/track';
+import { getActiveServerSnapshot } from './domains/server/serverRuntime';
+import {
+    areServerProfileIdentifiersEquivalent,
+    getServerProfileById,
+    getServerProfileLegacyServerIds,
+} from './domains/server/serverProfiles';
+import { migratePendingSetupIntentScopes } from './domains/pending/pendingSetupIntent';
+import { migratePendingTerminalConnectScopes } from './domains/pending/pendingTerminalConnect';
+import { migratePendingNotificationActionScopes } from './domains/pending/pendingNotificationAction';
+import { migratePendingNotificationNavScopes } from './domains/pending/pendingNotificationNav';
+import type { SettingsAnalyticsSource } from '@/track/settingsAnalytics/types';
+import { setActiveServerSessionListCache } from './store/sessionListCache';
+import { config } from '@/config';
+import { log } from '@/log';
+import { scmStatusSync } from '@/scm/scmStatusSync';
+import { ingestWorkspaceMutationMessages } from '@/scm/refresh/workspaceMutationIngestionRuntime';
+import { projectManager } from './runtime/orchestration/projectManager';
+import { clearMountedSessionRealtimeScmConsumerScopes } from './runtime/sessionRealtimeScmConsumers';
+import { voiceHooks } from '@/voice/context/voiceHooks';
+import { notifyActivityReady } from '@/activity/notifications/runtime/activityLocalNotificationBus';
+import { Message } from './domains/messages/messageTypes';
+import { EncryptionCache } from './encryption/encryptionCache';
+import { nowServerMs } from './runtime/time';
+import { getAgentCore, resolveAgentIdFromFlavor } from '@/agents/catalog/catalog';
+import { computeNextReadStateV1 } from './domains/state/readStateV1';
+import { updateSessionMetadataWithRetry as updateSessionMetadataWithRetryRpc, type UpdateMetadataAck } from './domains/session/metadata/updateSessionMetadataWithRetry';
+import type { ArtifactHeader, DecryptedArtifact } from './domains/artifacts/artifactTypes';
+import type { Automation, AutomationRun } from './domains/automations/automationTypes';
+import { getUserProfile } from './api/social/apiFriends';
+import {
+    createAutomation as createAutomationApi,
+    deleteAutomation as deleteAutomationApi,
+    pauseAutomation as pauseAutomationApi,
+    replaceAutomationAssignments as replaceAutomationAssignmentsApi,
+    resumeAutomation as resumeAutomationApi,
+    runAutomationNow as runAutomationNowApi,
+    type AutomationAssignmentInput,
+    type AutomationCreateInput,
+    type AutomationPatchInput,
+    updateAutomation as updateAutomationApi,
+} from './api/automations/apiAutomations';
+import { kvBulkGet } from './api/account/apiKv';
+import { FeedItem } from './domains/social/feedTypes';
+import { UserProfile } from './domains/social/friendTypes';
+import { buildSendMessageMeta } from './domains/messages/buildSendMessageMeta';
+import { HappyError } from '@/utils/errors/errors';
+import {
+    createAccountSettingsFailedStatus,
+    createAccountSettingsIdleStatus,
+    createAccountSettingsRetryingStatus,
+    createAccountSettingsSyncedStatus,
+} from './domains/settings/accountSettingsSyncStatus';
+import {
+    dbgSettings,
+    isSettingsSyncDebugEnabled,
+    summarizeSettings,
+    summarizeSettingsDelta,
+    warnSettings,
+} from './domains/settings/debugSettings';
+import { stripLocalOnlyAccountSettings } from './domains/settings/localOnlyAccountSettings';
+import {
+    decryptSecretValueWithKeys,
+    deriveSettingsSecretsKeySet,
+    encryptSecretString,
+    sealSecretsDeep,
+} from './encryption/secretSettings';
+import { didControlReturnToMobile } from './domains/session/control/controlledByUserTransitions';
+import type { SessionMessageDirectBypassReason } from './domains/session/control/submitMode';
+import { buildResumeCapabilityOptionsFromUiState } from '@/agents/registry/registryUiBehavior';
+import { submitSessionUserMessage } from './domains/session/input/submitSessionUserMessage';
+import type { SessionMessageCallerSurface, SessionSubmitPort } from './domains/session/input/types';
+import type { SavedSecret } from './domains/settings/savedSecretTypes';
+import type { PermissionMode } from './domains/permissions/permissionTypes';
+import { getPermissionModeOverrideForSpawn } from './domains/permissions/permissionModeOverride';
+import { scheduleDebouncedPendingSettingsFlush } from './engine/pending/pendingSettings';
+import {
+    applySettingsLocalDelta,
+    syncSettings as syncSettingsEngine,
+    type SyncSettingsParams,
+} from './engine/settings/syncSettings';
+import { removeCommittedPendingSettings } from './engine/settings/writeback/accountSettingsRawDeltaMerge';
+import {
+    prepareAccountSettingsForDaemonSpawn as prepareAccountSettingsForDaemonSpawnEngine,
+    type PreparedAccountSettingsForDaemonSpawn,
+} from './engine/settings/prepareAccountSettingsForDaemonSpawn';
+import { registerAccountSettingsDaemonSpawnPreparation } from './ops/accountSettingsDaemonSpawnPreparation';
+import { getOfferings as getOfferingsEngine, presentPaywall as presentPaywallEngine, purchaseProduct as purchaseProductEngine, syncPurchases as syncPurchasesEngine } from './engine/purchases/syncPurchases';
+import { fetchChanges, fetchCurrentChangesCursor } from './api/session/apiChanges';
+import {
+    resolveWebSyncClientIdentity,
+    type WebSyncClientIdentity,
+} from '@/sync/runtime/webSyncClientIdentity';
+import { decideChangesCursorCheckpoint } from '@/sync/runtime/orchestration/changesCursorCheckpoint';
+import {
+    evaluateSafeCursorLagTripwire,
+    rememberBlockedCursorLag,
+    type SafeCursorLagTripwireState,
+} from '@/sync/runtime/orchestration/safeCursorLagTripwire';
+import { runWithInFlightDedupe } from '@/sync/runtime/orchestration/runWithInFlightDedupe';
+import { runTasksWithLimit } from '@/sync/runtime/orchestration/runTasksWithLimit';
+import {
+    emitSyncPerformanceSummaryToConsole,
+    installSyncPerformanceTelemetryGlobal,
+    syncPerformanceTelemetry,
+} from '@/sync/runtime/syncPerformanceTelemetry';
+import {
+    createJsThreadLagTelemetry,
+    type JsThreadLagTelemetry,
+} from '@/sync/runtime/performance/jsThreadLagTelemetry';
+import {
+    installSyncReliabilityTelemetryGlobal,
+    syncReliabilityTelemetry,
+} from '@/sync/runtime/syncReliabilityTelemetry';
+import { decideMessageCatchUpPolicy } from '@/sync/runtime/orchestration/messageCatchUpPolicy';
+import { resolveSessionLiveConsumption } from '@/sync/runtime/sessionLiveConsumption';
+import {
+    isVersionSupported,
+    MINIMUM_CLI_SESSION_USER_MESSAGE_RPC_VERSION,
+} from '@/utils/system/versionUtils';
+import { applyMessageCatchUpDecision } from '@/sync/runtime/orchestration/applyMessageCatchUpDecision';
+import { readDirectSessionLink, type DirectSessionLink } from '@/sync/domains/session/directSessions/readDirectSessionLink';
+import { normalizeDirectTranscriptMessages } from '@/sync/runtime/directSessions/normalizeDirectTranscriptMessages';
+import { readStoredSessionRawRecord } from '@/sync/runtime/readStoredSessionContent';
+import { resolvePreferredServerIdForSessionId } from '@/sync/runtime/orchestration/serverScopedRpc/resolvePreferredServerIdForSessionId';
+import { resolveServerIdForSessionIdFromLocalCache } from '@/sync/runtime/orchestration/serverScopedRpc/resolveServerIdForSessionIdFromLocalCache';
+import { emitSessionMetadataUpdateWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/emitSessionMetadataUpdateWithServerScope';
+import { fetchSessionByIdWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/fetchSessionByIdWithServerScope';
+import type {
+    EnsureSessionVisibleForRouteResult,
+    SessionRouteHydrationMissingCause,
+    SessionRouteHydrationRetryCause,
+} from '@/sync/domains/session/sessionRouteHydrationState';
+import { createSessionRequestWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/createSessionRequestWithServerScope';
+import { sessionRpcWithPreferredSessionScope } from '@/sync/runtime/orchestration/serverScopedRpc/sessionRpcWithPreferredSessionScope';
+import {
+    machineDirectSessionTranscriptPage,
+    machineDirectSessionTranscriptReadAfter,
+} from '@/sync/ops/machineDirectSessions';
+import {
+    createArtifactViaApi,
+    createArtifactWithHeaderViaApi,
+    fetchAndApplyArtifactsList,
+    fetchArtifactWithBodyFromApi,
+    handleDeleteArtifactSocketUpdate,
+    handleNewArtifactSocketUpdate,
+    handleUpdateArtifactSocketUpdate,
+    updateArtifactViaApi,
+    updateArtifactWithHeaderViaApi,
+} from './engine/artifacts/syncArtifacts';
+import { fetchAndApplyFeed, handleNewFeedPostUpdate, handleRelationshipUpdatedSocketUpdate, handleTodoKvBatchUpdate } from './engine/social/syncFeed';
+import { fetchAndApplyFriends } from './engine/social/syncFriends';
+import { fetchAndApplyProfile, handleUpdateAccountSocketUpdate, registerPushTokenIfAvailable } from './engine/account/syncAccount';
+import { buildMachineFromMachineActivityEphemeralUpdate, buildUpdatedMachineFromSocketUpdate, fetchAndApplyMachines } from './engine/machines/syncMachines';
+import { fetchAndApplyAutomationRuns, fetchAndApplyAutomations } from './engine/automations/syncAutomations';
+import { fetchAndApplyAccountPets } from './engine/pets/syncAccountPets';
+import { applyTodoSocketUpdates as applyTodoSocketUpdatesEngine, fetchTodos as fetchTodosEngine } from './engine/todos/syncTodos';
+import { planSyncActionsFromChanges } from './runtime/orchestration/changesPlanner';
+import { applyPlannedChangeActions } from './runtime/orchestration/changesApplier';
+import { runSocketReconnectCatchUpViaChanges } from './runtime/orchestration/socketReconnectViaChanges';
+import { verifyChangesCursorMaterializationProofs } from './runtime/orchestration/cursorMaterializationDetector';
+import { fetchAndApplySessionFolderAssignments } from './ops/sessionFolders';
+import { readMachineControlTargetForSession, readMachineTargetForSession } from './ops/sessionMachineTarget';
+import { deriveSessionAuthoringSnapshot } from './domains/sessionAuthoring/deriveSessionAuthoringSnapshot';
+import { socketEmitWithAckFallback } from './engine/socket/socketEmitWithAckFallback';
+import { publishPermissionModeToMetadata as publishPermissionModeToMetadataEngine } from './engine/overrides/permissionModePublish';
+import { publishAcpSessionModeOverrideToMetadata as publishAcpSessionModeOverrideToMetadataEngine } from './engine/overrides/acpSessionModeOverridePublish';
+import { publishModelOverrideToMetadata as publishModelOverrideToMetadataEngine } from './engine/overrides/modelOverridePublish';
+import { publishAcpConfigOptionOverrideToMetadata as publishAcpConfigOptionOverrideToMetadataEngine, type AcpConfigOptionOverrideValueId } from './engine/overrides/acpConfigOptionOverridePublish';
+import { RPC_ERROR_CODES, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { isRpcMethodNotAvailableError, readRpcErrorCode } from '@/sync/runtime/rpcErrors';
+import { MessageAckResponseSchema, type MessageAckResponse } from '@happier-dev/protocol/updates';
+import { resolveAccountScopedCryptoMaterialFromCredentials } from '@/sync/domains/connectedServices/resolveAccountScopedCryptoMaterialFromCredentials';
+import { serverFetch } from './http/client';
+import { logNativeUpdateFetchFailure } from '@/sync/runtime/nativeUpdate/logNativeUpdateFetchFailure';
+import {
+    buildUpdatedSessionFromSocketUpdate,
+    fetchAndApplySessions,
+    fetchAndApplyMessages,
+    fetchAndApplyNewerMessages,
+    fetchAndApplyOlderMessages,
+    handleDeleteSessionSocketUpdate,
+    handleNewMessageSocketUpdate,
+    repairInvalidReadStateV1 as repairInvalidReadStateV1Engine,
+} from './engine/sessions/syncSessions';
+import {
+    fetchUserMessageHistoryPage,
+    USER_MESSAGE_HISTORY_REMOTE_PAGE_SIZE,
+    type FetchUserMessageHistoryPageResult,
+} from './engine/sessions/fetchUserMessageHistoryPage';
+import { fetchAndApplySessionById } from './engine/sessions/sessionById';
+import { getForkedTranscriptSnapshotCached } from './domains/sessionFork/forkedTranscriptSnapshot';
+import {
+    computeForkedTranscriptHasMoreOlder,
+    resolveNextForkedTranscriptLoadOlderRequest,
+} from './domains/sessionFork/forkedTranscriptPaging';
+import {
+    deleteDiscardedPendingMessageV2,
+    deletePendingMessageV2,
+    discardPendingMessageV2,
+    enqueuePendingMessageV2,
+    fetchAndApplyPendingMessagesV2,
+    reorderPendingMessagesV2,
+    restoreDiscardedPendingMessageV2,
+    updatePendingMessageV2,
+} from './engine/pending/pendingQueueV2';
+import {
+    flushActivityUpdates as flushActivityUpdatesEngine,
+    flushMachineActivityUpdates as flushMachineActivityUpdatesEngine,
+    handleEphemeralSocketUpdate,
+    handleSocketUpdate,
+    parseUpdateContainer,
+} from './engine/socket/socket';
+
+const SESSION_LIST_BACKGROUND_HYDRATION_SCROLL_SETTLE_MS = 180;
+
+export type SessionViewportSource = 'default' | 'observed';
+
+export type SessionViewportAnchorKind = 'message' | 'toolGroup' | 'item';
+
+export type SessionViewportAnchorSnapshot = Readonly<{
+    kind: SessionViewportAnchorKind;
+    messageId?: string | null;
+    /** Message seq stamped at persistence time; present on hydrated anchors (identity-first restore). */
+    seq?: number | null;
+    itemId: string;
+    itemOffsetPx: number;
+    capturedAtMs: number;
+}>;
+
+export type SessionViewportSnapshot = Readonly<{
+    isPinned: boolean;
+    offsetY: number;
+    anchor?: SessionViewportAnchorSnapshot | null;
+    lastUpdatedAt: number;
+    source: SessionViewportSource;
+}>;
+
+export type SessionViewportChangeState = Readonly<{
+    isPinned: boolean;
+    offsetY: number;
+    shouldRestoreViewport?: boolean;
+    anchor?: SessionViewportAnchorSnapshot | null;
+}>;
+
+function isSessionViewportAnchorKind(value: unknown): value is SessionViewportAnchorKind {
+    return value === 'message' || value === 'toolGroup' || value === 'item';
+}
+
+function sanitizeSessionViewportAnchor(value: unknown): SessionViewportAnchorSnapshot | null {
+    if (!value || typeof value !== 'object') return null;
+    const candidate = value as Partial<Record<keyof SessionViewportAnchorSnapshot, unknown>>;
+    if (!isSessionViewportAnchorKind(candidate.kind)) return null;
+    if (typeof candidate.itemId !== 'string') return null;
+    const itemId = candidate.itemId.trim();
+    if (!itemId) return null;
+    const messageId = candidate.messageId;
+    if (messageId != null && (typeof messageId !== 'string' || !messageId.trim())) return null;
+    if (typeof candidate.itemOffsetPx !== 'number' || !Number.isFinite(candidate.itemOffsetPx)) return null;
+    if (typeof candidate.capturedAtMs !== 'number' || !Number.isFinite(candidate.capturedAtMs) || candidate.capturedAtMs < 0) return null;
+
+    return {
+        kind: candidate.kind,
+        ...(typeof messageId === 'string' ? { messageId: messageId.trim() } : {}),
+        itemId,
+        itemOffsetPx: candidate.itemOffsetPx,
+        capturedAtMs: candidate.capturedAtMs,
+    };
+}
+
+type SessionMessagesScope = 'main' | 'sidechain';
+
+export type SyncMessageTransport = Readonly<{
+    emitWithAck: <T = unknown>(event: string, payload: unknown, opts?: { timeoutMs?: number }) => Promise<T>;
+    send: (event: string, payload: unknown) => unknown;
+}>;
+
+type ReadyNotificationProgress = Readonly<{
+    seq: number;
+    transcriptNotified: boolean;
+}>;
+
+function createDefaultMessageTransport(): SyncMessageTransport {
+    return {
+        emitWithAck: <T>(event: string, payload: unknown, opts?: { timeoutMs?: number }) =>
+            apiSocket.emitWithAck<T>(event, payload, opts),
+        send: (event: string, payload: unknown) => apiSocket.send(event, payload),
+    };
+}
+
+function hasAuthoritativeSessionRouteData(session: Session | null | undefined): boolean {
+    return Boolean(session?.metadata != null);
+}
+
+function isFallbackSafeSessionUserMessageRpcError(error: unknown): boolean {
+    // Fallback here is compatibility with older daemons / preview CLIs that may expose
+    // the active-session send surface under a different method set or during reconnect churn.
+    if (isRpcMethodNotAvailableError(error) || readRpcErrorCode(error) === RPC_ERROR_CODES.METHOD_NOT_FOUND) {
+        return true;
+    }
+
+    const errorMessage = error instanceof Error ? error.message : String(error ?? '');
+    if (errorMessage === 'Method not found' || errorMessage === 'Socket connect timeout') {
+        return true;
+    }
+
+    const normalizedMessage = errorMessage.toLowerCase();
+    return (
+        normalizedMessage.includes('connect_error')
+        // Just-created local sessions can expose transient transport failures before the
+        // session runtime RPC surface is fully ready. Fall back to the socket commit path
+        // instead of restoring the draft and stranding the user in an empty created session.
+        || normalizedMessage.includes('econnreset')
+        || normalizedMessage.includes('econnrefused')
+    );
+}
+
+async function assertActiveEndpointAuthenticated(options?: Readonly<{ forceProbe?: boolean }>): Promise<void> {
+    const activeServer = getActiveServerSnapshot();
+    await assertEndpointAuthenticatedWithProbe({
+        serverId: activeServer.serverId,
+        serverUrl: activeServer.serverUrl,
+        forceProbe: options?.forceProbe === true,
+    });
+}
+
+function recordTerminalAuthSyncError(
+    error: unknown,
+    options?: Readonly<{
+        serverId?: string | null;
+    }>,
+): void {
+    const activeServerId = String(getActiveServerSnapshot().serverId ?? '').trim();
+    const scopedServerId = String(options?.serverId ?? '').trim();
+    const serverId = scopedServerId || activeServerId;
+    storage.getState().setSyncError({
+        message: error instanceof Error ? error.message : 'Authentication required',
+        retryable: false,
+        kind: 'auth',
+        at: Date.now(),
+        ...(serverId ? { serverId } : {}),
+    });
+}
+
+function normalizeScopedServerId(value: unknown): string | undefined {
+    const serverId = String(value ?? '').trim();
+    return serverId || undefined;
+}
+
+function isKnownServerId(serverId: string, activeServerId: string): boolean {
+    return areServerProfileIdentifiersEquivalent(serverId, activeServerId) || getServerProfileById(serverId) !== null;
+}
+
+function resolveMessageRouteHydrationServerId(sessionId: string, explicitServerIdRaw: unknown): string | undefined {
+    const activeServerId = normalizeScopedServerId(getActiveServerSnapshot().serverId);
+    const explicitServerId = normalizeScopedServerId(explicitServerIdRaw);
+    if (explicitServerId && activeServerId && isKnownServerId(explicitServerId, activeServerId)) {
+        return explicitServerId;
+    }
+
+    const cachedServerId = normalizeScopedServerId(resolveServerIdForSessionIdFromLocalCache(sessionId));
+    if (cachedServerId && activeServerId && isKnownServerId(cachedServerId, activeServerId)) {
+        return cachedServerId;
+    }
+
+    return activeServerId;
+}
+
+function createEnsureSessionVisibleAvailableResult(
+    sessionId: string,
+    serverId?: string,
+): EnsureSessionVisibleForRouteResult {
+    return serverId
+        ? { kind: 'available', sessionId, serverId }
+        : { kind: 'available', sessionId };
+}
+
+function createEnsureSessionVisibleMissingResult(
+    sessionId: string,
+    cause: SessionRouteHydrationMissingCause,
+    serverId?: string,
+): EnsureSessionVisibleForRouteResult {
+    return serverId
+        ? { kind: 'missing', sessionId, serverId, cause }
+        : { kind: 'missing', sessionId, cause };
+}
+
+function createEnsureSessionVisibleRetryableResult(
+    sessionId: string,
+    cause: SessionRouteHydrationRetryCause,
+    serverId?: string,
+): EnsureSessionVisibleForRouteResult {
+    return serverId
+        ? { kind: 'retryable_failure', sessionId, serverId, cause }
+        : { kind: 'retryable_failure', sessionId, cause };
+}
+
+function mapSessionByIdTerminalCodeToMissingCause(code: string): SessionRouteHydrationMissingCause | null {
+    if (code === 'not_found' || code === 'unauthorized' || code === 'forbidden') {
+        return code;
+    }
+    return null;
+}
+
+function mapSessionByIdRetryableCodeToCause(code: string): SessionRouteHydrationRetryCause {
+    if (code === 'network_error') {
+        return 'server_unavailable';
+    }
+    if (code === 'session_encryption_not_found') {
+        return 'decrypting';
+    }
+    return 'unknown';
+}
+
+function classifyRouteHydrationErrorCause(error: unknown): SessionRouteHydrationRetryCause {
+    if (error instanceof Error) {
+        if (
+            error.name === 'ServerFetchConnectivityTimeoutError'
+            || error.name === 'ServerFetchAbortedForServerSwitchError'
+        ) {
+            return 'server_unavailable';
+        }
+    }
+    return 'unknown';
+}
+
+function createSessionRouteHydrationInFlightKey(sessionId: string, serverId?: string): string {
+    return `${serverId ?? ''}\n${sessionId}`;
+}
+
+function canUseSessionUserMessageRuntimeRpc(session: Readonly<{
+    metadata?: { version?: unknown } | null;
+}> | null | undefined): boolean {
+    const cliVersion = typeof session?.metadata?.version === 'string' ? session.metadata.version.trim() : '';
+    if (cliVersion.length === 0) {
+        return true;
+    }
+    return isVersionSupported(cliVersion, MINIMUM_CLI_SESSION_USER_MESSAGE_RPC_VERSION);
+}
+
+function wakeInactiveSessionAfterCommittedPrompt(params: Readonly<{
+    sessionId: string;
+    session: Session;
+    seq: number;
+    tag: string;
+}>): void {
+    if (params.session.active === true) return;
+
+    const controlTarget = readMachineControlTargetForSession(params.sessionId);
+    const machineId = controlTarget?.machineId ?? (typeof params.session.metadata?.machineId === 'string'
+        ? params.session.metadata.machineId.trim()
+        : '');
+    const directory = controlTarget?.basePath ?? (typeof params.session.metadata?.path === 'string'
+        ? params.session.metadata.path.trim()
+        : '');
+    if (!machineId || !directory) return;
+
+    const resolvedBackend = resolveSessionActionDefaultBackend({ session: params.session });
+    if (!resolvedBackend) return;
+
+    const authoringSnapshot = deriveSessionAuthoringSnapshot({ session: params.session });
+
+    fireAndForget(
+        resumeSession({
+            sessionId: params.sessionId,
+            machineId,
+            directory,
+            backendTarget: resolvedBackend.backendTarget,
+            ...(authoringSnapshot.connectedServices !== null
+                ? { connectedServices: authoringSnapshot.connectedServices }
+                : {}),
+            ...(typeof authoringSnapshot.connectedServicesUpdatedAt === 'number'
+                ? { connectedServicesUpdatedAt: authoringSnapshot.connectedServicesUpdatedAt }
+                : {}),
+            ...(authoringSnapshot.permissionMode && typeof authoringSnapshot.permissionModeUpdatedAt === 'number'
+                ? {
+                    permissionMode: authoringSnapshot.permissionMode as PermissionMode,
+                    permissionModeUpdatedAt: authoringSnapshot.permissionModeUpdatedAt,
+                }
+                : {}),
+            ...(authoringSnapshot.agentModeId && typeof authoringSnapshot.agentModeUpdatedAt === 'number'
+                ? {
+                    agentModeId: authoringSnapshot.agentModeId,
+                    agentModeUpdatedAt: authoringSnapshot.agentModeUpdatedAt,
+                }
+                : {}),
+            ...(authoringSnapshot.modelId && typeof authoringSnapshot.modelUpdatedAt === 'number'
+                ? {
+                    modelId: authoringSnapshot.modelId,
+                    modelUpdatedAt: authoringSnapshot.modelUpdatedAt,
+                }
+                : {}),
+            initialTranscriptAfterSeq: Math.max(0, params.seq - 1),
+        }),
+        { tag: params.tag },
+    );
+}
+
+export type SendPendingMessageNowResult =
+    | Readonly<{ type: 'committed' }>
+    | Readonly<{ type: 'retry_scheduled' }>;
+
+function readOptionalSessionMetadataString(value: unknown): string | null {
+    return typeof value === 'string' && value.trim().length > 0 ? value : null;
+}
+
+type FetchSessionsOptions = Readonly<{
+    awaitSessionListHydration?: boolean;
+    requiredHydrationSessionIds?: ReadonlyArray<string>;
+    prioritizeSessionIds?: ReadonlyArray<string>;
+    mode?: 'replace' | 'append';
+}>;
+
+type FetchArchivedSessionsOptions = Readonly<{
+    mode?: 'replace' | 'append';
+}>;
+
+function canShareFetchSessionsInFlight(options?: FetchSessionsOptions): boolean {
+    return options?.awaitSessionListHydration !== true
+        && (options?.requiredHydrationSessionIds?.length ?? 0) === 0
+        && (options?.prioritizeSessionIds?.length ?? 0) === 0
+        && options?.mode !== 'append';
+}
+
+function resolvePinnedSessionIdsForServer(settings: Pick<Settings, 'pinnedSessionKeysV1'>, serverId: string | null): string[] {
+    const pinnedKeys = Array.isArray(settings.pinnedSessionKeysV1) ? settings.pinnedSessionKeysV1 : [];
+    const serverPrefix = serverId ? `${serverId}:` : null;
+    const seen = new Set<string>();
+    const ids: string[] = [];
+    for (const value of pinnedKeys) {
+        const key = String(value ?? '').trim();
+        if (!key) continue;
+        const sessionId = serverPrefix && key.startsWith(serverPrefix)
+            ? key.slice(serverPrefix.length).trim()
+            : (!key.includes(':') ? key : '');
+        if (!sessionId || seen.has(sessionId)) continue;
+        seen.add(sessionId);
+        ids.push(sessionId);
+    }
+    return ids;
+}
+
+function shouldIncludeSessionListAttentionRows(settings: Pick<Settings, 'sessionListAttentionPromotionModeV1'>): boolean {
+    return normalizeSessionListAttentionPromotionMode(settings.sessionListAttentionPromotionModeV1) !== 'off';
+}
+
+class Sync {
+
+        encryption!: Encryption;
+        serverID!: string;
+        anonID!: string;
+        private credentials!: AuthCredentials;
+        private pauseController = new PauseController();
+        private activeEndpointSupervisor: ManagedEndpointSupervisor | null = null;
+        private detachActiveEndpointSupervisorListener: (() => void) | null = null;
+        private lastObservedEndpointPhase: ManagedEndpointSupervisorState['phase'] | null = null;
+        private syncTuning: SyncTuning = loadSyncTuning();
+      private resumeInFlight: Promise<void> | null = null;
+      private readonly usesPersistentDesktopSync = isTauriDesktop();
+      private isForeground = this.usesPersistentDesktopSync || AppState.currentState === 'active';
+      public encryptionCache = new EncryptionCache();
+    private sessionsSync: InvalidateSync;
+    private fetchSessionsInFlight: { generation: number; promise: Promise<void> } | null = null;
+    private fetchMoreSessionsInFlight: Promise<void> | null = null;
+    private sessionListNextCursor: string | null = null;
+    private sessionListHasMore = false;
+    private sessionListScrollActive = false;
+    private sessionListScrollActiveUntilMs = 0;
+    private sessionListScrollSettleTimer: ReturnType<typeof setTimeout> | null = null;
+    private sessionListScrollIdleResolvers: Array<() => void> = [];
+    private fetchMoreArchivedSessionsInFlight: Promise<void> | null = null;
+    private archivedSessionListNextCursor: string | null = null;
+    private archivedSessionListHasMore = false;
+    private messagesSync = new Map<string, InvalidateSync>();
+    private activeServerSessionIds = new Set<string>();
+    private hasFetchedSessionsSnapshotForActiveServer = false;
+    private serverScopeGeneration = 0;
+      private sessionByIdHydrationInFlight = new Map<string, Promise<EnsureSessionVisibleForRouteResult>>();
+      private sessionReceivedMessages = new Map<string, Map<string, number>>();
+      private sessionMessagesBeforeSeqByKey = new Map<string, number>();
+      private sessionMessagesHasMoreOlderByKey = new Map<string, boolean>();
+      private sessionMessagesFetchLatestInFlightByKey = new Set<string>();
+      private sessionMessagesFetchedLatestByKey = new Set<string>();
+      private sessionMessagesLoadingOlderByKey = new Set<string>();
+      private sessionMessagesLoadingNewerByKey = new Set<string>();
+      private deferredMessagesFetchSessionIds = new Set<string>();
+      private sessionMessagesPaginationSupportedByKey = new Map<string, boolean>();
+      private directSessionOlderCursorBySessionId = new Map<string, string | null>();
+      private directSessionHasMoreOlderBySessionId = new Map<string, boolean>();
+      private directSessionTailCursorBySessionId = new Map<string, string | null>();
+      private sessionViewport = new Map<string, SessionViewportSnapshot>();
+      private sessionViewportHydratedStorageKey: string | null = null;
+      /**
+       * Over-approximate set of sessionIds with a persisted viewport record,
+       * so hot-path live-tail marks skip the storage read when nothing can
+       * exist. Cap-eviction may leave stale ids; deleting an absent record
+       * is a no-op, so over-approximation stays correct.
+       */
+      private persistedSessionViewportIds = new Set<string>();
+      private deferredForwardLoadingSessions = new Set<string>();
+      private sessionDataKeys = new Map<string, Uint8Array>(); // Store session data encryption keys internally
+      private sessionDataKeyEnvelopes = new Map<string, string>(); // Track wrapped DEK envelopes so unchanged keys can be reused safely
+      private machineDataKeys = new Map<string, Uint8Array>(); // Store machine data encryption keys internally
+      private artifactDataKeys = new Map<string, Uint8Array>(); // Store artifact data encryption keys internally
+    private readStateV1RepairAttempted = new Set<string>();
+    private readStateV1RepairInFlight = new Set<string>();
+    private settingsSync: InvalidateSync;
+    private profileSync: InvalidateSync;
+    private purchasesSync: InvalidateSync;
+    private machinesSync: InvalidateSync;
+    private pushTokenSync: InvalidateSync;
+    private nativeUpdateSync: InvalidateSync;
+    private artifactsSync: InvalidateSync;
+    private friendsSync: InvalidateSync;
+    private friendRequestsSync: InvalidateSync;
+    private feedSync: InvalidateSync;
+    private pendingMessageCommitRetryTimers = new Map<string, ReturnType<typeof setTimeout>>();
+    private todosSync: InvalidateSync;
+    private automationsSync: InvalidateSync;
+    private activityAccumulator: ActivityUpdateAccumulator;
+    private machineActivityAccumulator: MachineActivityAccumulator;
+    private pendingSettings: Partial<Settings> = {};
+    private pendingSettingsScope: AccountSettingsScope | null = null;
+    private pendingSettingsFlushTimer: ReturnType<typeof setTimeout> | null = null;
+    private pendingSettingsDirty = false;
+    private sessionMaterializedMaxSeqById: Record<string, number> = {};
+    private deferredTranscriptState: DeferredTranscriptState = createDeferredTranscriptState();
+    private deferredSessionStateHydrationState: DeferredSessionStateHydrationState = createDeferredSessionStateHydrationState();
+    private readyNotificationProgressBySessionId: Record<string, ReadyNotificationProgress> = {};
+    private sessionMaterializedMaxSeqFlushTimer: ReturnType<typeof setTimeout> | null = null;
+    private sessionMaterializedMaxSeqDirty = false;
+    private nativeInactiveCheckpointTimer: ReturnType<typeof setTimeout> | null = null;
+    private jsThreadLagTelemetry: JsThreadLagTelemetry | null = null;
+      private changesCursor: string | null = null;
+        private safeCursorLagState: SafeCursorLagTripwireState | null = null;
+        private webSyncClientIdentity: WebSyncClientIdentity | null = null;
+        private webSyncClientIdentityHeartbeatTimer: ReturnType<typeof setInterval> | null = null;
+        private webLifecycleHeartbeatTimer: ReturnType<typeof setInterval> | null = null;
+        private webLifecycleHeartbeatLastNowMs: number | null = null;
+		      private lastSocketDisconnectedAtMs: number | null = null;
+		      private lastSocketOfflineDurationMs: number | null = null;
+              private socketOfflineCatchUpConsumedSessionIds = new Set<string>();
+	      revenueCatInitialized = false;
+	    private settingsSecretsKey: Uint8Array | null = null;
+	    private settingsSecretsReadKeys: readonly Uint8Array[] = [];
+	    private messageTransport: SyncMessageTransport = createDefaultMessageTransport();
+    private updatesSubscribed = false;
+
+    // Generic locking mechanism
+    private recalculationLockCount = 0;
+    private lastRecalculationTime = 0;
+	    private machinesRefreshInFlight: Promise<void> | null = null;
+	    private lastMachinesRefreshAt = 0;
+
+    private readSocketOfflineDurationMs(): number {
+        if (this.lastSocketDisconnectedAtMs != null) {
+            return Math.max(0, Date.now() - this.lastSocketDisconnectedAtMs);
+        }
+        return Math.max(0, this.lastSocketOfflineDurationMs ?? 0);
+    }
+
+    private readSocketOfflineDurationMsForSession(sessionId: string): number {
+        const offlineForMs = this.readSocketOfflineDurationMs();
+        if (offlineForMs <= 0) return 0;
+        if (
+            this.lastSocketDisconnectedAtMs == null
+            && this.socketOfflineCatchUpConsumedSessionIds.has(sessionId)
+        ) {
+            return 0;
+        }
+        return offlineForMs;
+    }
+
+    private markSocketOfflineCatchUpConsumedForSession(sessionId: string, offlineForMs: number): void {
+        if (!sessionId || offlineForMs <= 0 || this.lastSocketDisconnectedAtMs != null) return;
+        this.socketOfflineCatchUpConsumedSessionIds.add(sessionId);
+    }
+
+	        constructor() {
+        syncPerformanceTelemetry.configure({
+            enabled: this.syncTuning.syncPerformanceTelemetryEnabled,
+            slowThresholdMs: this.syncTuning.syncPerformanceTelemetrySlowThresholdMs,
+            flushIntervalMs: this.syncTuning.syncPerformanceTelemetryFlushIntervalMs,
+            emitSummary: emitSyncPerformanceSummaryToConsole,
+        });
+        installSyncPerformanceTelemetryGlobal(syncPerformanceTelemetry);
+        installSyncReliabilityTelemetryGlobal(syncReliabilityTelemetry);
+        registerAccountSettingsDaemonSpawnPreparation(this.prepareAccountSettingsForDaemonSpawn);
+        this.syncJsThreadLagTelemetryRuntime();
+        fireAndForget(Promise.resolve().then(() => {
+            const pruned = pruneStaleInstanceChangesCursors({
+                nowMs: Date.now(),
+                retentionMs: this.syncTuning.webSyncInstanceCursorRetentionMs,
+                maxKeys: 500,
+            });
+            if (pruned > 0) {
+                syncReliabilityTelemetry.record('sync.webInstanceCursor.reaped', { pruned });
+            }
+        }), { tag: 'Sync.pruneStaleInstanceChangesCursors' });
+        dbgSettings('Sync.constructor: loaded pendingSettings', {
+            pendingKeys: Object.keys(this.pendingSettings).sort(),
+        });
+        applyInitialAppStateConnectivityGate({
+            isForeground: this.isForeground,
+            pauseController: this.pauseController,
+            setNetworkAllowed: setServerReachabilityNetworkAllowed,
+        });
+        const onConnectionStateChange = (apiSocket as {
+            onConnectionStateChange?: typeof apiSocket.onConnectionStateChange;
+        } | undefined)?.onConnectionStateChange;
+        if (typeof onConnectionStateChange === 'function') {
+            let skippedInitialIdleConnectionState = false;
+            bindManagedConnectionStateToRealtimeStore({
+                subscribe: (listener) => onConnectionStateChange((state) => {
+                    if (!skippedInitialIdleConnectionState && state.phase === 'idle') {
+                        skippedInitialIdleConnectionState = true;
+                        return;
+                    }
+                    skippedInitialIdleConnectionState = true;
+                    listener(state);
+                }),
+                setEndpointConnectivity: (snapshot) => {
+                    storage.getState().setEndpointConnectivity(snapshot);
+                },
+                onOnline: () => {
+                    queueMicrotask(() => {
+                        fireAndForget(this.resumeSync('server-reachable'), { tag: 'Sync.resumeSync.server-reachable' });
+                    });
+                },
+            });
+        }
+        const onSuccess = () => {
+            storage.getState().clearSyncError();
+            storage.getState().setLastSyncAt(Date.now());
+        };
+        const onError = (e: any) => {
+            const message = e instanceof Error ? e.message : String(e);
+            const retryable = !(e instanceof HappyError && e.canTryAgain === false);
+            const kind: 'auth' | 'config' | 'network' | 'server' | 'unknown' =
+                e instanceof HappyError && e.kind ? e.kind : 'unknown';
+            storage.getState().setSyncError({ message, retryable, kind, at: Date.now() });
+        };
+        const readPendingServerSettingsKeys = () => Object
+            .keys(stripLocalOnlyAccountSettings(this.pendingSettings))
+            .sort();
+        const onSettingsSuccess = () => {
+            const now = Date.now();
+            storage.getState().clearSyncError();
+            storage.getState().setLastSyncAt(now);
+            storage.getState().setAccountSettingsSyncStatus(createAccountSettingsSyncedStatus(now));
+        };
+        const onSettingsError = (e: any) => {
+            onError(e);
+            storage.getState().setAccountSettingsSyncStatus(createAccountSettingsFailedStatus({
+                error: e,
+                pendingServerKeys: readPendingServerSettingsKeys(),
+            }));
+        };
+        const onSettingsRetryFailure = (
+            e: any,
+            info: { failuresCount: number; nextDelayMs: number; nextRetryAt: number },
+        ) => {
+            storage.getState().setAccountSettingsSyncStatus(createAccountSettingsRetryingStatus({
+                error: e,
+                retryInfo: info,
+                pendingServerKeys: readPendingServerSettingsKeys(),
+            }));
+        };
+
+          const onRetry = (info: { failuresCount: number; nextDelayMs: number; nextRetryAt: number }) => {
+              const ex = storage.getState().syncError;
+              if (!ex) return;
+              storage.getState().setSyncError({ ...ex, failuresCount: info.failuresCount, nextRetryAt: info.nextRetryAt });
+          };
+
+            const pause = this.pauseController;
+            const backoff = {
+                minDelayMs: this.syncTuning.invalidateSyncBackoffMinDelayMs,
+                maxDelayMs: this.syncTuning.invalidateSyncBackoffMaxDelayMs,
+                maxFailureCount: 'infinite' as const,
+            };
+
+            this.sessionsSync = new InvalidateSync(this.fetchSessions, { onError, onSuccess, onRetry, pause, backoff });
+            this.settingsSync = new InvalidateSync(this.syncSettings, {
+                onError: onSettingsError,
+                onSuccess: onSettingsSuccess,
+                onRetry,
+                onRetryFailure: onSettingsRetryFailure,
+                pause,
+                backoff,
+            });
+            this.profileSync = new InvalidateSync(this.fetchProfile, { onError, onSuccess, onRetry, pause, backoff });
+            this.purchasesSync = new InvalidateSync(this.syncPurchases, { onError, onSuccess, onRetry, pause, backoff });
+            this.machinesSync = new InvalidateSync(this.fetchMachines, { onError, onSuccess, onRetry, pause, backoff });
+            this.nativeUpdateSync = new InvalidateSync(this.fetchNativeUpdate, { pause, backoff });
+            this.artifactsSync = new InvalidateSync(this.fetchArtifactsList, { pause, backoff });
+            this.friendsSync = new InvalidateSync(this.fetchFriends, { pause, backoff });
+            this.friendRequestsSync = new InvalidateSync(this.fetchFriendRequests, { pause, backoff });
+            this.feedSync = new InvalidateSync(this.fetchFeed, { pause, backoff });
+            this.todosSync = new InvalidateSync(this.fetchTodos, { pause, backoff });
+            this.automationsSync = new InvalidateSync(this.fetchAutomations, { pause, backoff });
+
+          const registerPushToken = async () => {
+              if (__DEV__ && config.enableDevPushTokenRegistration !== true) {
+                  return;
+              }
+              await this.registerPushToken();
+          }
+            this.pushTokenSync = new InvalidateSync(registerPushToken, { pause, backoff });
+            this.activityAccumulator = new ActivityUpdateAccumulator(
+                this.flushActivityUpdates.bind(this),
+                this.syncTuning.activityUpdateDebounceMs,
+            );
+            this.machineActivityAccumulator = new MachineActivityAccumulator(this.flushMachineActivityUpdates.bind(this), 300);
+
+          // Listen for app state changes to pause sync + run a single centralized resume pipeline.
+          AppState.addEventListener('change', (nextAppState) => {
+              if (this.usesPersistentDesktopSync && nextAppState !== 'active') {
+                  this.clearNativeInactiveCheckpointTimer();
+                  this.isForeground = true;
+                  setServerReachabilityNetworkAllowed(true);
+                  this.pauseController.resume();
+                  return;
+              }
+              if (nextAppState === 'active') {
+                  this.clearNativeInactiveCheckpointTimer();
+                  this.isForeground = true;
+                  this.resumeNativeCryptoWorkerDispatchAfterForeground('Sync.nativeCryptoWorkerQueue.active.appState');
+                  setServerReachabilityNetworkAllowed(true);
+                  log.log('📱 App became active');
+                  this.pauseController.resume();
+                  try {
+                      this.activeEndpointSupervisor?.invalidate();
+                  } catch {
+                      // ignore
+                  }
+                  fireAndForget(invalidateAllServerReachabilitySupervisors(), { tag: 'Sync.invalidateAllServerReachabilitySupervisors' });
+                  try {
+                      apiSocket.connect();
+                  } catch {
+                      // ignore
+                  }
+                  fireAndForget(this.resumeSync('app-foreground'), { tag: 'Sync.resumeSync.app-foreground' });
+              } else {
+                  this.isForeground = false;
+                  this.markNativeCryptoWorkerBackgroundQuiescent();
+                  setServerReachabilityNetworkAllowed(false);
+                  log.log(`📱 App state changed to: ${nextAppState}`);
+                  this.pauseController.pause();
+                  try {
+                      apiSocket.disconnect();
+                  } catch {
+                      // ignore
+                  }
+                  fireAndForget(stopServerReachabilitySupervisors(), { tag: 'Sync.stopServerReachabilitySupervisors' });
+                  if (nextAppState === 'inactive') {
+                      this.scheduleNativeInactiveCheckpoint();
+                  } else {
+                      this.clearNativeInactiveCheckpointTimer();
+                      this.flushBackgroundSyncCheckpointsNow();
+                  }
+              }
+          });
+
+          // Web: AppState events are not always reliable when tabs are backgrounded. Mirror the
+          // pause/resume behavior using document visibility.
+          if (Platform.OS === 'web' && !this.usesPersistentDesktopSync) {
+              const doc = (globalThis as unknown as { document?: any }).document;
+              if (doc && typeof doc.addEventListener === 'function' && typeof doc.removeEventListener === 'function') {
+                  const pauseForWebBackground = (tag: string) => {
+                      this.isForeground = false;
+                      this.markNativeCryptoWorkerBackgroundQuiescent();
+                      setServerReachabilityNetworkAllowed(false);
+                      this.pauseController.pause();
+                      try {
+                          apiSocket.disconnect();
+                      } catch {
+                          // ignore
+                      }
+                      fireAndForget(stopServerReachabilitySupervisors(), { tag });
+                      this.flushBackgroundSyncCheckpointsNow();
+                  };
+                  const resumeForWebForeground = (tag: string) => {
+                      this.isForeground = true;
+                      this.resumeNativeCryptoWorkerDispatchAfterForeground(`${tag}.nativeCryptoWorkerQueue`);
+                      setServerReachabilityNetworkAllowed(true);
+                      this.pauseController.resume();
+                      try {
+                          this.activeEndpointSupervisor?.invalidate();
+                      } catch {
+                          // ignore
+                      }
+                      fireAndForget(invalidateAllServerReachabilitySupervisors(), { tag: `${tag}.reachability` });
+                      try {
+                          apiSocket.connect();
+                      } catch {
+                          // ignore
+                      }
+                      fireAndForget(this.resumeSync('app-foreground'), { tag });
+                  };
+                  const onVisibilityChange = () => {
+                      const state = String(doc.visibilityState ?? '').trim().toLowerCase();
+                      if (state === 'hidden' || state === 'visible') {
+                          const nextIsForeground = state === 'visible';
+                          if (this.isForeground === nextIsForeground) {
+                              return;
+                          }
+                      }
+                      if (state === 'hidden') {
+                          pauseForWebBackground('Sync.stopServerReachabilitySupervisors.visibility');
+                          return;
+                      }
+                      if (state === 'visible') {
+                          resumeForWebForeground('Sync.resumeSync.visibility');
+                      }
+                  };
+                  const onPageHide = () => {
+                      pauseForWebBackground('Sync.stopServerReachabilitySupervisors.pagehide');
+                  };
+                  const onPageShow = (event?: { persisted?: boolean }) => {
+                      const state = String(doc.visibilityState ?? '').trim().toLowerCase();
+                      if (event?.persisted === true || state === 'visible') {
+                          resumeForWebForeground('Sync.resumeSync.pageshow');
+                      }
+                  };
+                  const onFreeze = () => {
+                      pauseForWebBackground('Sync.stopServerReachabilitySupervisors.freeze');
+                  };
+                  const onResume = () => {
+                      resumeForWebForeground('Sync.resumeSync.page-lifecycle-resume');
+                  };
+                  const startWebLifecycleHeartbeat = () => {
+                      if (this.webLifecycleHeartbeatTimer) return;
+                      this.webLifecycleHeartbeatLastNowMs = Date.now();
+                      this.webLifecycleHeartbeatTimer = setInterval(() => {
+                          const previous = this.webLifecycleHeartbeatLastNowMs ?? Date.now();
+                          const now = Date.now();
+                          this.webLifecycleHeartbeatLastNowMs = now;
+                          this.evaluateSafeCursorLagTripwireNow(now);
+                          const elapsedMs = now - previous;
+                          if (elapsedMs < this.syncTuning.webLifecycleHeartbeatDriftMs) {
+                              return;
+                          }
+                          const state = String(doc.visibilityState ?? '').trim().toLowerCase();
+                          if (state === 'visible') {
+                              resumeForWebForeground('Sync.resumeSync.lifecycle-heartbeat');
+                          }
+                      }, this.syncTuning.webLifecycleHeartbeatTickMs);
+                      try {
+                          (this.webLifecycleHeartbeatTimer as unknown as { unref?: () => void }).unref?.();
+                      } catch {
+                          // ignore
+                      }
+                  };
+                  try {
+                      doc.addEventListener('visibilitychange', onVisibilityChange);
+                  } catch {
+                      // ignore
+                  }
+                  const eventTarget = globalThis as unknown as {
+                      addEventListener?: (event: string, listener: (event?: { persisted?: boolean }) => void) => void;
+                  };
+                  try {
+                      eventTarget.addEventListener?.('pagehide', onPageHide);
+                      eventTarget.addEventListener?.('pageshow', onPageShow);
+                      eventTarget.addEventListener?.('freeze', onFreeze);
+                      eventTarget.addEventListener?.('resume', onResume);
+                  } catch {
+                      // ignore
+                  }
+                  startWebLifecycleHeartbeat();
+                  if (doc.wasDiscarded === true) {
+                      syncReliabilityTelemetry.recordCritical('sync.webPage.wasDiscarded', {
+                          visibilityState: String(doc.visibilityState ?? ''),
+                      });
+                      const state = String(doc.visibilityState ?? '').trim().toLowerCase();
+                      if (state !== 'hidden') {
+                          resumeForWebForeground('Sync.resumeSync.document-was-discarded');
+                      }
+                  }
+                  // Seed initial visibility state so a tab that starts hidden is treated as backgrounded immediately.
+                  try {
+                      onVisibilityChange();
+                  } catch {
+                      // ignore
+                  }
+              }
+          }
+      }
+
+      public getSyncTuning(): SyncTuning {
+          return this.syncTuning;
+      }
+
+      private resolveSessionListScrollIdleWaiters(): void {
+          const waiters = this.sessionListScrollIdleResolvers.splice(0, this.sessionListScrollIdleResolvers.length);
+          for (const resolve of waiters) {
+              resolve();
+          }
+      }
+
+      private clearSessionListScrollActivity(): void {
+          if (this.sessionListScrollSettleTimer) {
+              clearTimeout(this.sessionListScrollSettleTimer);
+              this.sessionListScrollSettleTimer = null;
+          }
+          this.sessionListScrollActive = false;
+          this.sessionListScrollActiveUntilMs = 0;
+          this.resolveSessionListScrollIdleWaiters();
+      }
+
+      private scheduleSessionListScrollSettleTimer(delayMs: number): void {
+          if (this.sessionListScrollSettleTimer) return;
+          const safeDelayMs = Math.max(0, Math.trunc(delayMs));
+          this.sessionListScrollSettleTimer = setTimeout(() => {
+              this.sessionListScrollSettleTimer = null;
+              const remainingMs = this.sessionListScrollActiveUntilMs - Date.now();
+              if (remainingMs > 0) {
+                  this.scheduleSessionListScrollSettleTimer(remainingMs);
+                  return;
+              }
+              this.sessionListScrollActive = false;
+              this.resolveSessionListScrollIdleWaiters();
+          }, safeDelayMs);
+      }
+
+      public markSessionListScrollActivity(): void {
+          this.sessionListScrollActive = true;
+          this.sessionListScrollActiveUntilMs = Date.now() + SESSION_LIST_BACKGROUND_HYDRATION_SCROLL_SETTLE_MS;
+          this.scheduleSessionListScrollSettleTimer(SESSION_LIST_BACKGROUND_HYDRATION_SCROLL_SETTLE_MS);
+      }
+
+      private waitForSessionListScrollIdle = async (): Promise<void> => {
+          if (!this.sessionListScrollActive) return;
+          await new Promise<void>((resolve) => {
+              this.sessionListScrollIdleResolvers.push(resolve);
+          });
+      };
+
+      private getSessionMessagesPageSize(options?: LoadOlderMessagesOptions): number {
+          const optionLimit = options?.limit;
+          if (typeof optionLimit === 'number' && Number.isFinite(optionLimit)) {
+              return Math.max(1, Math.trunc(optionLimit));
+          }
+          return Math.max(1, Math.trunc(this.syncTuning.sessionMessagesPageSize));
+      }
+
+      private getMessageDecryptBatchOptions() {
+          return {
+              initialMessageDecryptBatchSize: this.syncTuning.initialMessageDecryptBatchSize,
+              messageDecryptBatchSize: this.syncTuning.messageDecryptBatchSize,
+              messageDecryptYieldDelayMs: this.syncTuning.messageDecryptYieldDelayMs,
+          };
+      }
+
+      private syncJsThreadLagTelemetryRuntime(): void {
+          if (!this.jsThreadLagTelemetry) {
+              this.jsThreadLagTelemetry = createJsThreadLagTelemetry({
+                  telemetry: syncPerformanceTelemetry,
+                  sampleIntervalMs: this.syncTuning.jsThreadLagTelemetrySampleIntervalMs,
+                  flushIntervalMs: this.syncTuning.syncPerformanceTelemetryFlushIntervalMs,
+                  thresholdMs: this.syncTuning.jsThreadLagTelemetryThresholdMs,
+                  maxSamples: this.syncTuning.jsThreadLagTelemetryMaxSamples,
+              });
+          }
+          if (!syncPerformanceTelemetry.isEnabled()) {
+              this.stopJsThreadLagTelemetryRuntime();
+              return;
+          }
+          this.jsThreadLagTelemetry.start();
+      }
+
+      private stopJsThreadLagTelemetryRuntime(): void {
+          const telemetry = this.jsThreadLagTelemetry;
+          if (!telemetry) return;
+          const summary = telemetry.snapshot();
+          telemetry.stop();
+          if (summary.count > 0 && syncPerformanceTelemetry.isEnabled()) {
+              telemetry.flushSummary();
+          }
+          telemetry.reset();
+      }
+
+      private markNativeCryptoWorkerBackgroundQuiescent(): void {
+          Encryption.markNativeCryptoWorkerQueueQuiescent({
+              telemetryEnabled: this.syncTuning.nativeCryptoWorkerTelemetryEnabled,
+          });
+      }
+
+      private resumeNativeCryptoWorkerDispatchAfterForeground(tag: string): void {
+          const activeEncryption = (this as { encryption?: Encryption }).encryption;
+          fireAndForget(Encryption.markNativeCryptoWorkerQueueActive({
+              telemetryEnabled: this.syncTuning.nativeCryptoWorkerTelemetryEnabled,
+              capabilityStalenessMs: this.syncTuning.nativeCryptoWorkerCapabilityStalenessMs,
+              revalidationTimeoutMs: this.syncTuning.nativeCryptoWorkerTimeoutMs,
+              revalidateCapabilities: this.syncTuning.nativeCryptoWorkerMode === 'off' || !activeEncryption
+                  ? undefined
+                  : async () => {
+                      await activeEncryption.warmNativeCryptoWorkerForDiagnostics();
+                  },
+          }), { tag });
+      }
+
+      private configureEncryptionRuntime(encryption: Encryption, accountId: string): void {
+          const serverId = String(getActiveServerSnapshot().serverId ?? '').trim() || null;
+          encryption.configureAesBatchConcurrencyLimit(this.syncTuning.encryptionAesBatchConcurrencyLimit);
+          encryption.configureNativeCryptoWorker({
+              routing: {
+                  mode: this.syncTuning.nativeCryptoWorkerMode,
+                  maxBatchSize: this.syncTuning.nativeCryptoWorkerMaxBatchSize,
+                  minBatchSize: this.syncTuning.nativeCryptoWorkerMinBatchSize,
+                  minPayloadBytes: this.syncTuning.nativeCryptoWorkerMinPayloadBytes,
+                  timeoutMs: this.syncTuning.nativeCryptoWorkerTimeoutMs,
+                  logFallbacks: this.syncTuning.nativeCryptoWorkerLogFallbacks,
+                  telemetryEnabled: this.syncTuning.nativeCryptoWorkerTelemetryEnabled,
+                  streamingSampleRate: this.syncTuning.nativeCryptoWorkerStreamingSampleRate,
+                  capabilityStalenessMs: this.syncTuning.nativeCryptoWorkerCapabilityStalenessMs,
+              },
+              scope: {
+                  accountId,
+                  serverId,
+                  generation: 0,
+              },
+          });
+          if (this.syncTuning.nativeCryptoWorkerMode !== 'off') {
+              void encryption.warmNativeCryptoWorkerForDiagnostics();
+          }
+      }
+
+      public setActiveEndpointSupervisor(supervisor: ManagedEndpointSupervisor | null): void {
+          if (this.activeEndpointSupervisor === supervisor) return;
+
+          try {
+              this.detachActiveEndpointSupervisorListener?.();
+          } catch {
+              // ignore
+          }
+          this.detachActiveEndpointSupervisorListener = null;
+          this.lastObservedEndpointPhase = null;
+          this.activeEndpointSupervisor = supervisor;
+
+          if (!supervisor) return;
+
+          // Seed phase and subscribe to online transitions so we can kick off one consolidated resume pipeline.
+          try {
+              this.lastObservedEndpointPhase = supervisor.getState().phase;
+          } catch {
+              this.lastObservedEndpointPhase = null;
+          }
+
+          this.detachActiveEndpointSupervisorListener = supervisor.subscribe((next) => {
+              const prev = this.lastObservedEndpointPhase;
+              this.lastObservedEndpointPhase = next.phase;
+              if (prev && prev !== 'online' && next.phase === 'online') {
+                  // Use a microtask so callers that publish state synchronously don't re-enter.
+                  queueMicrotask(() => {
+                      fireAndForget(this.resumeSync('endpoint-online'), { tag: 'Sync.resumeSync.endpoint-online' });
+                  });
+              }
+          });
+      }
+
+    setMessageTransport(transport: SyncMessageTransport): void {
+        this.messageTransport = transport;
+    }
+
+    resetMessageTransport(): void {
+        this.messageTransport = createDefaultMessageTransport();
+    }
+
+    private getWebSyncClientIdentity(): WebSyncClientIdentity | null {
+        if (Platform.OS !== 'web') return null;
+        if (this.webSyncClientIdentity) return this.webSyncClientIdentity;
+        if (typeof globalThis.sessionStorage === 'undefined' || typeof globalThis.localStorage === 'undefined') {
+            return null;
+        }
+
+        try {
+            const identity = resolveWebSyncClientIdentity({
+                sessionStorage: globalThis.sessionStorage,
+                localStorage: globalThis.localStorage,
+                nowMs: Date.now(),
+                liveTtlMs: this.syncTuning.webSyncInstanceLiveTtlMs,
+            });
+            this.webSyncClientIdentity = identity;
+            if (!this.webSyncClientIdentityHeartbeatTimer) {
+                const timer = setInterval(() => {
+                    identity.heartbeat(Date.now());
+                }, this.syncTuning.webSyncInstanceHeartbeatMs);
+                const nodeTimer = timer as unknown as { unref?: () => void };
+                nodeTimer.unref?.();
+                this.webSyncClientIdentityHeartbeatTimer = timer;
+            }
+            return identity;
+        } catch {
+            return null;
+        }
+    }
+
+    private buildCursorScopeForServer(serverScopeRaw: string | null | undefined): ChangesCursorScope | null {
+        const scope = String(serverScopeRaw ?? '').trim();
+        const accountId = String(this.serverID ?? '').trim();
+        if (!scope || !accountId) return null;
+        const identity = this.getWebSyncClientIdentity();
+        if (!identity) return { serverScope: scope, accountId };
+        return { serverScope: scope, accountId, instanceId: identity.instanceId };
+    }
+
+    private getChangesCursorScope(): ChangesCursorScope | null {
+        return this.buildCursorScopeForServer(String(getActiveServerSnapshot().serverId ?? '').trim());
+    }
+
+    private getDirectSessionCursorScope(sessionId: string): ChangesCursorScope | null {
+        return this.buildCursorScopeForServer(this.getDirectSessionServerScope(sessionId) ?? String(getActiveServerSnapshot().serverId ?? '').trim());
+    }
+
+    private clearActiveAccountSettingsScope(): void {
+        this.flushSessionMaterializedMaxSeqForCurrentScopeNow();
+        this.pendingSettings = {};
+        this.pendingSettingsScope = null;
+        this.sessionMaterializedMaxSeqById = {};
+        this.deferredTranscriptState = createDeferredTranscriptState();
+        this.deferredSessionStateHydrationState = createDeferredSessionStateHydrationState();
+        this.readyNotificationProgressBySessionId = {};
+        storage.getState().clearSettingsScope();
+        storage.getState().clearProfileScope();
+        storage.getState().clearPetsScope();
+        storage.getState().clearSessionLocalStateScope();
+        storage.getState().resetAccountSettingsSyncStatus();
+    }
+
+    private activateAccountSettingsScope(accountId: string): AccountSettingsScope | null {
+        const serverId = String(getActiveServerSnapshot().serverId ?? '').trim();
+        const scope = createAccountSettingsScope(serverId, accountId);
+        if (!scope) {
+            this.clearActiveAccountSettingsScope();
+            return null;
+        }
+
+        if (!areAccountSettingsScopesEqual(this.pendingSettingsScope, scope)) {
+            this.flushSessionMaterializedMaxSeqForCurrentScopeNow();
+            storage.getState().resetAccountSettingsSyncStatus();
+        }
+        const legacyScopes = getServerProfileLegacyServerIds(serverId)
+            .map((legacyServerId) => createAccountSettingsScope(legacyServerId, accountId))
+            .filter((legacyScope): legacyScope is AccountSettingsScope =>
+                !!legacyScope && !areAccountSettingsScopesEqual(legacyScope, scope));
+
+        migratePendingSetupIntentScopes(scope, legacyScopes);
+        migratePendingTerminalConnectScopes(scope, legacyScopes);
+        migratePendingNotificationActionScopes(scope, legacyScopes);
+        migratePendingNotificationNavScopes(scope, legacyScopes);
+        storage.getState().activateSettingsScope(scope, legacyScopes);
+        storage.getState().activateProfileScope(scope, legacyScopes);
+        storage.getState().activatePetsScope(scope, legacyScopes);
+        storage.getState().activateSessionLocalStateScope(scope, legacyScopes);
+        this.pendingSettings = loadPendingAccountSettings(scope);
+        this.pendingSettingsScope = scope;
+        this.sessionMaterializedMaxSeqById = loadSessionMaterializedMaxSeqById(scope);
+        this.deferredTranscriptState = createDeferredTranscriptState();
+        this.deferredSessionStateHydrationState = createDeferredSessionStateHydrationState();
+        this.readyNotificationProgressBySessionId = {};
+        this.sessionMaterializedMaxSeqDirty = false;
+        dbgSettings('Sync.activateAccountSettingsScope: loaded pendingSettings', {
+            scope,
+            pendingKeys: Object.keys(this.pendingSettings).sort(),
+        });
+        return scope;
+    }
+
+    private parseAccountIdForSettingsScope(
+        credentials: AuthCredentials,
+        context: string,
+    ): string | null {
+        try {
+            return parseToken(credentials.token);
+        } catch (error) {
+            this.clearActiveAccountSettingsScope();
+            warnSettings('Sync.activateAccountSettingsScopeForCredentials: invalid token', {
+                context,
+                error: error instanceof Error ? error.message : 'Unknown error',
+            });
+            return null;
+        }
+    }
+
+    private activateAccountSettingsScopeForCredentials(credentials: AuthCredentials): AccountSettingsScope | null {
+        const accountId = this.parseAccountIdForSettingsScope(credentials, 'activate');
+        return accountId ? this.activateAccountSettingsScope(accountId) : null;
+    }
+
+    private flushPendingSettingsForCurrentScopeNow(): void {
+        if (this.pendingSettingsFlushTimer) {
+            clearTimeout(this.pendingSettingsFlushTimer);
+            this.pendingSettingsFlushTimer = null;
+        }
+        this.pendingSettingsDirty = false;
+        if (!this.pendingSettingsScope) return;
+        savePendingAccountSettings(this.pendingSettingsScope, this.pendingSettings);
+    }
+
+    private schedulePendingSettingsFlush = () => {
+        scheduleDebouncedPendingSettingsFlush({
+            getTimer: () => this.pendingSettingsFlushTimer,
+            setTimer: (timer) => {
+                this.pendingSettingsFlushTimer = timer;
+            },
+            markDirty: () => {
+                this.pendingSettingsDirty = true;
+            },
+            consumeDirty: () => {
+                if (!this.pendingSettingsDirty) {
+                    return false;
+                }
+                this.pendingSettingsDirty = false;
+                return true;
+            },
+            flush: () => {
+                // Persist pending settings for crash/restart safety.
+                if (this.pendingSettingsScope) {
+                    savePendingAccountSettings(this.pendingSettingsScope, this.pendingSettings);
+                }
+                // Trigger server sync (can be retried later).
+                this.settingsSync.invalidate();
+            },
+            delayMs: 900,
+        });
+    };
+
+    async create(credentials: AuthCredentials, encryption: Encryption) {
+        const accountId = this.parseAccountIdForSettingsScope(credentials, 'create');
+        if (!accountId) throw new Error('Invalid auth token');
+        this.configureEncryptionRuntime(encryption, accountId);
+        this.credentials = credentials;
+        this.encryption = encryption;
+        this.anonID = encryption.anonID;
+        this.serverID = accountId;
+        setWarmCacheAccountScope(this.serverID);
+        this.activateAccountSettingsScope(accountId);
+        this.changesCursor = loadChangesCursor(this.getChangesCursorScope());
+        // Derive a stable per-account key for field-level secret settings.
+        // This is separate from the outer settings blob encryption.
+        try {
+            const keySet = deriveSettingsSecretsKeySet(resolveAccountScopedCryptoMaterialFromCredentials(credentials));
+            this.settingsSecretsKey = keySet.writeKey;
+            this.settingsSecretsReadKeys = keySet.readKeys;
+        } catch {
+            this.settingsSecretsKey = null;
+            this.settingsSecretsReadKeys = [];
+        }
+        this.hydrateWarmCachesForActiveServer();
+        this.syncJsThreadLagTelemetryRuntime();
+        await this.#init();
+
+        // UX: avoid blocking login forever if initial sync fetches hang/retry indefinitely.
+        // We still kick off the sync work in #init(); this just bounds the time we block the login call.
+        const initialAwaitTimeoutMs = 2500;
+        await Promise.all([
+            this.settingsSync.awaitQueue({ timeoutMs: initialAwaitTimeoutMs }),
+            this.profileSync.awaitQueue({ timeoutMs: initialAwaitTimeoutMs }),
+            this.purchasesSync.awaitQueue({ timeoutMs: initialAwaitTimeoutMs }),
+        ]);
+    }
+
+    async restore(credentials: AuthCredentials, encryption: Encryption) {
+        const accountId = this.parseAccountIdForSettingsScope(credentials, 'restore');
+        if (!accountId) throw new Error('Invalid auth token');
+        // NOTE: No awaiting anything here, we're restoring from a disk (ie app restarted)
+        // Purchases sync is invalidated in #init() and will complete asynchronously
+        this.configureEncryptionRuntime(encryption, accountId);
+        this.credentials = credentials;
+        this.encryption = encryption;
+        this.anonID = encryption.anonID;
+        this.serverID = accountId;
+        setWarmCacheAccountScope(this.serverID);
+        this.activateAccountSettingsScope(accountId);
+        this.changesCursor = loadChangesCursor(this.getChangesCursorScope());
+        try {
+            const keySet = deriveSettingsSecretsKeySet(resolveAccountScopedCryptoMaterialFromCredentials(credentials));
+            this.settingsSecretsKey = keySet.writeKey;
+            this.settingsSecretsReadKeys = keySet.readKeys;
+        } catch {
+            this.settingsSecretsKey = null;
+            this.settingsSecretsReadKeys = [];
+        }
+        this.hydrateWarmCachesForActiveServer();
+        this.syncJsThreadLagTelemetryRuntime();
+        await this.#init();
+    }
+
+    private hydrateWarmCachesForActiveServer(): void {
+        const serverId = String(getActiveServerSnapshot().serverId ?? '').trim();
+        const accountId = resolveWarmCacheAccountScope(loadPersistedProfile().id);
+        if (!serverId || !accountId) return;
+
+        const machineEntries = loadMachineDisplayWarmCacheEntries(serverId, accountId);
+        if (Object.keys(machineEntries).length > 0) {
+            storage.getState().replaceMachineDisplays(
+                Object.values(machineEntries).map((entry) => buildMachineDisplayRenderableFromCacheEntry(entry)),
+            );
+        }
+
+        const sessionEntries = loadSessionListWarmCacheEntries(serverId, accountId);
+        if (Object.keys(sessionEntries).length > 0) {
+            storage.getState().replaceSessionListRenderables(
+                Object.values(sessionEntries).map((entry) => buildSessionListRenderableFromCacheEntry(entry)),
+            );
+        }
+    }
+
+    private resetServerScopedRuntimeState = () => {
+        this.stopJsThreadLagTelemetryRuntime();
+        this.serverScopeGeneration += 1;
+        this.flushPendingSettingsForCurrentScopeNow();
+        this.flushSessionMaterializedMaxSeq();
+        this.clearActiveAccountSettingsScope();
+        apiSocket.disconnect();
+        this.activityAccumulator.reset();
+        this.machineActivityAccumulator.reset();
+
+        for (const timer of this.pendingMessageCommitRetryTimers.values()) {
+            clearTimeout(timer);
+        }
+        this.pendingMessageCommitRetryTimers.clear();
+
+        for (const timer of this.messagesSync.values()) {
+            timer.stop();
+        }
+        this.messagesSync.clear();
+        this.sessionReceivedMessages.clear();
+        this.sessionMessagesBeforeSeqByKey.clear();
+        this.sessionMessagesHasMoreOlderByKey.clear();
+        this.sessionMessagesFetchLatestInFlightByKey.clear();
+        this.sessionMessagesFetchedLatestByKey.clear();
+        this.sessionMessagesLoadingOlderByKey.clear();
+        this.sessionMessagesLoadingNewerByKey.clear();
+        this.deferredMessagesFetchSessionIds.clear();
+        this.sessionMessagesPaginationSupportedByKey.clear();
+        this.directSessionTailCursorBySessionId.clear();
+        this.sessionViewport.clear();
+        // Re-hydrate persisted viewport anchors for whichever scope becomes
+        // active next; persisted records themselves are scope-keyed and survive.
+        this.sessionViewportHydratedStorageKey = null;
+        this.sessionByIdHydrationInFlight.clear();
+        clearActiveViewingSessionsForServerScopeReset();
+        clearMountedSessionRealtimeScmConsumerScopes();
+        this.deferredForwardLoadingSessions.clear();
+        this.activeServerSessionIds.clear();
+        this.hasFetchedSessionsSnapshotForActiveServer = false;
+        this.fetchMoreSessionsInFlight = null;
+        this.sessionListNextCursor = null;
+        this.sessionListHasMore = false;
+        this.clearSessionListScrollActivity();
+        this.fetchMoreArchivedSessionsInFlight = null;
+        this.archivedSessionListNextCursor = null;
+        this.archivedSessionListHasMore = false;
+        this.sessionDataKeys.clear();
+        this.sessionDataKeyEnvelopes.clear();
+        this.machineDataKeys.clear();
+        this.artifactDataKeys.clear();
+        this.readStateV1RepairAttempted.clear();
+        this.readStateV1RepairInFlight.clear();
+
+        this.lastSocketDisconnectedAtMs = null;
+        this.lastSocketOfflineDurationMs = null;
+        this.socketOfflineCatchUpConsumedSessionIds.clear();
+        this.changesCursor = null;
+
+        storage.setState((state) => ({
+            ...state,
+            profile: { ...profileDefaults },
+            sessions: {},
+            sessionListRenderables: {},
+            sessionsData: null,
+            sessionListViewData: null,
+            sessionListViewDataByServerId: setActiveServerSessionListCache(
+                state.sessionListViewDataByServerId,
+                null,
+            ),
+            sessionScmStatus: {},
+            machines: {},
+            machineDisplayById: {},
+            machineListByServerId: (() => {
+                const activeServerId = String(getActiveServerSnapshot().serverId ?? '').trim();
+                if (!activeServerId) return state.machineListByServerId;
+                if (!(activeServerId in state.machineListByServerId)) return state.machineListByServerId;
+                const next = { ...state.machineListByServerId };
+                delete next[activeServerId];
+                return next;
+            })(),
+            machineListStatusByServerId: (() => {
+                const activeServerId = String(getActiveServerSnapshot().serverId ?? '').trim();
+                if (!activeServerId) return state.machineListStatusByServerId;
+                if (!(activeServerId in state.machineListStatusByServerId)) return state.machineListStatusByServerId;
+                const next = { ...state.machineListStatusByServerId };
+                delete next[activeServerId];
+                return next;
+            })(),
+            sessionMessages: {},
+            sessionPending: {},
+            artifacts: {},
+            friends: {},
+            users: {},
+            friendsLoaded: false,
+            feedItems: [],
+            feedHead: null,
+            feedTail: null,
+            feedHasMore: false,
+            feedLoaded: false,
+            todoState: null,
+            todosLoaded: false,
+            isDataReady: false,
+            realtimeStatus: 'disconnected',
+            socketStatus: 'disconnected',
+            socketLastError: null,
+            socketLastErrorAt: null,
+            syncError: null,
+            accountSettingsSyncStatus: createAccountSettingsIdleStatus(),
+            lastSyncAt: null,
+            purchases: { ...purchasesDefaults },
+        }));
+        this.revenueCatInitialized = false;
+    };
+
+    public async switchServer(credentials: AuthCredentials): Promise<void> {
+        const encryption = await createEncryptionFromAuthCredentials(credentials);
+
+        this.resetServerScopedRuntimeState();
+        apiSocket.initialize({ endpoint: getActiveServerSnapshot().serverUrl, token: credentials.token }, encryption);
+        await this.restore(credentials, encryption);
+    }
+
+    public disconnectServer(): void {
+        this.resetServerScopedRuntimeState();
+        clearWarmCacheAccountScope();
+    }
+
+    /**
+     * Encrypt a secret value into an encrypted-at-rest container.
+     * Used for transient persistence (e.g. local drafts) where plaintext must never be stored.
+     */
+    public encryptSecretValue(value: string): import('./encryption/secretSettings').SecretString | null {
+        const v = typeof value === 'string' ? value.trim() : '';
+        if (!v) return null;
+        if (!this.settingsSecretsKey) return null;
+        return { _isSecretValue: true, encryptedValue: encryptSecretString(v, this.settingsSecretsKey) };
+    }
+
+    /**
+     * Generic secret-string decryption helper for settings-like objects.
+     * Prefer this over adding per-field helpers unless a field needs special handling.
+     */
+    public decryptSecretValue(input: import('./encryption/secretSettings').SecretString | null | undefined): string | null {
+        return decryptSecretValueWithKeys(input, this.settingsSecretsReadKeys);
+    }
+
+    async #init() {
+
+        // Subscribe to updates
+        if (!this.updatesSubscribed) {
+            this.subscribeToUpdates();
+            this.updatesSubscribed = true;
+        }
+
+        // Sync initial PostHog opt-out state with stored settings
+        if (tracking) {
+            const currentSettings = storage.getState().settings;
+            if (currentSettings.analyticsOptOut) {
+                tracking.optOut();
+            } else {
+                tracking.optIn();
+            }
+        }
+        applyCrashReportsOptOut(storage.getState().settings.crashReportsOptOut);
+
+        // Initial bootstrap sync is orchestrated to avoid request storms.
+        fireAndForget(this.bootstrapSync(), { tag: 'Sync.bootstrapSync' });
+    }
+
+
+        onSessionVisible = (sessionId: string) => {
+            this.ensureSessionViewportHydrated();
+            const prevViewport = this.sessionViewport.get(sessionId);
+            if (prevViewport) {
+                this.sessionViewport.set(sessionId, { ...prevViewport, lastUpdatedAt: Date.now() });
+            } else {
+                this.markSessionLiveTailIntent(sessionId);
+            }
+            if (hasStaleTranscriptMarkers(this.deferredTranscriptState, sessionId)) {
+                // C6/D2a: a row was edited while hidden. Refetch only the stale region and merge
+                // it in place (applyMessages upserts) instead of wiping the whole transcript —
+                // the previous full reset discarded all paginated older history to repair an edit.
+                const staleMinSeq = readStaleTranscriptMinSeq(this.deferredTranscriptState, sessionId);
+                const staleMessageIds = readStaleTranscriptMessageIds(this.deferredTranscriptState, sessionId);
+                fireAndForget(this.refetchStaleTranscriptRegion(sessionId, {
+                    minSeq: staleMinSeq,
+                    messageIds: staleMessageIds,
+                }), {
+                    tag: 'Sync.onSessionVisible.staleRefetch',
+                });
+            }
+            if (hasDeferredSessionStateHydration(this.deferredSessionStateHydrationState, sessionId)) {
+                this.deferredSessionStateHydrationState = clearDeferredSessionStateHydration(
+                    this.deferredSessionStateHydrationState,
+                    sessionId,
+                );
+                fireAndForget(this.ensureSessionVisibleForMessageRoute(sessionId, { forceRefresh: true }), {
+                    tag: 'Sync.onSessionVisible.deferredSessionStateHydration',
+                });
+            }
+            this.getOrCreateMessagesSync(sessionId).invalidateCoalesced();
+
+            // C6/D3: reopening a session is a reactive, list-independent bottom arrival. Drain any
+            // deferred-newer backlog here so newer-message catch-up never stalls waiting for a
+            // ChatList scroll event.
+            this.maybeDrainDeferredNewerMessages(sessionId, { isPinned: true, distanceFromBottomPx: 0 });
+
+            // Notify voice assistant about session visibility
+            const session = storage.getState().sessions[sessionId];
+            if (session) {
+                voiceHooks.onSessionFocus(sessionId, session.metadata || undefined);
+        }
+    }
+
+        refreshSessionMessages = async (sessionId: string): Promise<void> => {
+            const normalized = String(sessionId ?? '').trim();
+            if (!normalized) return;
+            await this.getOrCreateMessagesSync(normalized).invalidateAndAwait();
+        }
+
+        refreshSessionForSubmit = async (
+            sessionId: string,
+            options?: Readonly<{ serverId?: string | null }>,
+        ): Promise<Session | null> => {
+            const normalized = String(sessionId ?? '').trim();
+            if (!normalized) return null;
+            const serverId = typeof options?.serverId === 'string' && options.serverId.trim().length > 0
+                ? options.serverId.trim()
+                : undefined;
+            await this.ensureSessionVisibleForMessageRoute(normalized, {
+                forceRefresh: true,
+                ...(serverId ? { serverId } : {}),
+            });
+            return storage.getState().sessions[normalized] ?? null;
+        }
+
+        /**
+         * Hydrate a visible session by id for deep links / hard refreshes.
+         *
+         * @remarks
+         * The sessions list is paginated and bounded. When the user deep-links directly into a session/message,
+         * the active server snapshot may not include that session id yet, which causes message fetch to no-op.
+         * This helper fetches `/v2/sessions/:id` and initializes encryption so messages can be loaded.
+         */
+        ensureSessionVisibleForMessageRoute = async (
+            sessionId: string,
+            options?: Readonly<{ forceRefresh?: boolean; serverId?: string }>,
+        ): Promise<EnsureSessionVisibleForRouteResult> => {
+            const normalized = String(sessionId ?? '').trim();
+            if (!normalized) return createEnsureSessionVisibleMissingResult(normalized, 'not_found');
+            const forceRefresh = options?.forceRefresh === true;
+            const scopedServerId = resolveMessageRouteHydrationServerId(normalized, options?.serverId);
+            const explicitServerId = normalizeScopedServerId(options?.serverId);
+            const inFlightKey = createSessionRouteHydrationInFlightKey(normalized, scopedServerId);
+            const hydrationGeneration = this.serverScopeGeneration;
+            const activeServerIdAtHydrationStart = normalizeScopedServerId(getActiveServerSnapshot().serverId);
+            const isRouteHydrationScopeCurrent = () => (
+                this.serverScopeGeneration === hydrationGeneration
+                && normalizeScopedServerId(getActiveServerSnapshot().serverId) === activeServerIdAtHydrationStart
+            );
+
+            const DEBUG_SESSION_HYDRATE =
+                typeof globalThis !== 'undefined'
+                && (
+                    (globalThis as any).__HAPPIER_DEBUG_SESSION_HYDRATE__ === true
+                    || (() => {
+                        try {
+                            return typeof localStorage !== 'undefined' && localStorage.getItem('happier.debug.sessionHydrate') === '1';
+                        } catch {
+                            return false;
+                        }
+                    })()
+                );
+
+            // Fast-path when we already know the session exists on this server and the stored record is
+            // already authoritatively hydrated (deep links can occur before the sessions snapshot bootstraps).
+            const existingSession = storage.getState().sessions[normalized];
+            if (!forceRefresh && this.isSessionKnownOnActiveServer(normalized) && existingSession) {
+                const encryptionMode: 'e2ee' | 'plain' = existingSession.encryptionMode === 'plain' ? 'plain' : 'e2ee';
+                const hasEncryption = encryptionMode === 'plain'
+                    ? false
+                    : Boolean(this.encryption.getSessionEncryption(normalized));
+                const hasAuthoritativeSessionRouteState = hasAuthoritativeSessionRouteData(existingSession);
+                if (DEBUG_SESSION_HYDRATE) {
+                    log.log(`[sessionHydrate] fast-path check ${normalized} mode=${encryptionMode} hasEncryption=${hasEncryption} hasRouteState=${hasAuthoritativeSessionRouteState}`);
+                }
+                if (hasAuthoritativeSessionRouteState && (encryptionMode === 'plain' || hasEncryption)) {
+                    if (DEBUG_SESSION_HYDRATE) {
+                        log.log(`[sessionHydrate] fast-path hit ${normalized}`);
+                    }
+                    return createEnsureSessionVisibleAvailableResult(normalized, scopedServerId);
+                }
+            }
+
+            // Sync might not be fully initialized yet (e.g. very early during app bootstrap).
+            const credentials = this.credentials;
+            if (!credentials) {
+                if (DEBUG_SESSION_HYDRATE) {
+                    log.log(`[sessionHydrate] missing credentials for ${normalized}`);
+                }
+                return createEnsureSessionVisibleRetryableResult(normalized, 'unknown', scopedServerId);
+            }
+
+            const existing = this.sessionByIdHydrationInFlight.get(inFlightKey);
+            if (existing) {
+                if (DEBUG_SESSION_HYDRATE) {
+                    log.log(`[sessionHydrate] awaiting in-flight hydration for ${normalized}`);
+                }
+                return await existing;
+            }
+
+            const inFlight = (async () => {
+                try {
+                    if (DEBUG_SESSION_HYDRATE) {
+                        log.log(`[sessionHydrate] fetching session by id ${normalized}`);
+                    }
+                    const stagedSessionDataKeys = new Map(this.sessionDataKeys);
+                    const stagedSessionDataKeyEnvelopes = new Map(this.sessionDataKeyEnvelopes);
+                    const result = await fetchSessionByIdWithServerScope({
+                        sessionId: normalized,
+                        serverId: scopedServerId,
+                        activeCredentials: credentials,
+                        activeEncryption: this.encryption,
+                        sessionDataKeys: stagedSessionDataKeys,
+                        sessionDataKeyEnvelopes: stagedSessionDataKeyEnvelopes,
+                        activeRequest: (path, init) => apiSocket.request(path, init),
+                        getExistingSession: (sessionId) => storage.getState().sessions[sessionId] ?? null,
+                        applySessions: (sessions) => {
+                            if (!isRouteHydrationScopeCurrent()) return;
+                            this.applySessions(sessions);
+                        },
+                        log,
+                        includeTurnsProjection: false,
+                    });
+                    if (!isRouteHydrationScopeCurrent()) {
+                        return createEnsureSessionVisibleRetryableResult(normalized, 'unknown', scopedServerId);
+                    }
+                    if (!result.ok) {
+                        const code = typeof result.errorCode === 'string' ? result.errorCode : '';
+                        const missingCause = mapSessionByIdTerminalCodeToMissingCause(code);
+                        if (missingCause) {
+                            if (missingCause === 'unauthorized') {
+                                recordTerminalAuthSyncError(new Error('Authentication required'), { serverId: scopedServerId });
+                            }
+                            return createEnsureSessionVisibleMissingResult(
+                                normalized,
+                                missingCause,
+                                explicitServerId ?? undefined,
+                            );
+                        }
+                        return createEnsureSessionVisibleRetryableResult(
+                            normalized,
+                            mapSessionByIdRetryableCodeToCause(code),
+                            scopedServerId,
+                        );
+                    }
+                    this.commitSessionDataKeyCacheEntry(
+                        normalized,
+                        stagedSessionDataKeys,
+                        stagedSessionDataKeyEnvelopes,
+                    );
+
+                    // Ensure the *current* encryption instance is initialized for this session.
+                    // During app bootstrap / key restoration, the sync encryption instance can change while
+                    // the session-by-id hydration request is in-flight. Re-initializing here ensures
+                    // subsequent message fetches can proceed immediately.
+                    const hydratedSessionEncryptionMode = result.session?.encryptionMode === 'plain' ? 'plain' : 'e2ee';
+                    const hydratedServerId = String(result.session?.serverId ?? '').trim();
+                    if (hydratedSessionEncryptionMode === 'e2ee') {
+                        const sessionDataKey = this.sessionDataKeys.get(normalized) ?? null;
+                        const sessionScope = hydratedServerId
+                            ? { serverId: hydratedServerId }
+                            : undefined;
+                        await this.encryption.initializeSessions(new Map([[normalized, sessionDataKey]]), sessionScope);
+                    }
+                    if (!isRouteHydrationScopeCurrent()) {
+                        return createEnsureSessionVisibleRetryableResult(normalized, 'unknown', scopedServerId);
+                    }
+
+                    const activeServerId = String(getActiveServerSnapshot().serverId ?? '').trim();
+                    if (!hydratedServerId || areServerProfileIdentifiersEquivalent(hydratedServerId, activeServerId)) {
+                        this.activeServerSessionIds.add(normalized);
+                    }
+                    if (DEBUG_SESSION_HYDRATE) {
+                        const hasEncryption = hydratedSessionEncryptionMode === 'plain'
+                            ? false
+                            : Boolean(this.encryption.getSessionEncryption(normalized));
+                        log.log(`[sessionHydrate] hydration ok ${normalized} hasEncryption=${hasEncryption}`);
+                    }
+                    return createEnsureSessionVisibleAvailableResult(
+                        normalized,
+                        hydratedServerId || scopedServerId,
+                    );
+                } catch (err) {
+                    if (!isRouteHydrationScopeCurrent()) {
+                        return createEnsureSessionVisibleRetryableResult(normalized, 'unknown', scopedServerId);
+                    }
+                    if (isTerminalAuthError(err)) {
+                        recordTerminalAuthSyncError(err, { serverId: scopedServerId });
+                        return createEnsureSessionVisibleMissingResult(normalized, 'unauthorized', scopedServerId);
+                    }
+                    log.log(`⚠️ ensureSessionVisibleForMessageRoute failed for ${normalized}: ${err instanceof Error ? err.message : 'unknown error'}`);
+                    return createEnsureSessionVisibleRetryableResult(
+                        normalized,
+                        classifyRouteHydrationErrorCause(err),
+                        scopedServerId,
+                    );
+                }
+            })();
+
+            this.sessionByIdHydrationInFlight.set(inFlightKey, inFlight);
+            inFlight.finally(() => {
+                if (this.sessionByIdHydrationInFlight.get(inFlightKey) === inFlight) {
+                    this.sessionByIdHydrationInFlight.delete(inFlightKey);
+                }
+            });
+
+            const result = await inFlight;
+            if (result.kind === 'available') {
+                this.getOrCreateMessagesSync(normalized).invalidateCoalesced();
+            }
+            return result;
+        }
+
+    private commitSessionDataKeyCacheEntry(
+        sessionId: string,
+        stagedSessionDataKeys: ReadonlyMap<string, Uint8Array>,
+        stagedSessionDataKeyEnvelopes: ReadonlyMap<string, string>,
+    ): void {
+        const stagedKey = stagedSessionDataKeys.get(sessionId);
+        if (stagedKey) {
+            this.sessionDataKeys.set(sessionId, stagedKey);
+        } else {
+            this.sessionDataKeys.delete(sessionId);
+        }
+
+        const stagedEnvelope = stagedSessionDataKeyEnvelopes.get(sessionId);
+        if (typeof stagedEnvelope === 'string') {
+            this.sessionDataKeyEnvelopes.set(sessionId, stagedEnvelope);
+        } else {
+            this.sessionDataKeyEnvelopes.delete(sessionId);
+        }
+    }
+
+    async sendMessage(
+        sessionId: string,
+        text: string,
+        displayText?: string,
+        metaOverrides?: Record<string, unknown>,
+        options?: Readonly<{
+            profileId?: string | null;
+            localId?: string | null;
+            bypassPendingQueueReason?: SessionMessageDirectBypassReason;
+            onLocalPendingProjectionCreated?: (event: Readonly<{ localId: string }>) => void;
+        }>
+    ) {
+        let session = storage.getState().sessions[sessionId] ?? null;
+        if (!session) {
+            try {
+                await this.ensureSessionVisibleForMessageRoute(sessionId, { forceRefresh: true });
+            } catch {
+                // Best effort only. Fall through to the missing-session error below if the hydrate did not land.
+            }
+            session = storage.getState().sessions[sessionId] ?? null;
+        }
+        if (!session) {
+            storage.getState().clearSessionOptimisticThinking(sessionId);
+            throw new Error(`Session ${sessionId} not found in storage`);
+        }
+
+        this.markSessionLiveTailIntent(sessionId);
+        storage.getState().markSessionOptimisticThinking(sessionId);
+
+        const sessionEncryptionMode: 'e2ee' | 'plain' = session.encryptionMode === 'plain' ? 'plain' : 'e2ee';
+
+        try {
+            const publishNextPromptPermissionModeIfNeeded = async (): Promise<void> => {
+                const settingsApplyTiming = storage.getState().settings.sessionPermissionModeApplyTiming ?? 'immediate';
+                if (settingsApplyTiming !== 'next_prompt') {
+                    return;
+                }
+
+                const latestSession = storage.getState().sessions[sessionId] ?? null;
+                const localUpdatedAt = latestSession?.permissionModeUpdatedAt ?? null;
+                const metadataUpdatedAtRaw = latestSession?.metadata?.permissionModeUpdatedAt ?? null;
+                const metadataUpdatedAt =
+                    typeof metadataUpdatedAtRaw === 'number' && Number.isFinite(metadataUpdatedAtRaw)
+                        ? metadataUpdatedAtRaw
+                        : 0;
+
+                if (!(typeof localUpdatedAt === 'number' && Number.isFinite(localUpdatedAt) && localUpdatedAt > metadataUpdatedAt)) {
+                    return;
+                }
+
+                const modeToPublish = (latestSession?.permissionMode ?? 'default') as PermissionMode;
+                try {
+                    await this.publishSessionPermissionModeToMetadata({
+                        sessionId,
+                        permissionMode: modeToPublish,
+                        permissionModeUpdatedAt: localUpdatedAt,
+                    });
+                } catch {
+                    // Best-effort only: sending messages must not fail due to metadata publish failures.
+                }
+            };
+
+            // Read permission mode from session state
+            const permissionMode = session.permissionMode || 'default';
+            
+            // Read model mode - default is agent-specific (Gemini needs an explicit default)
+            const flavor = session.metadata?.flavor;
+            const agentId = resolveAgentIdFromFlavor(flavor);
+            const modelMode = session.modelMode || (agentId ? getAgentCore(agentId).model.defaultMode : 'default');
+
+            const requestedLocalId = typeof options?.localId === 'string' ? options.localId.trim() : '';
+            const localId = requestedLocalId || randomUUID();
+
+            const sentFrom = resolveSentFrom();
+            const model = agentId && getAgentCore(agentId).model.supportsSelection && modelMode !== 'default' ? modelMode : undefined;
+            // Create user message content with metadata
+            const content: RawRecord = {
+                role: 'user',
+                content: {
+                    type: 'text',
+                    text
+                },
+                meta: buildSendMessageMeta({
+                    sentFrom,
+                    permissionMode: permissionMode || 'default',
+                    model,
+                    displayText,
+                    agentId,
+                    settings: storage.getState().settings,
+                    session,
+                    metaOverrides: metaOverrides as any,
+                })
+            };
+
+            const messagePayload =
+                sessionEncryptionMode === 'plain'
+                    ? { t: 'plain' as const, v: content }
+                    : await (async () => {
+                        const encryption = this.encryption.getSessionEncryption(sessionId);
+                        if (!encryption) {
+                            throw new Error(`Session ${sessionId} encryption not found`);
+                        }
+                        return await encryption.encryptRawRecord(content);
+                    })();
+
+            // Track this outbound user message in the local pending queue until it is committed.
+            // This prevents “ghost” optimistic transcript items when the send fails, and it lets the UI
+            // show a pending bubble while we await ACK / catch-up.
+            const createdAt = nowServerMs();
+            storage.getState().upsertPendingMessage(sessionId, {
+                id: localId,
+                localId,
+                createdAt,
+                updatedAt: createdAt,
+                source: 'local_outbound',
+                text,
+                displayText,
+                rawRecord: content,
+            });
+            options?.onLocalPendingProjectionCreated?.({ localId });
+
+            if (session.active === true && canUseSessionUserMessageRuntimeRpc(session)) {
+                try {
+                    await apiSocket.sessionRPC<{ ok: true }, {
+                        text: string;
+                        localId: string;
+                        meta: Record<string, unknown>;
+                    }>(
+                        sessionId,
+                        SESSION_RPC_METHODS.SESSION_USER_MESSAGE_SEND,
+                        {
+                            text,
+                            localId,
+                            meta:
+                                content.meta && typeof content.meta === 'object' && !Array.isArray(content.meta)
+                                    ? (content.meta as Record<string, unknown>)
+                                    : {},
+                        },
+                        { timeoutMs: this.syncTuning.sessionRpcTimeoutMs },
+                    );
+                    storage.getState().upsertPendingMessage(sessionId, {
+                        id: localId,
+                        localId,
+                        createdAt,
+                        updatedAt: nowServerMs(),
+                        source: 'local_outbound',
+                        deliveryStatus: 'accepted',
+                        text,
+                        displayText,
+                        rawRecord: content,
+                    });
+                    await publishNextPromptPermissionModeIfNeeded();
+                    return;
+                } catch (error) {
+                    if (!isFallbackSafeSessionUserMessageRpcError(error)) {
+                        storage.getState().removePendingMessage(sessionId, localId);
+                        throw error;
+                    }
+                }
+            }
+
+            const payload = {
+                sid: sessionId,
+                message: messagePayload,
+                localId,
+                sentFrom,
+                permissionMode: permissionMode || 'default',
+                messageRole: 'user' as const,
+            };
+
+            const rawAck = await (async () => {
+                try {
+                    await assertActiveEndpointAuthenticated();
+                    return await socketEmitWithAckFallback<MessageAckResponse>({
+                        emitWithAck: (event, payload, opts) =>
+                            this.messageTransport.emitWithAck<MessageAckResponse>(event, payload, opts),
+                        send: (event, payload) => this.messageTransport.send(event, payload),
+                        event: 'message',
+                        payload,
+                        timeoutMs: this.syncTuning.socketAckTimeoutMs,
+                        onNoAck: () => this.schedulePendingMessageCommitRetry({ sessionId, localId }),
+                        beforeFallback: () => assertActiveEndpointAuthenticated({ forceProbe: true }),
+                    });
+                } catch (error) {
+                    storage.getState().removePendingMessage(sessionId, localId);
+                    throw error;
+                }
+            })();
+
+            if (!rawAck) {
+                storage.getState().clearSessionOptimisticThinking(sessionId);
+                return;
+            }
+
+            const parsedAck = MessageAckResponseSchema.safeParse(rawAck);
+            if (!parsedAck.success) {
+                // Treat malformed ACKs as "no ACK": keep the pending bubble and retry later.
+                this.schedulePendingMessageCommitRetry({ sessionId, localId });
+                return;
+            }
+
+            const ack = parsedAck.data;
+
+            if (ack.ok !== true) {
+                storage.getState().removePendingMessage(sessionId, localId);
+                throw new Error(ack.error || 'Message send rejected');
+            }
+
+            // Message is committed. Remove from pending and insert into the canonical transcript
+            // (without waiting for broadcast updates, which can be missed on backgrounded devices).
+            storage.getState().removePendingMessage(sessionId, localId);
+            const committed = normalizeRawMessage(ack.id, localId, createdAt, content, { seq: ack.seq });
+            if (committed) {
+                this.applyMessages(sessionId, [committed]);
+            }
+            this.markSessionMaterializedMaxSeq(sessionId, ack.seq);
+
+            // If we miss the broadcast socket update, we still need to advance session.seq so
+            // catch-up (`afterSeq`) works correctly across reconnects.
+            const currentSession = storage.getState().sessions[sessionId];
+            if (currentSession) {
+                this.applySessions([
+                    {
+                        ...currentSession,
+                        updatedAt: nowServerMs(),
+                        seq: Math.max(currentSession.seq ?? 0, ack.seq),
+                    }
+                ]);
+            }
+
+            // For "next prompt" apply timing, the permission mode change is intentionally not published
+            // immediately when the user toggles the picker. Instead, once the user actually sends a message,
+            // we publish the newer local selection as the session-wide permission mode so it propagates
+	            // across devices.
+	            await publishNextPromptPermissionModeIfNeeded();
+
+            wakeInactiveSessionAfterCommittedPrompt({
+                sessionId,
+                session,
+                seq: ack.seq,
+                tag: 'Sync.sendMessage.wakeAfterSend',
+            });
+
+	            // Server ACK means the user message is committed (or idempotently confirmed).
+	            // Do NOT clear optimistic thinking here: the agent can still be mid-turn (streaming / tool calls).
+	            // We clear optimistic thinking only when we see a terminal lifecycle marker,
+            // when the session enters a permission/action-required gate, when the session is marked thinking by live
+            // activity updates, or when the optimistic timeout expires.
+        } catch (e) {
+            if (isTerminalAuthError(e)) {
+                recordTerminalAuthSyncError(e);
+            }
+            storage.getState().clearSessionOptimisticThinking(sessionId);
+            throw e;
+        }
+    }
+
+    async sendPendingMessageNow(sessionId: string, pending: {
+        localId: string;
+        createdAt: number;
+        rawRecord: unknown;
+        text: string;
+        displayText?: string;
+    }): Promise<SendPendingMessageNowResult> {
+        storage.getState().markSessionOptimisticThinking(sessionId);
+
+        const session = storage.getState().sessions[sessionId];
+        if (!session) {
+            storage.getState().clearSessionOptimisticThinking(sessionId);
+            throw new Error(`Session ${sessionId} not found in storage`);
+        }
+
+        this.markSessionLiveTailIntent(sessionId);
+        const sessionEncryptionMode: 'e2ee' | 'plain' = session.encryptionMode === 'plain' ? 'plain' : 'e2ee';
+        const sessionEncryption = sessionEncryptionMode === 'plain' ? null : this.encryption.getSessionEncryption(sessionId);
+        if (sessionEncryptionMode === 'e2ee' && !sessionEncryption) {
+            storage.getState().clearSessionOptimisticThinking(sessionId);
+            throw new Error(`Session ${sessionId} encryption not found`);
+        }
+
+        try {
+            const permissionMode = session.permissionMode || 'default';
+
+            const parsed = RawRecordSchema.safeParse(pending.rawRecord);
+            const content: RawRecord = parsed.success ? parsed.data : await (async () => {
+                const flavor = session.metadata?.flavor;
+                const agentId = resolveAgentIdFromFlavor(flavor);
+                const modelMode = session.modelMode || (agentId ? getAgentCore(agentId).model.defaultMode : 'default');
+                const model = agentId && getAgentCore(agentId).model.supportsSelection && modelMode !== 'default' ? modelMode : undefined;
+                const state = storage.getState();
+                return {
+                    role: 'user',
+                    content: { type: 'text', text: pending.text },
+                    meta: buildSendMessageMeta({
+                        sentFrom: resolveSentFrom(),
+                        permissionMode: permissionMode || 'default',
+                        model,
+                        displayText: pending.displayText,
+                        agentId,
+                        settings: storage.getState().settings,
+                        session,
+                    }),
+                };
+            })();
+
+            const messagePayload =
+                sessionEncryptionMode === 'plain'
+                    ? { t: 'plain' as const, v: content }
+                    : await sessionEncryption!.encryptRawRecord(content);
+
+            const localId = pending.localId;
+            const payload = {
+                sid: sessionId,
+                message: messagePayload,
+                localId,
+                sentFrom: 'pending_send_now',
+                permissionMode: permissionMode || 'default',
+                messageRole: 'user' as const,
+            };
+
+            await assertActiveEndpointAuthenticated();
+            const rawAck = await socketEmitWithAckFallback<MessageAckResponse>({
+                emitWithAck: (event, payload, opts) =>
+                    this.messageTransport.emitWithAck<MessageAckResponse>(event, payload, opts),
+                send: (event, payload) => this.messageTransport.send(event, payload),
+                event: 'message',
+                payload,
+                timeoutMs: this.syncTuning.socketAckTimeoutMs,
+                onNoAck: () => this.schedulePendingMessageCommitRetry({ sessionId, localId }),
+                beforeFallback: () => assertActiveEndpointAuthenticated({ forceProbe: true }),
+            });
+
+            if (!rawAck) {
+                storage.getState().clearSessionOptimisticThinking(sessionId);
+                return { type: 'retry_scheduled' };
+            }
+
+            const parsedAck = MessageAckResponseSchema.safeParse(rawAck);
+            if (!parsedAck.success) {
+                this.schedulePendingMessageCommitRetry({ sessionId, localId });
+                return { type: 'retry_scheduled' };
+            }
+
+            const ack = parsedAck.data;
+
+            if (ack.ok !== true) {
+                storage.getState().removePendingMessage(sessionId, pending.localId);
+                throw new Error(ack.error || 'Message send rejected');
+            }
+
+            const committed = normalizeRawMessage(ack.id, localId, pending.createdAt, content, { seq: ack.seq });
+            if (committed) {
+                this.applyMessages(sessionId, [committed]);
+            }
+            this.markSessionMaterializedMaxSeq(sessionId, ack.seq);
+
+            const currentSession = storage.getState().sessions[sessionId];
+            if (currentSession) {
+                this.applySessions([
+                    {
+                        ...currentSession,
+                        updatedAt: nowServerMs(),
+                        seq: Math.max(currentSession.seq ?? 0, ack.seq),
+                    }
+                ]);
+            }
+
+            const settingsApplyTiming = storage.getState().settings.sessionPermissionModeApplyTiming ?? 'immediate';
+            if (settingsApplyTiming === 'next_prompt') {
+                const latestSession = storage.getState().sessions[sessionId] ?? null;
+                const localUpdatedAt = latestSession?.permissionModeUpdatedAt ?? null;
+                const metadataUpdatedAtRaw = latestSession?.metadata?.permissionModeUpdatedAt ?? null;
+                const metadataUpdatedAt =
+                    typeof metadataUpdatedAtRaw === 'number' && Number.isFinite(metadataUpdatedAtRaw)
+                        ? metadataUpdatedAtRaw
+                        : 0;
+
+                if (typeof localUpdatedAt === 'number' && Number.isFinite(localUpdatedAt) && localUpdatedAt > metadataUpdatedAt) {
+                    const modeToPublish = (latestSession?.permissionMode ?? 'default') as PermissionMode;
+                    try {
+                        await this.publishSessionPermissionModeToMetadata({
+                            sessionId,
+                            permissionMode: modeToPublish,
+                            permissionModeUpdatedAt: localUpdatedAt,
+                        });
+                    } catch {
+                        // Best-effort only.
+                    }
+                }
+            }
+
+            wakeInactiveSessionAfterCommittedPrompt({
+                sessionId,
+                session,
+                seq: ack.seq,
+                tag: 'Sync.sendPendingMessageNow.wakeAfterSend',
+            });
+
+            // Same policy as sendMessage(): keep optimistic thinking until lifecycle clears.
+            return { type: 'committed' };
+        } catch (e) {
+            if (isTerminalAuthError(e)) {
+                recordTerminalAuthSyncError(e);
+            }
+            storage.getState().clearSessionOptimisticThinking(sessionId);
+            throw e;
+        }
+    }
+
+    private schedulePendingMessageCommitRetry(params: { sessionId: string; localId: string }): void {
+        const key = `${params.sessionId}:${params.localId}`;
+        if (this.pendingMessageCommitRetryTimers.has(key)) {
+            return;
+        }
+
+        const clearRetry = (): void => {
+            const existing = this.pendingMessageCommitRetryTimers.get(key);
+            if (existing) {
+                clearTimeout(existing);
+            }
+            this.pendingMessageCommitRetryTimers.delete(key);
+        };
+
+        const run = async (attempt: number): Promise<void> => {
+            const pendingState = storage.getState().sessionPending[params.sessionId];
+            const pending = pendingState?.messages?.find((m) => m.id === params.localId) ?? null;
+            if (!pending) {
+                clearRetry();
+                return;
+            }
+
+            const scheduleRetryWithBackoff = () => {
+                // If the session isn't available (e.g. session list was cleared or the app is mid-rehydrate),
+                // don't leave this retry stuck. Ask for a sessions refresh and reschedule with backoff.
+                fireAndForget(this.fetchSessions(), { tag: 'Sync.pendingMessageCommitRetry.fetchSessions' });
+
+                const nextAttempt = attempt + 1;
+                if (nextAttempt >= 6) {
+                    clearRetry();
+                    return;
+                }
+
+                const baseDelayMs = Math.min(30_000, 1_000 * Math.pow(2, nextAttempt));
+                const jitterMs = Math.floor(Math.random() * 250);
+                const timeout = setTimeout(() => {
+                    fireAndForget(run(nextAttempt), { tag: `Sync.pendingMessageCommitRetry:${key}` });
+                }, baseDelayMs + jitterMs);
+                this.pendingMessageCommitRetryTimers.set(key, timeout);
+            };
+
+            const session = storage.getState().sessions[params.sessionId] ?? null;
+            if (!session) {
+                scheduleRetryWithBackoff();
+                return;
+            }
+
+            const sessionEncryptionMode: 'e2ee' | 'plain' = session.encryptionMode === 'plain' ? 'plain' : 'e2ee';
+            const parsed = RawRecordSchema.safeParse(pending.rawRecord);
+            const rawRecord: RawRecord = parsed.success ? parsed.data : {
+                role: 'user',
+                content: { type: 'text', text: pending.text },
+                meta: {},
+            };
+
+            const messagePayload =
+                sessionEncryptionMode === 'plain'
+                    ? { t: 'plain' as const, v: rawRecord }
+                    : await (async () => {
+                        const sessionEncryption = this.encryption.getSessionEncryption(params.sessionId);
+                        if (!sessionEncryption) {
+                            scheduleRetryWithBackoff();
+                            return null;
+                        }
+                        return await sessionEncryption.encryptRawRecord(rawRecord);
+                    })();
+            if (!messagePayload) {
+                return;
+            }
+
+            const payload = {
+                sid: params.sessionId,
+                message: messagePayload,
+                localId: params.localId,
+                sentFrom: 'retry',
+                permissionMode: 'default',
+                messageRole: 'user' as const,
+            };
+
+            let terminalAuthFailure = false;
+            const rawAck = await (async () => {
+                try {
+                    await assertActiveEndpointAuthenticated();
+                    return await this.messageTransport.emitWithAck<MessageAckResponse>('message', payload, {
+                        timeoutMs: this.syncTuning.socketAckTimeoutMs,
+                    });
+                } catch (error) {
+                    let terminalError = error;
+                    if (!isTerminalAuthError(terminalError)) {
+                        try {
+                            await assertActiveEndpointAuthenticated({ forceProbe: true });
+                        } catch (probeError) {
+                            terminalError = probeError;
+                        }
+                    }
+                    if (isTerminalAuthError(terminalError)) {
+                        terminalAuthFailure = true;
+                        recordTerminalAuthSyncError(terminalError);
+                        storage.getState().removePendingMessage(params.sessionId, params.localId);
+                        storage.getState().clearSessionOptimisticThinking(params.sessionId);
+                        clearRetry();
+                    }
+                    return null;
+                }
+            })();
+            if (terminalAuthFailure) {
+                return;
+            }
+
+            const ack = rawAck ? MessageAckResponseSchema.safeParse(rawAck) : null;
+
+            if (ack?.success && ack.data.ok === true) {
+                storage.getState().removePendingMessage(params.sessionId, params.localId);
+                const committed = normalizeRawMessage(ack.data.id, params.localId, pending.createdAt, rawRecord, { seq: ack.data.seq });
+                if (committed) {
+                    this.applyMessages(params.sessionId, [committed]);
+                }
+                this.markSessionMaterializedMaxSeq(params.sessionId, ack.data.seq);
+
+                const currentSession = storage.getState().sessions[params.sessionId];
+                if (currentSession) {
+                    this.applySessions([
+                        {
+                            ...currentSession,
+                            updatedAt: nowServerMs(),
+                            seq: Math.max(currentSession.seq ?? 0, ack.data.seq),
+                        }
+                    ]);
+                }
+
+                clearRetry();
+                return;
+            }
+
+            if (ack?.success && ack.data.ok === false) {
+                storage.getState().removePendingMessage(params.sessionId, params.localId);
+                clearRetry();
+                return;
+            }
+
+            const nextAttempt = attempt + 1;
+            if (nextAttempt >= 6) {
+                clearRetry();
+                return;
+            }
+
+            const baseDelayMs = Math.min(30_000, 1_000 * Math.pow(2, nextAttempt));
+            const jitterMs = Math.floor(Math.random() * 250);
+            const timeout = setTimeout(() => {
+                fireAndForget(run(nextAttempt), { tag: `Sync.pendingMessageCommitRetry:${key}` });
+            }, baseDelayMs + jitterMs);
+            this.pendingMessageCommitRetryTimers.set(key, timeout);
+        };
+
+        const timeout = setTimeout(() => {
+            fireAndForget(run(0), { tag: `Sync.pendingMessageCommitRetry:${key}` });
+        }, 1_000);
+        this.pendingMessageCommitRetryTimers.set(key, timeout);
+    }
+
+    async abortSession(sessionId: string): Promise<void> {
+        await sessionRpcWithPreferredSessionScope<void, { reason: string }>({
+            sessionId,
+            method: 'abort',
+            payload: {
+            reason: `The user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it was a file edit, the new_string was NOT written to the file). STOP what you are doing and wait for the user to tell you how to proceed.`
+            },
+        });
+    }
+
+    async submitMessage(
+        sessionId: string,
+        text: string,
+        displayText?: string,
+        metaOverrides?: Record<string, unknown>,
+        options?: Readonly<{
+            callerSurface?: SessionMessageCallerSurface | null;
+        }>,
+    ): Promise<void> {
+        let state = storage.getState();
+        let session = state.sessions[sessionId] ?? null;
+        if (!session) {
+            try {
+                await this.ensureSessionVisibleForMessageRoute(sessionId, { forceRefresh: true });
+            } catch {
+                // Best effort only. Fall through to the low-level missing-session error if hydrate did not land.
+            }
+            state = storage.getState();
+            session = state.sessions[sessionId] ?? null;
+        }
+        if (!session) {
+            throw new Error(`Session ${sessionId} not available for pending-aware submit`);
+        }
+
+        const machineEncryptionReader = this.encryption as Readonly<{
+            getMachineEncryption?: (machineId: string) => unknown;
+        }>;
+        const canWakeMachineId = typeof machineEncryptionReader.getMachineEncryption === 'function'
+            ? (machineId: string) => Boolean(machineEncryptionReader.getMachineEncryption?.(machineId))
+            : undefined;
+        const port: SessionSubmitPort = {
+            enqueuePendingMessage: (targetSessionId, targetText, targetDisplayText, targetMetaOverrides) =>
+                this.enqueuePendingMessage(targetSessionId, targetText, targetDisplayText, targetMetaOverrides),
+            sendMessage: (targetSessionId, targetText, targetDisplayText, targetMetaOverrides, options) =>
+                this.sendMessage(targetSessionId, targetText, targetDisplayText, targetMetaOverrides, options),
+            abortSession: (targetSessionId) => this.abortSession(targetSessionId),
+            resumeSession: (options) => resumeSession(options),
+            refreshSessionForSubmit: (targetSessionId, options) =>
+                this.refreshSessionForSubmit(targetSessionId, options),
+            ...(canWakeMachineId ? { canWakeMachineId } : {}),
+        };
+
+        const result = await submitSessionUserMessage(port, {
+            sessionId,
+            session,
+            text,
+            displayText,
+            metaOverrides,
+            configuredMode: state.settings.sessionMessageSendMode,
+            busySteerSendPolicy: state.settings.sessionBusySteerSendPolicy,
+            permissionModeApplyTiming: state.settings.sessionPermissionModeApplyTiming,
+            // Programmatic path: never prompt here; 'ask' still hardens the decision (queue).
+            nonSteerableSendPrompt: state.settings.sessionNonSteerableSendPrompt,
+            resumeCapabilityOptions: buildResumeCapabilityOptionsFromUiState({
+                settings: state.settings,
+                results: undefined,
+            }),
+            permissionOverride: getPermissionModeOverrideForSpawn(session),
+            callerSurface: options?.callerSurface ?? 'sync_submit_message',
+        });
+
+        if (result.type === 'send_failed' || result.type === 'rejected') {
+            throw new Error(result.errorMessage ?? 'Failed to submit message');
+        }
+    }
+
+    private async updateSessionMetadataWithRetry(
+        sessionId: string,
+        updater: (metadata: Metadata) => Metadata,
+        options?: Readonly<{ serverId?: string | null }>,
+    ): Promise<void> {
+        const resolvedServerIdOverride =
+            typeof options?.serverId === 'string' && options.serverId.trim().length > 0
+                ? options.serverId.trim()
+                : null;
+
+        const fetchLatestSession = async () => {
+            if (!this.credentials) {
+                throw new Error('Sync credentials not available');
+            }
+            await fetchSessionByIdWithServerScope({
+                sessionId,
+                serverId: resolvedServerIdOverride ?? resolvePreferredServerIdForSessionId(sessionId),
+                activeCredentials: this.credentials,
+                activeEncryption: this.encryption,
+                sessionDataKeys: this.sessionDataKeys,
+                sessionDataKeyEnvelopes: this.sessionDataKeyEnvelopes,
+                activeRequest: (path, init) => apiSocket.request(path, init),
+                applySessions: (sessions) => this.applySessions(sessions),
+                getExistingSession: (targetSessionId) => storage.getState().sessions[targetSessionId] ?? null,
+                log,
+            });
+        };
+
+        const resolvePatchContext = () => {
+            const session = storage.getState().sessions[sessionId] ?? null;
+            const sessionEncryptionMode: 'e2ee' | 'plain' = session?.encryptionMode === 'plain' ? 'plain' : 'e2ee';
+            const encryption = sessionEncryptionMode === 'plain' ? null : this.encryption.getSessionEncryption(sessionId);
+            return { session, sessionEncryptionMode, encryption };
+        };
+
+        let patchContext = resolvePatchContext();
+        if (!patchContext.session?.metadata || (patchContext.sessionEncryptionMode === 'e2ee' && !patchContext.encryption)) {
+            await fetchLatestSession();
+            patchContext = resolvePatchContext();
+        }
+
+        if (patchContext.sessionEncryptionMode === 'e2ee' && !patchContext.encryption) {
+            throw new Error(`Session ${sessionId} not found`);
+        }
+
+        await updateSessionMetadataWithRetryRpc<Metadata>({
+            sessionId,
+            getSession: () => {
+                const s = storage.getState().sessions[sessionId];
+                if (!s?.metadata) return null;
+                return { metadataVersion: s.metadataVersion, metadata: s.metadata };
+            },
+            refreshSessions: async () => {
+                await fetchLatestSession();
+                patchContext = resolvePatchContext();
+            },
+            encryptMetadata: async (metadata) => {
+                if (patchContext.sessionEncryptionMode === 'plain') {
+                    return JSON.stringify(metadata);
+                }
+                if (!patchContext.encryption) {
+                    throw new Error(`Session ${sessionId} not found`);
+                }
+                return await patchContext.encryption.encryptMetadata(metadata);
+            },
+            decryptMetadata: async (version, encrypted) => {
+                if (patchContext.sessionEncryptionMode !== 'plain') {
+                    if (!patchContext.encryption) {
+                        throw new Error(`Session ${sessionId} not found`);
+                    }
+                    return await patchContext.encryption.decryptMetadata(version, encrypted);
+                }
+                try {
+                    const parsedJson = JSON.parse(encrypted);
+                    const parsed = MetadataSchema.safeParse(parsedJson);
+                    return parsed.success ? parsed.data : null;
+                } catch {
+                    return null;
+                }
+            },
+            emitUpdateMetadata: async (payload) => await emitSessionMetadataUpdateWithServerScope({
+                sessionId,
+                expectedVersion: payload.expectedVersion,
+                metadata: payload.metadata,
+                ...(resolvedServerIdOverride ? { serverId: resolvedServerIdOverride } : {}),
+            }),
+            applySessionMetadata: ({ metadataVersion, metadata }) => {
+                const currentSession = storage.getState().sessions[sessionId];
+                if (!currentSession) return;
+                this.applySessions([{
+                    ...currentSession,
+                    metadata,
+                    metadataVersion,
+                }]);
+            },
+            updater,
+            maxAttempts: 8,
+        });
+    }
+
+    private repairInvalidReadStateV1 = async (params: { sessionId: string; sessionSeqUpperBound: number }): Promise<void> => {
+        await repairInvalidReadStateV1Engine({
+            sessionId: params.sessionId,
+            sessionSeqUpperBound: params.sessionSeqUpperBound,
+            attempted: this.readStateV1RepairAttempted,
+            inFlight: this.readStateV1RepairInFlight,
+            getSession: (sessionId) => storage.getState().sessions[sessionId],
+            updateSessionMetadataWithRetry: (sessionId, updater) => this.updateSessionMetadataWithRetry(sessionId, updater),
+            now: nowServerMs,
+        });
+    }
+
+    private applyLocalReadCursor(sessionId: string, lastViewedSessionSeq: number): void {
+        const session = storage.getState().sessions[sessionId];
+        if (!session) return;
+
+        const nextViewedSeq = Math.max(0, Math.trunc(lastViewedSessionSeq));
+        const existingViewedSeq =
+            typeof session.lastViewedSessionSeq === 'number' && Number.isFinite(session.lastViewedSessionSeq)
+                ? Math.max(0, Math.trunc(session.lastViewedSessionSeq))
+                : 0;
+        const effectiveViewedSeq = Math.max(existingViewedSeq, nextViewedSeq);
+        if (session.lastViewedSessionSeq === effectiveViewedSeq) return;
+
+        storage.getState().applySessions([{
+            ...session,
+            lastViewedSessionSeq: effectiveViewedSeq,
+        }]);
+    }
+
+    async markSessionViewed(sessionId: string, opts?: { sessionSeq?: number; pendingActivityAt?: number }): Promise<void> {
+        const session = storage.getState().sessions[sessionId];
+        if (!session) return;
+
+        const sessionSeq = opts?.sessionSeq ?? session.seq ?? 0;
+        // Pending queue does not affect unread; keep pendingActivityAt at 0 for backwards compatibility.
+        const pendingActivityAt = 0;
+        const existing = session.metadata?.readStateV1;
+        const existingSeq = existing?.sessionSeq ?? 0;
+        const needsRepair = existingSeq > sessionSeq;
+        const existingAuthoritativeSeq =
+            typeof session.lastViewedSessionSeq === 'number' && Number.isFinite(session.lastViewedSessionSeq)
+                ? Math.max(0, Math.trunc(session.lastViewedSessionSeq))
+                : 0;
+        const nextAuthoritativeSeq = Math.max(existingAuthoritativeSeq, sessionSeq);
+
+        const early = computeNextReadStateV1({
+            prev: existing,
+            sessionSeq,
+            pendingActivityAt,
+            now: nowServerMs(),
+        });
+
+        const shouldPublishReadCursor = nextAuthoritativeSeq > existingAuthoritativeSeq;
+        if (!needsRepair && !early.didChange && !shouldPublishReadCursor) return;
+
+        if (shouldPublishReadCursor) {
+            this.applyLocalReadCursor(sessionId, nextAuthoritativeSeq);
+
+            try {
+                const result = await apiSocket.emitWithAck<{
+                    result: 'success' | 'forbidden' | 'error';
+                    lastViewedSessionSeq?: number;
+                }>('update-read-cursor', {
+                    sid: sessionId,
+                    lastViewedSessionSeq: nextAuthoritativeSeq,
+                });
+
+                if (result.result === 'success') {
+                    const acknowledgedSeq =
+                        typeof result.lastViewedSessionSeq === 'number' && Number.isFinite(result.lastViewedSessionSeq)
+                            ? Math.max(0, Math.trunc(result.lastViewedSessionSeq))
+                            : nextAuthoritativeSeq;
+                    this.applyLocalReadCursor(sessionId, acknowledgedSeq);
+                }
+            } catch {
+                // The local read cursor is a UI observation. Keep it even if the server publish is retried by later sync.
+            }
+        }
+
+        if (!session.metadata) {
+            return;
+        }
+
+        await this.updateSessionMetadataWithRetry(sessionId, (metadata) => {
+            const result = computeNextReadStateV1({
+                prev: metadata.readStateV1,
+                sessionSeq,
+                pendingActivityAt,
+                now: nowServerMs(),
+            });
+            if (!result.didChange) return metadata;
+            return { ...metadata, readStateV1: result.next };
+        });
+    }
+
+    async publishSessionPermissionModeToMetadata(params: {
+        sessionId: string;
+        permissionMode: PermissionMode;
+        permissionModeUpdatedAt: number;
+    }): Promise<void> {
+        await publishPermissionModeToMetadataEngine({
+            sessionId: params.sessionId,
+            permissionMode: params.permissionMode,
+            permissionModeUpdatedAt: params.permissionModeUpdatedAt,
+            updateSessionMetadataWithRetry: (sessionId, updater) => this.updateSessionMetadataWithRetry(sessionId, updater),
+        });
+    }
+
+    async publishSessionAcpSessionModeOverrideToMetadata(params: {
+        sessionId: string;
+        modeId: string;
+        updatedAt: number;
+    }): Promise<void> {
+        await publishAcpSessionModeOverrideToMetadataEngine({
+            sessionId: params.sessionId,
+            modeId: params.modeId,
+            updatedAt: params.updatedAt,
+            updateSessionMetadataWithRetry: (sessionId, updater) => this.updateSessionMetadataWithRetry(sessionId, updater),
+        });
+    }
+
+    async publishSessionModelOverrideToMetadata(params: {
+        sessionId: string;
+        modelId: string;
+        updatedAt: number;
+    }): Promise<void> {
+        await publishModelOverrideToMetadataEngine({
+            sessionId: params.sessionId,
+            modelId: params.modelId,
+            updatedAt: params.updatedAt,
+            updateSessionMetadataWithRetry: (sessionId, updater) => this.updateSessionMetadataWithRetry(sessionId, updater),
+        });
+    }
+
+    async publishSessionAcpConfigOptionOverrideToMetadata(params: {
+        sessionId: string;
+        configId: string;
+        value: AcpConfigOptionOverrideValueId;
+        updatedAt: number;
+    }): Promise<void> {
+        await publishAcpConfigOptionOverrideToMetadataEngine({
+            sessionId: params.sessionId,
+            configId: params.configId,
+            value: params.value,
+            updatedAt: params.updatedAt,
+            updateSessionMetadataWithRetry: (sessionId, updater) => this.updateSessionMetadataWithRetry(sessionId, updater),
+        });
+    }
+
+    async fetchPendingMessages(sessionId: string): Promise<void> {
+        const request = this.createSessionRequest(sessionId);
+        await fetchAndApplyPendingMessagesV2({
+            sessionId,
+            encryption: this.encryption,
+            request,
+        });
+    }
+
+    async enqueuePendingMessage(sessionId: string, text: string, displayText?: string, metaOverrides?: Record<string, unknown>): Promise<void> {
+        const request = this.createSessionRequest(sessionId);
+        this.markSessionLiveTailIntent(sessionId);
+        await enqueuePendingMessageV2({
+            sessionId,
+            text,
+            displayText,
+            metaOverrides,
+            encryption: this.encryption,
+            fetchArtifactWithBody: (artifactId) => this.fetchArtifactWithBody(artifactId),
+            updateArtifact: (artifact) => storage.getState().updateArtifact(artifact),
+            request,
+        });
+    }
+
+    async updatePendingMessage(sessionId: string, pendingId: string, text: string): Promise<void> {
+        const request = this.createSessionRequest(sessionId);
+        await updatePendingMessageV2({
+            sessionId,
+            pendingId,
+            text,
+            encryption: this.encryption,
+            fetchArtifactWithBody: (artifactId) => this.fetchArtifactWithBody(artifactId),
+            updateArtifact: (artifact) => storage.getState().updateArtifact(artifact),
+            request,
+        });
+    }
+
+    async deletePendingMessage(sessionId: string, pendingId: string): Promise<void> {
+        const request = this.createSessionRequest(sessionId);
+        await deletePendingMessageV2({
+            sessionId,
+            pendingId,
+            request,
+        });
+    }
+
+    async discardPendingMessage(
+        sessionId: string,
+        pendingId: string,
+        opts?: { reason?: 'switch_to_local' | 'manual' }
+    ): Promise<void> {
+        const request = this.createSessionRequest(sessionId);
+        await discardPendingMessageV2({
+            sessionId,
+            pendingId,
+            reason: opts?.reason ?? 'manual',
+            encryption: this.encryption,
+            request,
+        });
+    }
+
+    async restoreDiscardedPendingMessage(sessionId: string, pendingId: string): Promise<void> {
+        const request = this.createSessionRequest(sessionId);
+        await restoreDiscardedPendingMessageV2({
+            sessionId,
+            pendingId,
+            encryption: this.encryption,
+            request,
+        });
+    }
+
+    async deleteDiscardedPendingMessage(sessionId: string, pendingId: string): Promise<void> {
+        const request = this.createSessionRequest(sessionId);
+        await deleteDiscardedPendingMessageV2({
+            sessionId,
+            pendingId,
+            encryption: this.encryption,
+            request,
+        });
+    }
+
+    async reorderPendingMessages(sessionId: string, orderedLocalIds: string[]): Promise<void> {
+        const request = this.createSessionRequest(sessionId);
+        await reorderPendingMessagesV2({
+            sessionId,
+            orderedLocalIds,
+            encryption: this.encryption,
+            request,
+        });
+    }
+
+    applySettings = (delta: Partial<Settings>, options?: { source?: SettingsAnalyticsSource }) => {
+        applySettingsLocalDelta({
+            delta,
+            settingsSecretsKey: this.settingsSecretsKey,
+            getPendingSettings: () => this.pendingSettings,
+            setPendingSettings: (next) => {
+                this.pendingSettings = next;
+            },
+            schedulePendingSettingsFlush: () => this.schedulePendingSettingsFlush(),
+            source: options?.source,
+        });
+    }
+
+    refreshPurchases = () => {
+        this.purchasesSync.invalidate();
+    }
+
+    refreshProfile = async () => {
+        await this.profileSync.invalidateAndAwait();
+    }
+
+    purchaseProduct = async (productId: string): Promise<{ success: boolean; error?: string }> => {
+        const generation = this.serverScopeGeneration;
+        const { shouldContinue } = createSyncGenerationGuard({
+            capturedGeneration: generation,
+            getCurrentGeneration: () => this.serverScopeGeneration,
+        });
+        return await purchaseProductEngine({
+            revenueCatInitialized: this.revenueCatInitialized,
+            productId,
+            shouldContinue,
+            applyPurchases: (customerInfo) => storage.getState().applyPurchases(customerInfo),
+        });
+    }
+
+    getOfferings = async (): Promise<{ success: boolean; offerings?: any; error?: string }> => {
+        return await getOfferingsEngine({ revenueCatInitialized: this.revenueCatInitialized });
+    }
+
+    presentPaywall = async (): Promise<{ success: boolean; purchased?: boolean; error?: string }> => {
+        const generation = this.serverScopeGeneration;
+        const { shouldContinue } = createSyncGenerationGuard({
+            capturedGeneration: generation,
+            getCurrentGeneration: () => this.serverScopeGeneration,
+        });
+        return await presentPaywallEngine({
+            revenueCatInitialized: this.revenueCatInitialized,
+            shouldContinue,
+            trackPaywallPresented,
+            trackPaywallPurchased,
+            trackPaywallCancelled,
+            trackPaywallRestored,
+            trackPaywallError,
+            syncPurchases: () => shouldContinue() ? this.syncPurchases() : Promise.resolve(),
+        });
+    }
+
+    async assumeUsers(userIds: string[]): Promise<void> {
+        if (!this.credentials || userIds.length === 0) return;
+        
+        const state = storage.getState();
+        // Filter out users we already have in cache (including null for 404s)
+        const missingIds = userIds.filter(id => !(id in state.users));
+        
+        if (missingIds.length === 0) return;
+
+        const isNotFoundError = (error: unknown): boolean => {
+            const e = error as any;
+            const status =
+                e?.status ??
+                e?.response?.status ??
+                e?.data?.status ??
+                e?.cause?.status ??
+                null;
+            return status === 404;
+        };
+
+        // Fetch missing users in parallel. Only cache null for explicit "not found" responses.
+        // Do not cache null for transient errors; otherwise we permanently treat that user as absent.
+        const results = await Promise.all(
+            missingIds.map(async (id) => {
+                try {
+                    const profile = await getUserProfile(this.credentials!, id);
+                    return { id, profile, cache: true };
+                } catch (error) {
+                    if (isNotFoundError(error)) {
+                        return { id, profile: null as UserProfile | null, cache: true };
+                    }
+                    return { id, profile: undefined as unknown as UserProfile | null, cache: false };
+                }
+            }),
+        );
+
+        const usersMap: Record<string, UserProfile | null> = {};
+        for (const r of results) {
+            if (!r.cache) continue;
+            usersMap[r.id] = r.profile;
+        }
+
+        if (Object.keys(usersMap).length > 0) {
+            storage.getState().applyUsers(usersMap);
+        }
+    }
+
+    //
+    // Private
+    //
+
+    private getPrioritizedSessionHydrationIds = (): string[] => {
+        const activeViewingSessionId = getActiveViewingSessionId();
+        const visibleSessionIds = getVisibleSessionIds();
+        const viewportPriorityLimit = Math.max(0, this.syncTuning.sessionViewportHydrationPriorityMaxRows);
+        const prioritizedByViewport = Array.from(this.sessionViewport.entries())
+            .sort((left, right) => right[1].lastUpdatedAt - left[1].lastUpdatedAt)
+            .slice(0, viewportPriorityLimit)
+            .map(([sessionId]) => sessionId);
+
+        return Array.from(new Set([
+            ...(activeViewingSessionId ? [activeViewingSessionId] : []),
+            ...visibleSessionIds,
+            ...prioritizedByViewport,
+        ]));
+    }
+
+    private fetchSessions = async (options?: FetchSessionsOptions) => {
+        if (!this.credentials) return;
+        const generation = this.serverScopeGeneration;
+        if (canShareFetchSessionsInFlight(options)) {
+            const existing = this.fetchSessionsInFlight;
+            if (existing && existing.generation === generation) {
+                return existing.promise;
+            }
+        }
+        const runFetch = this.fetchSessionsOnce(options, generation);
+        if (canShareFetchSessionsInFlight(options)) {
+            const sharedFetch = runFetch.finally(() => {
+                if (this.fetchSessionsInFlight?.promise === sharedFetch) {
+                    this.fetchSessionsInFlight = null;
+                }
+            });
+            this.fetchSessionsInFlight = { generation, promise: sharedFetch };
+            return sharedFetch;
+        }
+        return runFetch;
+    }
+
+    private fetchSessionsOnce = async (options: FetchSessionsOptions | undefined, generation: number) => {
+        const shouldContinue = () => this.serverScopeGeneration === generation;
+        const initialState = storage.getState();
+        const activeServerId = String(getActiveServerSnapshot().serverId ?? '').trim() || null;
+        const cachedSessionListEntries = buildSessionListCacheEntriesFromRenderables(initialState.sessionListRenderables);
+        const activeViewingSessionId = getActiveViewingSessionId();
+        const visibleSessionIds = getVisibleSessionIds();
+        const activeHydrationSessionIds = Array.from(new Set([
+            ...(activeViewingSessionId ? [activeViewingSessionId] : []),
+            ...visibleSessionIds,
+        ]));
+        const activeHydrationSessionIdSet = new Set(activeHydrationSessionIds);
+        const explicitPrioritizedHydrationIds = options?.prioritizeSessionIds ?? [];
+        const prioritizedHydrationIds = Array.from(new Set([
+            ...explicitPrioritizedHydrationIds,
+            ...this.getPrioritizedSessionHydrationIds(),
+        ])).filter((sessionId) => (
+            !activeHydrationSessionIdSet.has(sessionId)
+            || explicitPrioritizedHydrationIds.includes(sessionId)
+        ));
+        const isAppend = options?.mode === 'append';
+        const pinnedSessionIds = isAppend
+            ? []
+            : resolvePinnedSessionIdsForServer(initialState.settings, activeServerId);
+        const result = await fetchAndApplySessions({
+            serverId: activeServerId,
+            sessionListCursor: isAppend ? this.sessionListNextCursor : null,
+            sessionListMaxPages: 1,
+            includeActiveSessionRows: !isAppend,
+            includeSessionListAttentionRows: !isAppend && shouldIncludeSessionListAttentionRows(initialState.settings),
+            sessionListPinnedSessionIds: pinnedSessionIds,
+            priorityHydrationSessionIds: pinnedSessionIds,
+            credentials: this.credentials,
+            encryption: this.encryption,
+            sessionDataKeys: this.sessionDataKeys,
+            sessionDataKeyEnvelopes: this.sessionDataKeyEnvelopes,
+            getExistingSession: (sessionId) => storage.getState().sessions[sessionId] ?? null,
+            getCurrentSessionListRenderable: (sessionId) => storage.getState().sessionListRenderables[sessionId] ?? null,
+            cachedSessionListEntries,
+            shouldContinue,
+            applySessionListRenderables: (sessions) => {
+                if (!shouldContinue()) return;
+                if (isAppend) {
+                    storage.getState().mergeSessionListRenderables(sessions);
+                    return;
+                }
+                storage.getState().replaceSessionListRenderables(sessions);
+            },
+            applySessionListRenderablePatches: (patches) => {
+                if (!shouldContinue()) return;
+                storage.getState().applySessionListRenderablePatches(patches);
+            },
+            onSnapshotFetched: (sessionIds) => {
+                if (!shouldContinue()) return;
+                this.activeServerSessionIds = isAppend
+                    ? new Set([...this.activeServerSessionIds, ...sessionIds])
+                    : new Set(sessionIds);
+                this.hasFetchedSessionsSnapshotForActiveServer = true;
+            },
+            prioritizeSessionIds: prioritizedHydrationIds,
+            activeSessionIds: activeHydrationSessionIds,
+            requiredHydrationSessionIds: options?.requiredHydrationSessionIds,
+            awaitSessionListHydration: options?.awaitSessionListHydration,
+            sessionListEagerHydrationCount: isAppend
+                ? this.syncTuning.sessionListAppendEagerHydrationCount
+                : this.syncTuning.sessionListEagerHydrationCount,
+            sessionListHydrationConcurrencyLimit: this.syncTuning.sessionListHydrationConcurrencyLimit,
+            sessionListBackgroundHydrationConcurrencyLimit: this.syncTuning.sessionListBackgroundHydrationConcurrencyLimit,
+            sessionListBackgroundHydrationMaxRows: this.syncTuning.sessionListBackgroundHydrationMaxRows,
+            sessionListBackgroundHydrationYieldDelayMs: this.syncTuning.sessionListBackgroundHydrationYieldDelayMs,
+            sessionListBackgroundHydrationYieldEveryRows: this.syncTuning.sessionListBackgroundHydrationYieldEveryRows,
+            sessionListBackgroundHydrationGate: isAppend ? this.waitForSessionListScrollIdle : undefined,
+            sessionListBackgroundHydrationApplyBatchSize: this.syncTuning.sessionListBackgroundHydrationApplyBatchSize,
+            sessionListBackgroundHydrationApplyFlushDelayMs: this.syncTuning.sessionListBackgroundHydrationApplyFlushDelayMs,
+            applySessions: (sessions) => {
+                if (!shouldContinue()) return;
+                this.applySessions(sessions);
+            },
+            repairInvalidReadStateV1: (params) => this.repairInvalidReadStateV1(params),
+            log,
+        });
+        if (!shouldContinue()) return;
+        this.sessionListNextCursor = result.hasNext ? result.nextCursor : null;
+        this.sessionListHasMore = result.hasNext;
+    }
+
+    public fetchMoreSessions = async (): Promise<void> => {
+        if (!this.credentials || !this.sessionListHasMore || !this.sessionListNextCursor) return;
+        if (this.fetchMoreSessionsInFlight) return this.fetchMoreSessionsInFlight;
+        const promise = this.fetchSessions({ mode: 'append' }).finally(() => {
+            if (this.fetchMoreSessionsInFlight === promise) {
+                this.fetchMoreSessionsInFlight = null;
+            }
+        });
+        this.fetchMoreSessionsInFlight = promise;
+        return promise;
+    }
+
+    private fetchArchivedSessionsPage = async (options?: FetchArchivedSessionsOptions): Promise<void> => {
+        if (!this.credentials) return;
+        const generation = this.serverScopeGeneration;
+        const shouldContinue = () => this.serverScopeGeneration === generation;
+        const isAppend = options?.mode === 'append';
+        const result = await fetchAndApplySessions({
+            sessionListPath: '/v2/sessions/archived',
+            sessionListCursor: isAppend ? this.archivedSessionListNextCursor : null,
+            sessionListMaxPages: 1,
+            serverId: String(getActiveServerSnapshot().serverId ?? '').trim() || null,
+            credentials: this.credentials,
+            encryption: this.encryption,
+            sessionDataKeys: this.sessionDataKeys,
+            sessionDataKeyEnvelopes: this.sessionDataKeyEnvelopes,
+            getExistingSession: (sessionId) => storage.getState().sessions[sessionId] ?? null,
+            shouldContinue,
+            applySessions: (sessions) => {
+                if (!shouldContinue()) return;
+                this.applySessions(sessions);
+            },
+            repairInvalidReadStateV1: (params) => this.repairInvalidReadStateV1(params),
+            log,
+        });
+        if (!shouldContinue()) return;
+        this.archivedSessionListNextCursor = result.hasNext ? result.nextCursor : null;
+        this.archivedSessionListHasMore = result.hasNext;
+    }
+
+    public fetchArchivedSessions = async (): Promise<void> => {
+        return this.fetchArchivedSessionsPage({ mode: 'replace' });
+    }
+
+    public fetchMoreArchivedSessions = async (): Promise<void> => {
+        if (!this.credentials || !this.archivedSessionListHasMore || !this.archivedSessionListNextCursor) return;
+        if (this.fetchMoreArchivedSessionsInFlight) return this.fetchMoreArchivedSessionsInFlight;
+        const promise = this.fetchArchivedSessionsPage({ mode: 'append' }).finally(() => {
+            if (this.fetchMoreArchivedSessionsInFlight === promise) {
+                this.fetchMoreArchivedSessionsInFlight = null;
+            }
+        });
+        this.fetchMoreArchivedSessionsInFlight = promise;
+        return promise;
+    }
+
+    private isSessionKnownOnActiveServer = (sessionId: string): boolean => {
+        if (this.activeServerSessionIds.has(sessionId)) {
+            return true;
+        }
+
+        if (!this.hasFetchedSessionsSnapshotForActiveServer) {
+            return Boolean(storage.getState().sessions[sessionId]);
+        }
+
+        return false;
+    }
+
+    private isSessionKnownOnResolvedOwnerServer = (sessionId: string): boolean => {
+        if (this.isSessionKnownOnActiveServer(sessionId)) {
+            return true;
+        }
+
+        const preferredServerId = resolvePreferredServerIdForSessionId(sessionId);
+        const activeServerId = String(getActiveServerSnapshot().serverId ?? '').trim();
+        return Boolean(preferredServerId && !areServerProfileIdentifiersEquivalent(preferredServerId, activeServerId));
+    }
+
+    private createSessionRequest = (sessionId: string): ((path: string, init?: RequestInit) => Promise<Response>) => {
+        return createSessionRequestWithServerScope({
+            serverId: resolvePreferredServerIdForSessionId(sessionId),
+            activeRequest: (path, init) => apiSocket.request(path, init),
+        });
+    }
+
+    private createSessionMessagesRequest = (sessionId: string): ((path: string) => Promise<Response>) => {
+        const request = this.createSessionRequest(sessionId);
+        return (path: string) => request(path, { method: 'GET' });
+    }
+
+    /**
+     * Export the per-session data key for UI-assisted resume (dataKey mode only).
+     * Returns null when the session uses legacy encryption or the key is unavailable.
+     */
+    public getSessionEncryptionKeyBase64ForResume(sessionId: string): string | null {
+        const key = this.sessionDataKeys.get(sessionId);
+        if (!key) return null;
+        return encodeBase64(key, 'base64');
+    }
+
+    /**
+     * Get the decrypted per-session data encryption key (DEK) if available.
+     *
+     * @remarks
+     * This is intentionally in-memory only; it returns null if the session key
+     * hasn't been fetched/decrypted yet.
+     */
+    public getSessionDataKey(sessionId: string): Uint8Array | null {
+        const key = this.sessionDataKeys.get(sessionId);
+        if (!key) return null;
+        // Defensive copy (callers should treat keys as immutable).
+        return new Uint8Array(key);
+    }
+
+    public refreshMachines = async () => {
+        return this.fetchMachines();
+    }
+
+      public retryNow = () => {
+          try {
+              storage.getState().clearSyncError();
+              apiSocket.disconnect();
+              apiSocket.connect();
+          } catch {
+              // ignore
+          }
+          try {
+              this.settingsSync.invalidateCoalesced();
+          } catch {
+              // ignore
+          }
+          try {
+              fireAndForget(invalidateAllServerReachabilitySupervisors(), {
+                  tag: 'Sync.invalidateAllServerReachabilitySupervisors.manual',
+              });
+          } catch {
+              // ignore
+          }
+          fireAndForget(this.resumeSync('manual'), { tag: 'Sync.resumeSync.manual' });
+      }
+
+      public resumeSync = (reason: 'app-foreground' | 'socket-reconnect' | 'manual' | 'endpoint-online' | 'server-reachable'): Promise<void> => {
+          return runWithInFlightDedupe(
+              {
+                  get: () => this.resumeInFlight,
+                  set: (value) => {
+                      this.resumeInFlight = value;
+                  },
+              },
+              async () => {
+                  const shouldContinue = this.createServerScopeGuard();
+                  if ((reason === 'socket-reconnect' || reason === 'endpoint-online' || reason === 'server-reachable') && !this.isForeground) {
+                      return;
+                  }
+                  if (this.pauseController.isPaused()) {
+                      return;
+                  }
+                  await this.pauseController.waitUntilResumed();
+                  if (!shouldContinue()) {
+                      return;
+                  }
+                  if (!this.credentials) {
+                      return;
+                  }
+
+                  const accountId = String(this.serverID ?? '').trim() || null;
+
+                  if (!accountId) {
+                      if (!shouldContinue()) {
+                          return;
+                      }
+                      await this.snapshotRefreshOnResume({ mode: 'fallback', reason: 'missing-profile' });
+                      return;
+                  }
+
+                  const status = await this.resumeViaChanges({ accountId, shouldContinue });
+                  if (status === 'aborted') {
+                      return;
+                  }
+                  if (status === 'fallback') {
+                      if (!shouldContinue()) {
+                          return;
+                      }
+                      await this.snapshotRefreshOnResume({ mode: 'fallback', reason: 'changes-fallback' });
+                      return;
+                  }
+
+                  if (!shouldContinue()) {
+                      return;
+                  }
+                  await this.catchUpLoadedDirectSessionsOnResume();
+                  if (!shouldContinue()) {
+                      return;
+                  }
+
+                  const invalidateBounded = async (syncUnit: InvalidateSync, timeoutMs: number): Promise<void> => {
+                      if (!shouldContinue()) {
+                          return;
+                      }
+                      syncUnit.invalidateCoalesced();
+                      await syncUnit.awaitQueue({ timeoutMs });
+                  };
+
+                  // Activity/presence updates are delivered via ephemerals and are not guaranteed to be recovered
+                  // across socket reconnects. When we reconnect without socket.io recovery, refresh the core
+                  // snapshots so session.active and machine online state can't get stuck.
+                  if (reason === 'socket-reconnect') {
+                      await runTasksWithLimit(
+                          [
+                              () => invalidateBounded(this.sessionsSync, this.syncTuning.resumeQuickInvalidateTimeoutMs),
+                              () => invalidateBounded(this.machinesSync, this.syncTuning.resumeQuickInvalidateTimeoutMs),
+                          ],
+                          this.syncTuning.resumeConcurrencyLimit
+                      );
+                  }
+
+                    await runTasksWithLimit(
+                        [
+                            () => invalidateBounded(this.purchasesSync, this.syncTuning.resumeQuickInvalidateTimeoutMs),
+                            () => invalidateBounded(this.pushTokenSync, this.syncTuning.resumeQuickInvalidateTimeoutMs),
+                            () => invalidateBounded(this.nativeUpdateSync, this.syncTuning.resumeQuickInvalidateTimeoutMs),
+                        ],
+                        this.syncTuning.resumeConcurrencyLimit
+                    );
+                }
+            );
+        };
+
+      private bootstrapSync = async (): Promise<void> => {
+          if (this.pauseController.isPaused()) {
+              return;
+          }
+          await this.pauseController.waitUntilResumed();
+          if (!this.credentials) {
+              return;
+          }
+
+          const invalidateBounded = async (syncUnit: InvalidateSync, timeoutMs: number): Promise<void> => {
+              syncUnit.invalidateCoalesced();
+              await syncUnit.awaitQueue({ timeoutMs });
+          };
+
+          // Bootstrap concurrency is slightly higher to reduce time-to-first-render.
+          const bootstrapConcurrencyLimit = this.syncTuning.bootstrapConcurrencyLimit;
+
+          // Phase 1: load core UI state (settings/profile) while also loading sessions/machines.
+          await runTasksWithLimit(
+              [
+                  () => invalidateBounded(this.settingsSync, this.syncTuning.invalidateSyncAwaitTimeoutMs),
+                  () => invalidateBounded(this.profileSync, this.syncTuning.invalidateSyncAwaitTimeoutMs),
+                  () => invalidateBounded(this.sessionsSync, this.syncTuning.invalidateSyncAwaitTimeoutMs),
+                  () => invalidateBounded(this.machinesSync, this.syncTuning.invalidateSyncAwaitTimeoutMs),
+                  () => invalidateBounded(this.purchasesSync, this.syncTuning.invalidateSyncAwaitTimeoutMs),
+              ],
+              bootstrapConcurrencyLimit
+          );
+
+          try {
+              storage.getState().applyReady();
+          } catch {
+              // ignore
+          }
+
+          // Phase 2: load non-critical lists.
+          await runTasksWithLimit(
+              [
+                  () => invalidateBounded(this.artifactsSync, this.syncTuning.invalidateSyncAwaitTimeoutMs),
+                  () => invalidateBounded(this.automationsSync, this.syncTuning.invalidateSyncAwaitTimeoutMs),
+                  () => invalidateBounded(this.todosSync, this.syncTuning.invalidateSyncAwaitTimeoutMs),
+                  () => invalidateBounded(this.friendsSync, this.syncTuning.invalidateSyncAwaitTimeoutMs),
+                  () => invalidateBounded(this.friendRequestsSync, this.syncTuning.invalidateSyncAwaitTimeoutMs),
+                  () => invalidateBounded(this.feedSync, this.syncTuning.invalidateSyncAwaitTimeoutMs),
+                  () => invalidateBounded(this.pushTokenSync, this.syncTuning.invalidateSyncAwaitTimeoutMs),
+                  () => invalidateBounded(this.nativeUpdateSync, this.syncTuning.invalidateSyncAwaitTimeoutMs),
+              ],
+              this.syncTuning.resumeConcurrencyLimit
+          );
+        };
+
+      private snapshotRefreshOnResume = async (opts: { mode: 'fallback' | 'long-offline'; reason: string }): Promise<void> => {
+          if (this.pauseController.isPaused()) {
+              return;
+          }
+          await this.pauseController.waitUntilResumed();
+          if (!this.credentials) {
+              return;
+          }
+
+          const invalidateBounded = async (syncUnit: InvalidateSync, timeoutMs: number): Promise<void> => {
+              syncUnit.invalidateCoalesced();
+              await syncUnit.awaitQueue({ timeoutMs });
+          };
+
+          const concurrencyLimit = this.syncTuning.resumeConcurrencyLimit;
+
+          // Rebuild core lists first (sessions drives most downstream state).
+          await runTasksWithLimit(
+              [
+                  () => invalidateBounded(this.sessionsSync, this.syncTuning.invalidateSyncAwaitTimeoutMs),
+                  () => invalidateBounded(this.machinesSync, this.syncTuning.invalidateSyncAwaitTimeoutMs),
+              ],
+              concurrencyLimit
+          );
+
+          // Catch up transcripts only for sessions that are already loaded locally AND are live
+          // content consumers right now. The catch-up policy already no-ops for hidden
+          // non-consumers (see fetchMessages); this filter just avoids enqueueing idle
+          // InvalidateSync units for every loaded-but-hidden session on each reconnect sweep.
+          const loadedSessionIds: string[] = [];
+          try {
+              const sessions = storage.getState().sessionMessages;
+              for (const sessionId of Object.keys(sessions)) {
+                  if (
+                      sessions[sessionId]?.isLoaded === true
+                      && resolveSessionLiveConsumption(sessionId).isFullContentConsumer
+                  ) {
+                      loadedSessionIds.push(sessionId);
+                  }
+              }
+          } catch {
+              // ignore
+          }
+
+          await runTasksWithLimit(
+              loadedSessionIds.map((sessionId) => async () => {
+                  await invalidateBounded(this.getOrCreateMessagesSync(sessionId), this.syncTuning.invalidateSyncAwaitTimeoutMs);
+                  scmStatusSync.invalidate(sessionId);
+              }),
+              this.syncTuning.messageCatchUpConcurrencyLimit
+          );
+
+          // Refresh the rest with bounded concurrency.
+          await runTasksWithLimit(
+              [
+                  () => invalidateBounded(this.artifactsSync, this.syncTuning.invalidateSyncAwaitTimeoutMs),
+                  () => invalidateBounded(this.automationsSync, this.syncTuning.invalidateSyncAwaitTimeoutMs),
+                  () => invalidateBounded(this.todosSync, this.syncTuning.invalidateSyncAwaitTimeoutMs),
+                  () => invalidateBounded(this.friendsSync, this.syncTuning.invalidateSyncAwaitTimeoutMs),
+                  () => invalidateBounded(this.friendRequestsSync, this.syncTuning.invalidateSyncAwaitTimeoutMs),
+                  () => invalidateBounded(this.feedSync, this.syncTuning.invalidateSyncAwaitTimeoutMs),
+                  () => invalidateBounded(this.settingsSync, this.syncTuning.invalidateSyncAwaitTimeoutMs),
+                  () => invalidateBounded(this.profileSync, this.syncTuning.invalidateSyncAwaitTimeoutMs),
+              ],
+              concurrencyLimit
+          );
+      };
+
+    public refreshMachinesThrottled = async (params?: { staleMs?: number; force?: boolean }) => {
+        if (!this.credentials) return;
+        const staleMs = params?.staleMs ?? 30_000;
+        const force = params?.force ?? false;
+        const now = Date.now();
+
+        if (!force && (now - this.lastMachinesRefreshAt) < staleMs) {
+            return;
+        }
+
+        if (this.machinesRefreshInFlight) {
+            return this.machinesRefreshInFlight;
+        }
+
+        this.machinesRefreshInFlight = this.fetchMachines()
+            .then(() => {
+                this.lastMachinesRefreshAt = Date.now();
+            })
+            .finally(() => {
+                this.machinesRefreshInFlight = null;
+            });
+
+        return this.machinesRefreshInFlight;
+    }
+
+    public refreshSessions = async () => {
+        return this.sessionsSync.invalidateAndAwait();
+    }
+
+    /**
+     * Generic session metadata patching surface for feature modules that need to
+     * atomically update encrypted metadata (with version-mismatch retries).
+     */
+    public patchSessionMetadataWithRetry = async (
+        sessionId: string,
+        updater: (metadata: Metadata) => Metadata,
+        options?: Readonly<{ serverId?: string | null }>,
+    ): Promise<void> => {
+        await this.updateSessionMetadataWithRetry(sessionId, updater, options);
+    }
+
+    public refreshAutomations = async () => {
+        return this.automationsSync.invalidateAndAwait();
+    }
+
+    public async fetchAutomationRuns(automationId: string, limit: number = 20): Promise<{ nextCursor: string | null }> {
+        if (!this.credentials) {
+            throw new Error('Not authenticated');
+        }
+        const generation = this.serverScopeGeneration;
+        const { shouldContinue } = createSyncGenerationGuard({
+            capturedGeneration: generation,
+            getCurrentGeneration: () => this.serverScopeGeneration,
+        });
+
+        return await fetchAndApplyAutomationRuns({
+            credentials: this.credentials,
+            automationId,
+            limit,
+            shouldContinue,
+            setAutomationRuns: (id, runs) => storage.getState().setAutomationRuns(id, runs),
+        });
+    }
+
+    public async createAutomation(input: AutomationCreateInput): Promise<Automation> {
+        if (!this.credentials) {
+            throw new Error('Not authenticated');
+        }
+        const created = await createAutomationApi(this.credentials, input);
+        storage.getState().upsertAutomation(created);
+        return created;
+    }
+
+    public async updateAutomation(automationId: string, input: AutomationPatchInput): Promise<Automation> {
+        if (!this.credentials) {
+            throw new Error('Not authenticated');
+        }
+        const updated = await updateAutomationApi(this.credentials, automationId, input);
+        storage.getState().upsertAutomation(updated);
+        return updated;
+    }
+
+    public async replaceAutomationAssignments(
+        automationId: string,
+        assignments: ReadonlyArray<AutomationAssignmentInput>,
+    ): Promise<Automation> {
+        if (!this.credentials) {
+            throw new Error('Not authenticated');
+        }
+        const updated = await replaceAutomationAssignmentsApi(this.credentials, automationId, assignments);
+        storage.getState().upsertAutomation(updated);
+        return updated;
+    }
+
+    public async pauseAutomation(automationId: string): Promise<Automation> {
+        if (!this.credentials) {
+            throw new Error('Not authenticated');
+        }
+        const updated = await pauseAutomationApi(this.credentials, automationId);
+        storage.getState().upsertAutomation(updated);
+        return updated;
+    }
+
+    public async resumeAutomation(automationId: string): Promise<Automation> {
+        if (!this.credentials) {
+            throw new Error('Not authenticated');
+        }
+        const updated = await resumeAutomationApi(this.credentials, automationId);
+        storage.getState().upsertAutomation(updated);
+        return updated;
+    }
+
+    public async deleteAutomation(automationId: string): Promise<void> {
+        if (!this.credentials) {
+            throw new Error('Not authenticated');
+        }
+        await deleteAutomationApi(this.credentials, automationId);
+        storage.getState().removeAutomation(automationId);
+    }
+
+    public async runAutomationNow(automationId: string): Promise<AutomationRun> {
+        if (!this.credentials) {
+            throw new Error('Not authenticated');
+        }
+        const run = await runAutomationNowApi(this.credentials, automationId);
+        storage.getState().upsertAutomationRun(run);
+        return run;
+    }
+
+    public getCredentials() {
+        return this.credentials;
+    }
+
+    // Artifact methods
+    public fetchArtifactsList = async (): Promise<void> => {
+        const generation = this.serverScopeGeneration;
+        const { shouldContinue } = createSyncGenerationGuard({
+            capturedGeneration: generation,
+            getCurrentGeneration: () => this.serverScopeGeneration,
+        });
+        await fetchAndApplyArtifactsList({
+            credentials: this.credentials,
+            encryption: this.encryption,
+            artifactDataKeys: this.artifactDataKeys,
+            shouldContinue,
+            applyArtifacts: (artifacts) => storage.getState().applyArtifacts(artifacts),
+        });
+    }
+
+    public async fetchArtifactWithBody(artifactId: string): Promise<DecryptedArtifact | null> {
+        if (!this.credentials) return null;
+
+        return await fetchArtifactWithBodyFromApi({
+            credentials: this.credentials,
+            artifactId,
+            encryption: this.encryption,
+            artifactDataKeys: this.artifactDataKeys,
+        });
+    }
+
+    public async createArtifact(
+        title: string | null, 
+        body: string | null,
+        sessions?: string[],
+        draft?: boolean
+    ): Promise<string> {
+        if (!this.credentials) {
+            throw new Error('Not authenticated');
+        }
+
+        return await createArtifactViaApi({
+            credentials: this.credentials,
+            title,
+            body,
+            sessions,
+            draft,
+            encryption: this.encryption,
+            artifactDataKeys: this.artifactDataKeys,
+            addArtifact: (artifact) => storage.getState().addArtifact(artifact),
+        });
+    }
+
+    public async createArtifactWithHeader(header: ArtifactHeader, body: string | null): Promise<string> {
+        if (!this.credentials) {
+            throw new Error('Not authenticated');
+        }
+
+        return await createArtifactWithHeaderViaApi({
+            credentials: this.credentials,
+            header,
+            body,
+            encryption: this.encryption,
+            artifactDataKeys: this.artifactDataKeys,
+            addArtifact: (artifact) => storage.getState().addArtifact(artifact),
+        });
+    }
+
+    public async updateArtifact(
+        artifactId: string, 
+        title: string | null, 
+        body: string | null,
+        sessions?: string[],
+        draft?: boolean
+    ): Promise<void> {
+        if (!this.credentials) {
+            throw new Error('Not authenticated');
+        }
+
+        await updateArtifactViaApi({
+            credentials: this.credentials,
+            artifactId,
+            title,
+            body,
+            sessions,
+            draft,
+            encryption: this.encryption,
+            artifactDataKeys: this.artifactDataKeys,
+            getArtifact: (id) => storage.getState().artifacts[id],
+            updateArtifact: (artifact) => storage.getState().updateArtifact(artifact),
+        });
+    }
+
+    public async updateArtifactWithHeader(artifactId: string, header: ArtifactHeader, body: string | null): Promise<void> {
+        if (!this.credentials) {
+            throw new Error('Not authenticated');
+        }
+
+        await updateArtifactWithHeaderViaApi({
+            credentials: this.credentials,
+            artifactId,
+            header,
+            body,
+            encryption: this.encryption,
+            artifactDataKeys: this.artifactDataKeys,
+            getArtifact: (id) => storage.getState().artifacts[id],
+            updateArtifact: (artifact) => storage.getState().updateArtifact(artifact),
+        });
+    }
+
+    private fetchMachines = async () => {
+        if (!this.credentials) return;
+        const generation = this.serverScopeGeneration;
+        const sourceServerId = String(getActiveServerSnapshot().serverId ?? '').trim() || null;
+        const shouldContinue = () => this.serverScopeGeneration === generation;
+        const cachedMachineDisplayEntries = buildMachineDisplayCacheEntriesFromRenderables(storage.getState().machineDisplayById);
+
+        await fetchAndApplyMachines({
+            credentials: this.credentials,
+            encryption: this.encryption,
+            machineDataKeys: this.machineDataKeys,
+            throwOnError: false,
+            getExistingMachine: (machineId) => storage.getState().machines[machineId] ?? null,
+            cachedMachineDisplayEntries,
+            shouldContinue,
+            applyMachineDisplayEntries: (machines) => {
+                if (!shouldContinue()) return;
+                storage.getState().replaceMachineDisplays(machines, { sourceServerId });
+            },
+            machineDisplayHydrationConcurrencyLimit: this.syncTuning.machineDisplayHydrationConcurrencyLimit,
+            applyMachines: (machines, replace) => {
+                if (!shouldContinue()) return;
+                storage.getState().applyMachines(machines, replace, { sourceServerId });
+            },
+            replace: true,
+        });
+    }
+
+    private fetchFriends = async () => {
+        if (!this.credentials) return;
+        const generation = this.serverScopeGeneration;
+        const { shouldContinue } = createSyncGenerationGuard({
+            capturedGeneration: generation,
+            getCurrentGeneration: () => this.serverScopeGeneration,
+        });
+        await fetchAndApplyFriends({
+            credentials: this.credentials,
+            shouldContinue,
+            applyFriends: (friends) => storage.getState().applyFriends(friends),
+        });
+    }
+
+    private fetchFriendRequests = async () => {
+        // Friend requests are now included in the friends list with status='pending'
+        // This method is kept for backward compatibility but does nothing
+        log.log('👥 fetchFriendRequests called - now handled by fetchFriends');
+    }
+
+    private fetchTodos = async () => {
+        if (!this.credentials) return;
+        const generation = this.serverScopeGeneration;
+        const { shouldContinue } = createSyncGenerationGuard({
+            capturedGeneration: generation,
+            getCurrentGeneration: () => this.serverScopeGeneration,
+        });
+        await fetchTodosEngine({ credentials: this.credentials, shouldContinue });
+    }
+
+    private fetchAutomations = async () => {
+        const generation = this.serverScopeGeneration;
+        const { shouldContinue } = createSyncGenerationGuard({
+            capturedGeneration: generation,
+            getCurrentGeneration: () => this.serverScopeGeneration,
+        });
+        await fetchAndApplyAutomations({
+            credentials: this.credentials,
+            shouldContinue,
+            applyAutomations: (automations) => storage.getState().applyAutomations(automations),
+            loadedAutomationRunIds: Object.keys(storage.getState().automationRunsByAutomationId),
+            setAutomationRuns: (automationId, runs) => storage.getState().setAutomationRuns(automationId, runs),
+        });
+    }
+
+    private applyTodoSocketUpdates = async (changes: any[]) => {
+        if (!this.credentials || !this.encryption) return;
+        await applyTodoSocketUpdatesEngine({
+            changes,
+            encryption: this.encryption,
+            invalidateTodosSync: () => this.todosSync.invalidate(),
+        });
+    }
+
+    private fetchFeed = async () => {
+        if (!this.credentials) return;
+        const generation = this.serverScopeGeneration;
+        const { shouldContinue } = createSyncGenerationGuard({
+            capturedGeneration: generation,
+            getCurrentGeneration: () => this.serverScopeGeneration,
+        });
+        await fetchAndApplyFeed({
+            credentials: this.credentials,
+            getFeedItems: () => storage.getState().feedItems,
+            getFeedHead: () => storage.getState().feedHead,
+            assumeUsers: (userIds) => this.assumeUsers(userIds),
+            getUsers: () => storage.getState().users,
+            shouldContinue,
+            applyFeedItems: (items) => storage.getState().applyFeedItems(items),
+            log,
+        });
+    }
+
+    private syncSettings = async () => {
+        if (!this.credentials) return;
+        const settingsScope = this.pendingSettingsScope;
+        const pendingSettings = { ...this.pendingSettings };
+        const settingsSyncParams: SyncSettingsParams = {
+            credentials: this.credentials,
+            encryption: this.encryption,
+            settingsScope,
+            pendingSettings,
+            settingsSecretsKey: this.settingsSecretsKey,
+            settingsSecretsReadKeys: this.settingsSecretsReadKeys,
+            clearPendingSettings: (nextPendingSettings) => {
+                if (settingsScope) {
+                    savePendingAccountSettings(settingsScope, nextPendingSettings);
+                    if (areAccountSettingsScopesEqual(this.pendingSettingsScope, settingsScope)) {
+                        this.pendingSettings = nextPendingSettings;
+                    }
+                    return;
+                }
+                this.pendingSettings = nextPendingSettings;
+            },
+        };
+        await syncSettingsEngine(settingsSyncParams);
+    }
+
+    public prepareAccountSettingsForDaemonSpawn = async (): Promise<PreparedAccountSettingsForDaemonSpawn> => {
+        this.flushPendingSettingsForCurrentScopeNow();
+        return await prepareAccountSettingsForDaemonSpawnEngine({
+            settingsScope: this.pendingSettingsScope,
+            pendingSettings: { ...this.pendingSettings },
+            getActiveSettingsScope: () => storage.getState().settingsScope,
+            getCurrentSettingsVersion: () => storage.getState().settingsVersion,
+            flushPendingServerSettings: async () => {
+                await this.syncSettings();
+            },
+            clearPendingSettings: (submittedPendingSettings) => {
+                const settingsScope = this.pendingSettingsScope;
+                const nextPendingSettings = removeCommittedPendingSettings(this.pendingSettings, submittedPendingSettings);
+                if (settingsScope) {
+                    savePendingAccountSettings(settingsScope, nextPendingSettings);
+                }
+                this.pendingSettings = nextPendingSettings;
+            },
+        });
+    }
+
+    private fetchProfile = async () => {
+        if (!this.credentials) return;
+        const generation = this.serverScopeGeneration;
+        const { shouldContinue } = createSyncGenerationGuard({
+            capturedGeneration: generation,
+            getCurrentGeneration: () => this.serverScopeGeneration,
+        });
+        const scope = this.pendingSettingsScope;
+        await fetchAndApplyProfile({
+            credentials: this.credentials,
+            shouldContinue,
+            applyProfile: (profile) => {
+                if (scope) {
+                    storage.getState().applyProfileForScope(scope, profile);
+                    return;
+                }
+                storage.getState().applyProfile(profile);
+            },
+        });
+    }
+
+    private fetchNativeUpdate = async () => {
+        try {
+            // Skip in development
+            if ((Platform.OS !== 'android' && Platform.OS !== 'ios') || !Constants.expoConfig?.version) {
+                return;
+            }
+            if (Platform.OS === 'ios' && !Constants.expoConfig?.ios?.bundleIdentifier) {
+                return;
+            }
+            if (Platform.OS === 'android' && !Constants.expoConfig?.android?.package) {
+                return;
+            }
+
+            // Get platform and app identifiers
+            const platform = Platform.OS;
+            const version = Constants.expoConfig?.version!;
+            const appId = (Platform.OS === 'ios' ? Constants.expoConfig?.ios?.bundleIdentifier! : Constants.expoConfig?.android?.package!);
+
+            const response = await serverFetch('/v1/version', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    platform,
+                    version,
+                    app_id: appId,
+                }),
+            }, { includeAuth: false });
+
+            if (!response.ok) {
+                log.log(`[fetchNativeUpdate] Request failed: ${response.status}`);
+                return;
+            }
+
+            const data = await response.json();
+
+            // Apply update status to storage
+            if (data.update_required && data.update_url) {
+                storage.getState().applyNativeUpdateStatus({
+                    available: true,
+                    updateUrl: data.update_url
+                });
+            } else {
+                storage.getState().applyNativeUpdateStatus({
+                    available: false
+                });
+            }
+        } catch (error) {
+            logNativeUpdateFetchFailure(error, log);
+            storage.getState().applyNativeUpdateStatus(null);
+        }
+    }
+
+    private syncPurchases = async () => {
+        const generation = this.serverScopeGeneration;
+        const { shouldContinue } = createSyncGenerationGuard({
+            capturedGeneration: generation,
+            getCurrentGeneration: () => this.serverScopeGeneration,
+        });
+        await syncPurchasesEngine({
+            serverID: this.serverID,
+            revenueCatInitialized: this.revenueCatInitialized,
+            shouldContinue,
+            setRevenueCatInitialized: (next) => {
+                if (!shouldContinue()) return;
+                this.revenueCatInitialized = next;
+            },
+            applyPurchases: (customerInfo) => storage.getState().applyPurchases(customerInfo),
+        });
+    }
+
+    private applySessionThinkingFromTaskLifecycle = (
+        sessionId: string,
+        event: TaskLifecycleEvent,
+    ) => {
+        // Message catch-up pages can contain historical task_started markers.
+        // We only use lifecycle catch-up to clear stale thinking state.
+        if (event.type === 'task_started') {
+            return;
+        }
+
+        if (isTerminalTaskLifecycleEventType(event.type)) {
+            const createdAt = event.createdAt || nowServerMs();
+            storage.getState().applyMessages(sessionId, [{
+                // Deterministic id to keep lifecycle event application stable if the same event is observed twice.
+                id: `task-lifecycle-${sessionId}-${event.type}-${event.id}-${createdAt}`,
+                localId: null,
+                createdAt,
+                role: 'event',
+                content: {
+                    type: 'task-lifecycle',
+                    event: event.type,
+                    id: event.id,
+                },
+                isSidechain: false,
+            }]);
+        }
+
+        const session = storage.getState().sessions[sessionId];
+        if (!session) {
+            return;
+        }
+
+        const nextThinking = false;
+        if (!nextThinking) {
+            // Even when session.thinking is already false, a delayed lifecycle event
+            // should clear any optimistic thinking marker left from the send path.
+            storage.getState().clearSessionOptimisticThinking(sessionId);
+        }
+
+        if (session.thinking === nextThinking) {
+            return;
+        }
+
+        this.applySessions([
+            {
+                ...session,
+                thinking: nextThinking,
+                updatedAt: nowServerMs(),
+            },
+        ]);
+    }
+
+    private hasUserOlderLoadInFlight(sessionId: string): boolean {
+        const prefix = `${sessionId}:`;
+        for (const key of this.sessionMessagesLoadingOlderByKey) {
+            if (key.startsWith(prefix)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private replayDeferredMessagesFetch(sessionId: string): void {
+        if (this.deferredMessagesFetchSessionIds.delete(sessionId)) {
+            this.getOrCreateMessagesSync(sessionId).invalidateCoalesced();
+        }
+    }
+
+    private fetchMessages = async (sessionId: string) => {
+        if (this.hasFetchedSessionsSnapshotForActiveServer && !this.isSessionKnownOnResolvedOwnerServer(sessionId)) {
+            // Do not fetch messages when we cannot resolve the session to either the active server
+            // or a locally known owner server. This avoids cross-server message fetches while keeping
+            // the UI state non-destructive during server-switch races.
+            if (storage.getState().sessionMessages[sessionId]?.isLoaded !== true) {
+                storage.getState().applyMessagesLoaded(sessionId);
+            }
+            return;
+        }
+
+        if (this.hasUserOlderLoadInFlight(sessionId)) {
+            // Defer-not-drop: background catch-up must not apply messages while a user-triggered
+            // older-page load is in flight for this session (it would prepend uncoordinated content
+            // under the transcript viewport). Returning is a safe success for InvalidateSync; the
+            // deferral is replayed from loadOlderMessagesForChain once the in-flight load settles.
+            this.deferredMessagesFetchSessionIds.add(sessionId);
+            return;
+        }
+
+          const session = storage.getState().sessions[sessionId] ?? null;
+          const directSessionLink = readDirectSessionLink(session?.metadata);
+          const hasLoadedMessages = storage.getState().sessionMessages[sessionId]?.isLoaded === true;
+          // IMPORTANT: `session.seq` is a "latest known session message seq" hint (often coming from `/sessions`),
+          // not necessarily the last message seq that *this device has materialized*. Using it here can cause gaps.
+          const afterSeq = hasLoadedMessages ? (this.sessionMaterializedMaxSeqById[sessionId] ?? 0) : 0;
+          const deferredDurableSeq = readDeferredTranscriptDurableSeq(this.deferredTranscriptState, sessionId);
+          const sessionSeqHint = Math.max(session?.seq ?? 0, deferredDurableSeq ?? 0);
+
+          const viewport = this.sessionViewport.get(sessionId) ?? null;
+          const isPinned = viewport?.isPinned ?? true;
+          const offlineForMs = this.readSocketOfflineDurationMsForSession(sessionId);
+          const hasAcceptedLocalPending = (storage.getState().sessionPending[sessionId]?.messages ?? []).some((message) => (
+              message.deliveryStatus === 'accepted'
+              && message.source !== 'server_pending'
+          ));
+          const requestMessages = this.createSessionMessagesRequest(sessionId);
+          const sessionEncryptionMode = session?.encryptionMode === 'plain' ? 'plain' : 'e2ee';
+
+          if (directSessionLink) {
+              if (!hasLoadedMessages) {
+                  await this.fetchDirectSessionMessages(sessionId, directSessionLink);
+                  return;
+              }
+
+              await this.catchUpDirectSessionMessages(sessionId, directSessionLink);
+              return;
+          }
+
+          if (!hasLoadedMessages) {
+              this.deferredForwardLoadingSessions.delete(sessionId);
+              await fetchAndApplyMessages({
+                  sessionId,
+                  sessionEncryptionMode,
+                  getSessionEncryption: (id) => this.encryption.getSessionEncryption(id),
+                  isSessionKnown: (id) => this.isSessionKnownOnResolvedOwnerServer(id),
+                  request: requestMessages,
+                  sessionReceivedMessages: this.sessionReceivedMessages,
+                  applyMessages: (sid, messages) => this.applyMessages(sid, messages),
+                  onTaskLifecycleEvent: (event) => this.applySessionThinkingFromTaskLifecycle(sessionId, event),
+                  markMessagesLoaded: (sid) => storage.getState().applyMessagesLoaded(sid),
+                  onMessagesPage: (page) => {
+                      this.updateSessionMessagesPaginationFromPage(sessionId, { scope: 'main' }, page, { allowHasMoreInference: true });
+                  },
+                  ...this.getMessageDecryptBatchOptions(),
+                  log,
+              });
+              return;
+          }
+
+            const decision = decideMessageCatchUpPolicy({
+                isForeground: this.isForeground && !this.pauseController.isPaused(),
+                // Gate catch-up on the REAL live-content-consumer signal (visible OR voice/SCM
+                // consumer), read at decision time — the same fan-out realtime routing consumes.
+                // Hardcoding `true` here ran destructive off-screen resets on every reconnect.
+                isSessionVisible: resolveSessionLiveConsumption(sessionId).isFullContentConsumer,
+                isPinned,
+                materializedMaxSeq: afterSeq,
+                sessionSeqHint,
+                offlineForMs,
+                hasAcceptedLocalPending,
+                thresholds: {
+                    largeGapSeq: this.syncTuning.messageLargeGapSeq,
+                    maxIncrementalPagesOnResume: this.syncTuning.messageMaxIncrementalPagesOnResume,
+                    forceSnapshotOfflineMs: this.syncTuning.messageForceSnapshotOfflineMs,
+                },
+            });
+
+          // §13: the on-open incremental/snapshot catch-up runs its newer fetches directly here
+          // (NOT through `loadNewerMessages`), so it must bracket the catch-up signal itself —
+          // otherwise opening a normal session that advanced in the background performs real
+          // newer-message fetching with no "Catching up…" overlay. `do_nothing` decisions and the
+          // first-ever snapshot load (handled earlier) are intentionally NOT bracketed.
+          const isCatchUpWork = decision.kind !== 'do_nothing';
+          const applyCatchUpDecision = () => applyMessageCatchUpDecision({
+              decision,
+              afterSeq,
+              onIncrementalExhausted: isPinned ? 'tail_reset_latest_page' : 'defer_forward_loading',
+              fetchNewerPage: async (cursor) => {
+                  const result = await fetchAndApplyNewerMessages({
+                      sessionId,
+                      sessionEncryptionMode,
+                      afterSeq: cursor,
+                      limit: this.getSessionMessagesPageSize(),
+                      getSessionEncryption: (id) => this.encryption.getSessionEncryption(id),
+                      isSessionKnown: (id) => this.isSessionKnownOnResolvedOwnerServer(id),
+                      request: requestMessages,
+                      sessionReceivedMessages: this.sessionReceivedMessages,
+                      applyMessages: (sid, messages) => this.applyMessages(sid, messages),
+                      onNormalizedMessages: (messages) => ingestWorkspaceMutationMessages(sessionId, messages),
+                      onTaskLifecycleEvent: (event) => this.applySessionThinkingFromTaskLifecycle(sessionId, event),
+                      onMessagesPage: (page) => {
+                          this.updateSessionMessagesPaginationFromPage(sessionId, { scope: 'main' }, page, { allowHasMoreInference: true, direction: 'newer' });
+                      },
+                      ...this.getMessageDecryptBatchOptions(),
+                      log,
+                  });
+
+                  return {
+                      messagesCount: result.page.messages.length,
+                      nextAfterSeq: result.page.nextAfterSeq ?? null,
+                  };
+              },
+              fetchSnapshotLatestPage: async () => {
+                  await fetchAndApplyMessages({
+                      sessionId,
+                      sessionEncryptionMode,
+                      getSessionEncryption: (id) => this.encryption.getSessionEncryption(id),
+                      isSessionKnown: (id) => this.isSessionKnownOnResolvedOwnerServer(id),
+                      request: requestMessages,
+                      sessionReceivedMessages: this.sessionReceivedMessages,
+                      applyMessages: (sid, messages) => this.applyMessages(sid, messages),
+                      onTaskLifecycleEvent: (event) => this.applySessionThinkingFromTaskLifecycle(sessionId, event),
+                      markMessagesLoaded: (sid) => storage.getState().applyMessagesLoaded(sid),
+                      onMessagesPage: (page) => {
+                          this.updateSessionMessagesPaginationFromPage(sessionId, { scope: 'main' }, page, { allowHasMoreInference: true });
+                      },
+                      ...this.getMessageDecryptBatchOptions(),
+                      log,
+                  });
+              },
+              markLoaded: () => storage.getState().applyMessagesLoaded(sessionId),
+              setDeferredForwardLoading: (deferred) => {
+                  if (deferred) {
+                      this.deferredForwardLoadingSessions.add(sessionId);
+                  } else {
+                      this.deferredForwardLoadingSessions.delete(sessionId);
+                  }
+              },
+          });
+          await (isCatchUpWork
+              ? this.withSessionCatchUpNewer(sessionId, applyCatchUpDecision)
+              : applyCatchUpDecision());
+          if (isCatchUpWork) {
+              this.markSocketOfflineCatchUpConsumedForSession(sessionId, offlineForMs);
+          }
+      }
+
+      private buildSessionMessagesPaginationKey(params: Readonly<{
+          sessionId: string;
+          scope: SessionMessagesScope;
+          sidechainId?: string | null;
+      }>): string {
+          const sessionId = params.sessionId;
+          if (params.scope === 'main') return `${sessionId}:main`;
+          const sidechainId = typeof params.sidechainId === 'string' ? params.sidechainId.trim() : '';
+          if (!sidechainId) {
+              throw new Error('sidechainId is required for sidechain transcript paging');
+          }
+          return `${sessionId}:sidechain:${sidechainId}`;
+      }
+
+      private deleteSessionMessagesPaginationStateForSession(sessionId: string): void {
+          const prefix = `${sessionId}:`;
+          for (const key of this.sessionMessagesBeforeSeqByKey.keys()) {
+              if (key.startsWith(prefix)) {
+                  this.sessionMessagesBeforeSeqByKey.delete(key);
+              }
+          }
+          for (const key of this.sessionMessagesHasMoreOlderByKey.keys()) {
+              if (key.startsWith(prefix)) {
+                  this.sessionMessagesHasMoreOlderByKey.delete(key);
+              }
+          }
+          for (const key of this.sessionMessagesPaginationSupportedByKey.keys()) {
+              if (key.startsWith(prefix)) {
+                  this.sessionMessagesPaginationSupportedByKey.delete(key);
+              }
+          }
+          for (const key of [...this.sessionMessagesFetchLatestInFlightByKey]) {
+              if (key.startsWith(prefix)) {
+                  this.sessionMessagesFetchLatestInFlightByKey.delete(key);
+              }
+          }
+          for (const key of [...this.sessionMessagesFetchedLatestByKey]) {
+              if (key.startsWith(prefix)) {
+                  this.sessionMessagesFetchedLatestByKey.delete(key);
+              }
+          }
+          for (const key of [...this.sessionMessagesLoadingOlderByKey]) {
+              if (key.startsWith(prefix)) {
+                  this.sessionMessagesLoadingOlderByKey.delete(key);
+              }
+          }
+          for (const key of [...this.sessionMessagesLoadingNewerByKey]) {
+              if (key.startsWith(prefix)) {
+                  this.sessionMessagesLoadingNewerByKey.delete(key);
+              }
+          }
+          this.directSessionOlderCursorBySessionId.delete(sessionId);
+          this.directSessionHasMoreOlderBySessionId.delete(sessionId);
+          this.clearDirectSessionTailCursor(sessionId);
+      }
+
+      private getDirectSessionServerScope(sessionId: string): string | undefined {
+          return resolvePreferredServerIdForSessionId(sessionId);
+      }
+
+      private getDirectSessionTailCursor(sessionId: string): string | null {
+          const inMemory = this.directSessionTailCursorBySessionId.get(sessionId);
+          if (typeof inMemory === 'string' && inMemory.trim().length > 0) {
+              return inMemory;
+          }
+          if (inMemory === null) return null;
+
+          const persisted = loadDirectSessionTailCursor(sessionId, this.getDirectSessionCursorScope(sessionId));
+          if (persisted) {
+              this.directSessionTailCursorBySessionId.set(sessionId, persisted);
+              return persisted;
+          }
+          return null;
+      }
+
+      private setDirectSessionTailCursor(sessionId: string, cursor: string | null): void {
+          const normalized = typeof cursor === 'string' && cursor.trim().length > 0 ? cursor.trim() : null;
+          this.directSessionTailCursorBySessionId.set(sessionId, normalized);
+          saveDirectSessionTailCursor(sessionId, normalized, this.getDirectSessionCursorScope(sessionId));
+      }
+
+      private clearDirectSessionTailCursor(sessionId: string): void {
+          this.directSessionTailCursorBySessionId.delete(sessionId);
+          saveDirectSessionTailCursor(sessionId, null, this.getDirectSessionCursorScope(sessionId));
+      }
+
+      private createServerScopeGuard(): () => boolean {
+          const generation = this.serverScopeGeneration;
+          return () => this.serverScopeGeneration === generation;
+      }
+
+      private async fetchDirectSessionMessages(
+          sessionId: string,
+          directSessionLink: ReturnType<typeof readDirectSessionLink> extends infer T ? Exclude<T, null> : never,
+      ): Promise<void> {
+          const shouldContinue = this.createServerScopeGuard();
+          const page = await machineDirectSessionTranscriptPage({
+              machineId: directSessionLink.machineId,
+              providerId: directSessionLink.providerId,
+              remoteSessionId: directSessionLink.remoteSessionId,
+              source: directSessionLink.source,
+              direction: 'older',
+          }, { serverId: this.getDirectSessionServerScope(sessionId) });
+          if (!shouldContinue()) return;
+
+          if (!page.ok) {
+              throw new Error(page.error);
+          }
+
+          const normalizedMessages = normalizeDirectTranscriptMessages(page.items);
+          if (normalizedMessages.length > 0) {
+              this.applyMessages(sessionId, normalizedMessages, { notifyVoice: false });
+          }
+
+          this.directSessionOlderCursorBySessionId.set(sessionId, page.nextCursor ?? null);
+          this.directSessionHasMoreOlderBySessionId.set(sessionId, page.hasMore === true);
+          storage.getState().applyMessagesLoaded(sessionId);
+
+          if (typeof page.tailCursor === 'string' && page.tailCursor.trim().length > 0) {
+              this.setDirectSessionTailCursor(sessionId, page.tailCursor);
+              return;
+          }
+
+          const tail = await machineDirectSessionTranscriptReadAfter({
+              machineId: directSessionLink.machineId,
+              providerId: directSessionLink.providerId,
+              remoteSessionId: directSessionLink.remoteSessionId,
+              source: directSessionLink.source,
+              cursor: 'tail',
+          }, { serverId: this.getDirectSessionServerScope(sessionId) });
+          if (!shouldContinue()) return;
+
+          if (!tail.ok) {
+              throw new Error(tail.error);
+          }
+
+          this.setDirectSessionTailCursor(sessionId, tail.nextCursor ?? null);
+      }
+
+      /**
+       * §13: bracket a unit of "catching up to newer activity" work with the UI-observable
+       * per-session signal (ref-counted) so the transcript shows the "Catching up…" overlay for
+       * its duration. The canonical bracket for newer-catch-up that has no other co-lifecycle:
+       * the on-open incremental/snapshot catch-up (`fetchMessages`), the direct-session tail
+       * catch-up, and reconnect invalidation all funnel through here. (`loadNewerMessages` brackets
+       * the same signal inline because its begin/end share one lifecycle with its paging-key guard.)
+       * Ref-counting makes overlapping brackets safe (e.g. an on-open catch-up overlapping a drain).
+       */
+      private async withSessionCatchUpNewer<T>(sessionId: string, work: () => Promise<T>): Promise<T> {
+          storage.getState().beginSessionCatchUpNewer(sessionId);
+          try {
+              return await work();
+          } finally {
+              storage.getState().endSessionCatchUpNewer(sessionId);
+          }
+      }
+
+      private async catchUpDirectSessionMessages(
+          sessionId: string,
+          directSessionLink: ReturnType<typeof readDirectSessionLink> extends infer T ? Exclude<T, null> : never,
+      ): Promise<void> {
+          await this.withSessionCatchUpNewer(sessionId, async () => {
+              const shouldContinue = this.createServerScopeGuard();
+              const cursor = this.getDirectSessionTailCursor(sessionId) ?? 'tail';
+              const tail = await machineDirectSessionTranscriptReadAfter({
+                  machineId: directSessionLink.machineId,
+                  providerId: directSessionLink.providerId,
+                  remoteSessionId: directSessionLink.remoteSessionId,
+                  source: directSessionLink.source,
+                  cursor,
+              }, { serverId: this.getDirectSessionServerScope(sessionId) });
+              if (!shouldContinue()) return;
+
+              if (!tail.ok) {
+                  throw new Error(tail.error);
+              }
+
+              if (tail.truncated === true) {
+                  this.resetSessionTranscriptState(sessionId);
+                  await this.fetchDirectSessionMessages(sessionId, directSessionLink);
+                  return;
+              }
+
+              const normalizedMessages = normalizeDirectTranscriptMessages(tail.items);
+              if (normalizedMessages.length > 0) {
+                  this.applyMessages(sessionId, normalizedMessages, { notifyVoice: false });
+              }
+              this.setDirectSessionTailCursor(sessionId, tail.nextCursor ?? null);
+          });
+      }
+
+      private collectLoadedDirectSessionsForResume(): Array<{ sessionId: string; directSessionLink: DirectSessionLink }> {
+          const state = storage.getState();
+          const loadedDirectSessions: Array<{ sessionId: string; directSessionLink: DirectSessionLink }> = [];
+          for (const [sessionId, messages] of Object.entries(state.sessionMessages)) {
+              if (messages?.isLoaded !== true) continue;
+              const directSessionLink = readDirectSessionLink(state.sessions[sessionId]?.metadata);
+              if (!directSessionLink) continue;
+              loadedDirectSessions.push({ sessionId, directSessionLink });
+          }
+          return loadedDirectSessions;
+      }
+
+      private async catchUpLoadedDirectSessionsOnResume(): Promise<void> {
+          const loadedDirectSessions = this.collectLoadedDirectSessionsForResume();
+          if (loadedDirectSessions.length === 0) return;
+
+          await runTasksWithLimit(
+              loadedDirectSessions.map(({ sessionId, directSessionLink }) => async () => {
+                  try {
+                      await this.catchUpDirectSessionMessages(sessionId, directSessionLink);
+                  } catch (error) {
+                      syncReliabilityTelemetry.recordCritical('sync.directSession.resumeCatchUpFailed', {
+                          sessionId,
+                          message: error instanceof Error ? error.message : String(error),
+                      });
+                  }
+              }),
+              this.syncTuning.messageCatchUpConcurrencyLimit,
+          );
+      }
+
+      private async applyDirectSessionTranscriptItems(
+          sessionId: string,
+          items: ReadonlyArray<DirectTranscriptRawMessageV1>,
+          options?: Readonly<{
+              nextCursor?: string | null;
+          }>,
+      ): Promise<void> {
+          const session = storage.getState().sessions[sessionId] ?? null;
+          if (!readDirectSessionLink(session?.metadata)) {
+              return;
+          }
+
+          const normalizedMessages = normalizeDirectTranscriptMessages(items);
+          if (normalizedMessages.length > 0) {
+              const applied = this.applyMessages(sessionId, normalizedMessages, { notifyVoice: false, notifyActivity: true });
+              if (!applied.hasReadyEvent) {
+                  const sessionMessages = storage.getState().sessionMessages[sessionId];
+                  const changedMessages = applied.changed
+                      .map((messageId) => sessionMessages?.messagesMap[messageId] ?? null)
+                      .filter((message): message is Message => Boolean(message) && message.kind === 'agent-text');
+                  if (changedMessages.length > 0) {
+                      notifyActivityReady(sessionId, changedMessages);
+                  }
+              }
+          }
+
+          if (Object.prototype.hasOwnProperty.call(options ?? {}, 'nextCursor')) {
+              this.setDirectSessionTailCursor(sessionId, options?.nextCursor ?? null);
+          }
+      }
+
+      private resolveDirectSessionTranscriptDeltaCursor(ephemeralUpdate: Readonly<{
+          sessionId: string;
+          fromCursor?: string | null;
+          nextCursor?: string | null;
+          tailCursor?: string | null;
+      }>): string | null | undefined {
+          const fromCursor = Object.prototype.hasOwnProperty.call(ephemeralUpdate, 'fromCursor')
+              ? (
+                  typeof ephemeralUpdate.fromCursor === 'string' && ephemeralUpdate.fromCursor.trim().length > 0
+                      ? ephemeralUpdate.fromCursor
+                      : null
+              )
+              : undefined;
+          if (fromCursor === undefined) {
+              return undefined;
+          }
+          if (fromCursor === null) {
+              return undefined;
+          }
+
+          const currentCursor = this.getDirectSessionTailCursor(ephemeralUpdate.sessionId);
+          if (currentCursor !== fromCursor) {
+              return undefined;
+          }
+
+          if (typeof ephemeralUpdate.nextCursor === 'string' || ephemeralUpdate.nextCursor === null) {
+              return ephemeralUpdate.nextCursor;
+          }
+          if (typeof ephemeralUpdate.tailCursor === 'string' || ephemeralUpdate.tailCursor === null) {
+              return ephemeralUpdate.tailCursor;
+          }
+          return undefined;
+      }
+
+      private async handleDirectSessionTranscriptEphemeralUpdate(ephemeralUpdate: Readonly<{
+          sessionId: string;
+          items: ReadonlyArray<DirectTranscriptRawMessageV1>;
+          fromCursor?: string | null;
+          nextCursor?: string | null;
+          tailCursor?: string | null;
+          truncated?: boolean;
+      }>): Promise<void> {
+          const session = storage.getState().sessions[ephemeralUpdate.sessionId] ?? null;
+          const directSessionLink = readDirectSessionLink(session?.metadata);
+          if (!directSessionLink) {
+              return;
+          }
+
+          if (ephemeralUpdate.truncated === true) {
+              this.directSessionOlderCursorBySessionId.delete(ephemeralUpdate.sessionId);
+              this.directSessionHasMoreOlderBySessionId.delete(ephemeralUpdate.sessionId);
+              this.clearDirectSessionTailCursor(ephemeralUpdate.sessionId);
+              await this.fetchDirectSessionMessages(ephemeralUpdate.sessionId, directSessionLink);
+              return;
+          }
+
+          const resolvedCursor = this.resolveDirectSessionTranscriptDeltaCursor(ephemeralUpdate);
+          await this.applyDirectSessionTranscriptItems(
+              ephemeralUpdate.sessionId,
+              ephemeralUpdate.items,
+              resolvedCursor !== undefined ? { nextCursor: resolvedCursor } : undefined,
+          );
+      }
+
+      private async loadOlderMessagesForChain(params: Readonly<{
+          sessionId: string;
+          scope: SessionMessagesScope;
+          sidechainId?: string | null;
+          beforeSeqOverride?: number;
+          limit?: number;
+      }>): Promise<{
+          loaded: number;
+          hasMore: boolean;
+          status: 'loaded' | 'no_more' | 'not_ready' | 'in_flight';
+      }> {
+          if (params.scope === 'main') {
+              const session = storage.getState().sessions[params.sessionId] ?? null;
+              const directSessionLink = readDirectSessionLink(session?.metadata);
+              if (directSessionLink) {
+                  const loadingKey = `${params.sessionId}:direct`;
+                  if (this.sessionMessagesLoadingOlderByKey.has(loadingKey)) {
+                      return {
+                          loaded: 0,
+                          hasMore: this.directSessionHasMoreOlderBySessionId.get(params.sessionId) ?? true,
+                          status: 'in_flight',
+                      };
+                  }
+
+                  const knownHasMore = this.directSessionHasMoreOlderBySessionId.get(params.sessionId);
+                  if (knownHasMore === false) {
+                      return { loaded: 0, hasMore: false, status: 'no_more' };
+                  }
+
+                  const cursor = this.directSessionOlderCursorBySessionId.get(params.sessionId) ?? null;
+                  if (!cursor) {
+                      return { loaded: 0, hasMore: knownHasMore ?? false, status: 'not_ready' };
+                  }
+
+                  this.sessionMessagesLoadingOlderByKey.add(loadingKey);
+                  try {
+                      const shouldContinue = this.createServerScopeGuard();
+                      const requestedLimit =
+                          typeof params.limit === 'number' && Number.isFinite(params.limit)
+                              ? this.getSessionMessagesPageSize({ limit: params.limit })
+                              : null;
+                      const page = await machineDirectSessionTranscriptPage({
+                          machineId: directSessionLink.machineId,
+                          providerId: directSessionLink.providerId,
+                          remoteSessionId: directSessionLink.remoteSessionId,
+                          source: directSessionLink.source,
+                          direction: 'older',
+                          cursor,
+                          ...(requestedLimit !== null ? { maxItems: requestedLimit } : {}),
+                      }, { serverId: this.getDirectSessionServerScope(params.sessionId) });
+                      if (!shouldContinue()) {
+                          return { loaded: 0, hasMore: knownHasMore ?? true, status: 'not_ready' };
+                      }
+
+                      if (!page.ok) {
+                          throw new Error(page.error);
+                      }
+
+                      const normalizedMessages = normalizeDirectTranscriptMessages(page.items);
+                      if (normalizedMessages.length > 0) {
+                          this.applyMessages(params.sessionId, normalizedMessages, { notifyVoice: false });
+                      }
+
+                      this.directSessionOlderCursorBySessionId.set(params.sessionId, page.nextCursor ?? null);
+                      this.directSessionHasMoreOlderBySessionId.set(params.sessionId, page.hasMore === true);
+
+                      return {
+                          loaded: normalizedMessages.length,
+                          hasMore: page.hasMore === true,
+                          status: page.hasMore === true ? 'loaded' : 'no_more',
+                      };
+                  } catch (error) {
+                      console.error('Failed to load older direct session messages:', error);
+                      return { loaded: 0, hasMore: knownHasMore ?? true, status: 'loaded' };
+                  } finally {
+                      this.sessionMessagesLoadingOlderByKey.delete(loadingKey);
+                      this.replayDeferredMessagesFetch(params.sessionId);
+                  }
+              }
+          }
+
+          const pagingKey = this.buildSessionMessagesPaginationKey({
+              sessionId: params.sessionId,
+              scope: params.scope,
+              sidechainId: params.sidechainId,
+          });
+
+          if (this.sessionMessagesLoadingOlderByKey.has(pagingKey)) {
+              return {
+                  loaded: 0,
+                  hasMore: this.sessionMessagesHasMoreOlderByKey.get(pagingKey) ?? true,
+                  status: 'in_flight',
+              };
+          }
+
+          const knownHasMore = this.sessionMessagesHasMoreOlderByKey.get(pagingKey);
+          const normalizedBeforeSeqOverride =
+              typeof params.beforeSeqOverride === 'number' && Number.isFinite(params.beforeSeqOverride)
+                  ? Math.max(1, Math.trunc(params.beforeSeqOverride))
+                  : null;
+          const recordedBeforeSeq = this.sessionMessagesBeforeSeqByKey.get(pagingKey) ?? null;
+          if (
+              knownHasMore === false
+              && (
+                  normalizedBeforeSeqOverride === null
+                  || (typeof recordedBeforeSeq === 'number' && recordedBeforeSeq <= normalizedBeforeSeqOverride)
+              )
+          ) {
+              return { loaded: 0, hasMore: false, status: 'no_more' };
+          }
+
+          const supported = this.sessionMessagesPaginationSupportedByKey.get(pagingKey);
+          if (supported === false) {
+              return { loaded: 0, hasMore: false, status: 'no_more' };
+          }
+
+          const beforeSeq = normalizedBeforeSeqOverride ?? recordedBeforeSeq;
+          if (!beforeSeq) {
+              // Pagination state is initialized during the initial `/messages` fetch. If we haven't
+              // seen it yet, don't permanently disable pagination on the UI side.
+              return { loaded: 0, hasMore: knownHasMore ?? true, status: 'not_ready' };
+          }
+
+          this.sessionMessagesLoadingOlderByKey.add(pagingKey);
+          const requestMessages = this.createSessionMessagesRequest(params.sessionId);
+          const session = storage.getState().sessions[params.sessionId] ?? null;
+          const sessionEncryptionMode = session?.encryptionMode === 'plain' ? 'plain' : 'e2ee';
+          try {
+              const result = await fetchAndApplyOlderMessages({
+                  sessionId: params.sessionId,
+                  sessionEncryptionMode,
+                  beforeSeq,
+                  limit: this.getSessionMessagesPageSize({ limit: params.limit }),
+                  scope: params.scope,
+                  sidechainId: params.sidechainId ?? null,
+                  getSessionEncryption: (id) => this.encryption.getSessionEncryption(id),
+                  isSessionKnown: (id) => this.isSessionKnownOnResolvedOwnerServer(id),
+                  request: requestMessages,
+                  sessionReceivedMessages: this.sessionReceivedMessages,
+                  applyMessages: (sid, messages) => this.applyMessages(sid, messages, { notifyVoice: false }),
+                  ...this.getMessageDecryptBatchOptions(),
+                  log,
+              });
+
+              if (result.page.messages.length === 0) {
+                  if (normalizedBeforeSeqOverride !== null) {
+                      const currentBeforeSeq = this.sessionMessagesBeforeSeqByKey.get(pagingKey);
+                      this.sessionMessagesBeforeSeqByKey.set(
+                          pagingKey,
+                          typeof currentBeforeSeq === 'number'
+                              ? Math.min(currentBeforeSeq, normalizedBeforeSeqOverride)
+                              : normalizedBeforeSeqOverride,
+                      );
+                  }
+                  this.sessionMessagesHasMoreOlderByKey.set(pagingKey, false);
+                  return { loaded: 0, hasMore: false, status: 'no_more' };
+              }
+
+              this.updateSessionMessagesPaginationFromPage(
+                  params.sessionId,
+                  { scope: params.scope, sidechainId: params.sidechainId ?? null },
+                  result.page,
+                  { allowHasMoreInference: true },
+              );
+
+              const hasMore = this.sessionMessagesHasMoreOlderByKey.get(pagingKey) ?? false;
+              if (hasMore === false) {
+                  return { loaded: result.applied, hasMore: false, status: 'no_more' };
+              }
+
+              return { loaded: result.applied, hasMore, status: 'loaded' };
+          } catch (error) {
+              console.error('Failed to load older messages:', error);
+              return { loaded: 0, hasMore: knownHasMore ?? true, status: 'loaded' };
+          } finally {
+              this.sessionMessagesLoadingOlderByKey.delete(pagingKey);
+              this.replayDeferredMessagesFetch(params.sessionId);
+          }
+      }
+
+      public async loadOlderMessages(sessionId: string, options?: LoadOlderMessagesOptions): Promise<{
+          loaded: number;
+          hasMore: boolean;
+          status: 'loaded' | 'no_more' | 'not_ready' | 'in_flight';
+      }> {
+          return this.loadOlderMessagesForChain({ sessionId, scope: 'main', limit: options?.limit });
+      }
+
+      public async loadOlderMessagesFromCursor(sessionId: string, beforeSeq: number, options?: LoadOlderMessagesOptions): Promise<{
+          loaded: number;
+          hasMore: boolean;
+          status: 'loaded' | 'no_more' | 'not_ready' | 'in_flight';
+      }> {
+          return this.loadOlderMessagesForChain({ sessionId, scope: 'main', beforeSeqOverride: beforeSeq, limit: options?.limit });
+      }
+
+      public async fetchUserMessageHistoryPage(
+          sessionId: string,
+          options?: Readonly<{ beforeSeq?: number | null; limit?: number }>,
+      ): Promise<FetchUserMessageHistoryPageResult> {
+          const normalizedSessionId = String(sessionId ?? '').trim();
+          if (!normalizedSessionId) return { status: 'not_ready' };
+
+          const session = storage.getState().sessions[normalizedSessionId] ?? null;
+          const sessionEncryptionMode = session?.encryptionMode === 'plain' ? 'plain' : 'e2ee';
+          return fetchUserMessageHistoryPage({
+              sessionId: normalizedSessionId,
+              sessionEncryptionMode,
+              beforeSeq: options?.beforeSeq ?? null,
+              limit: options?.limit ?? USER_MESSAGE_HISTORY_REMOTE_PAGE_SIZE,
+              request: this.createSessionMessagesRequest(normalizedSessionId),
+              getSessionEncryption: (id) => this.encryption.getSessionEncryption(id),
+          });
+      }
+
+      public async ensureSidechainMessagesLoaded(sessionId: string, sidechainId: string): Promise<'loaded' | 'not_ready' | 'in_flight'> {
+          const normalizedSessionId = typeof sessionId === 'string' ? sessionId.trim() : '';
+          const normalizedSidechainId = typeof sidechainId === 'string' ? sidechainId.trim() : '';
+          if (!normalizedSessionId || !normalizedSidechainId) return 'not_ready';
+
+          const pagingKey = this.buildSessionMessagesPaginationKey({
+              sessionId: normalizedSessionId,
+              scope: 'sidechain',
+              sidechainId: normalizedSidechainId,
+          });
+
+          // If we already have any pagination state (or have explicitly recorded a successful "latest" fetch),
+          // treat the sidechain as initialized. This prevents re-fetch storms for empty/short sidechains where
+          // `beforeSeq` may legitimately remain unset.
+          if (
+              this.sessionMessagesFetchedLatestByKey.has(pagingKey)
+              || this.sessionMessagesBeforeSeqByKey.has(pagingKey)
+              || this.sessionMessagesHasMoreOlderByKey.has(pagingKey)
+              || this.sessionMessagesPaginationSupportedByKey.has(pagingKey)
+          ) {
+              return 'loaded';
+          }
+
+          if (this.sessionMessagesFetchLatestInFlightByKey.has(pagingKey)) {
+              return 'in_flight';
+          }
+
+          this.sessionMessagesFetchLatestInFlightByKey.add(pagingKey);
+          const requestMessages = this.createSessionMessagesRequest(normalizedSessionId);
+          const session = storage.getState().sessions[normalizedSessionId] ?? null;
+          const sessionEncryptionMode = session?.encryptionMode === 'plain' ? 'plain' : 'e2ee';
+          try {
+              await fetchAndApplyMessages({
+                  sessionId: normalizedSessionId,
+                  sessionEncryptionMode,
+                  scope: 'sidechain',
+                  sidechainId: normalizedSidechainId,
+                  getSessionEncryption: (id) => this.encryption.getSessionEncryption(id),
+                  isSessionKnown: (id) => this.isSessionKnownOnResolvedOwnerServer(id),
+                  request: requestMessages,
+                  sessionReceivedMessages: this.sessionReceivedMessages,
+                  applyMessages: (sid, messages) => this.applyMessages(sid, messages, { notifyVoice: false }),
+                  markMessagesLoaded: () => {},
+                  onMessagesPage: (page) => {
+                      this.updateSessionMessagesPaginationFromPage(
+                          normalizedSessionId,
+                          { scope: 'sidechain', sidechainId: normalizedSidechainId },
+                          page,
+                          { allowHasMoreInference: true },
+                      );
+                  },
+                  ...this.getMessageDecryptBatchOptions(),
+                  log,
+              });
+              this.sessionMessagesFetchedLatestByKey.add(pagingKey);
+              return 'loaded';
+          } catch (error) {
+              console.error('Failed to fetch sidechain messages:', error);
+              return 'not_ready';
+          } finally {
+              this.sessionMessagesFetchLatestInFlightByKey.delete(pagingKey);
+          }
+      }
+
+      public async loadOlderSidechainMessages(sessionId: string, sidechainId: string): Promise<{
+          loaded: number;
+          hasMore: boolean;
+          status: 'loaded' | 'no_more' | 'not_ready' | 'in_flight';
+      }> {
+          const normalizedSessionId = typeof sessionId === 'string' ? sessionId.trim() : '';
+          const normalizedSidechainId = typeof sidechainId === 'string' ? sidechainId.trim() : '';
+          if (!normalizedSessionId || !normalizedSidechainId) {
+              return { loaded: 0, hasMore: true, status: 'not_ready' };
+          }
+
+          const pagingKey = this.buildSessionMessagesPaginationKey({
+              sessionId: normalizedSessionId,
+              scope: 'sidechain',
+              sidechainId: normalizedSidechainId,
+          });
+
+          if (
+              !this.sessionMessagesFetchedLatestByKey.has(pagingKey)
+              && !this.sessionMessagesBeforeSeqByKey.has(pagingKey)
+              && !this.sessionMessagesHasMoreOlderByKey.has(pagingKey)
+              && !this.sessionMessagesPaginationSupportedByKey.has(pagingKey)
+          ) {
+              const init = await this.ensureSidechainMessagesLoaded(normalizedSessionId, normalizedSidechainId);
+              if (init === 'in_flight') {
+                  return { loaded: 0, hasMore: true, status: 'in_flight' };
+              }
+              if (init !== 'loaded') {
+                  return { loaded: 0, hasMore: true, status: 'not_ready' };
+              }
+          }
+
+          return this.loadOlderMessagesForChain({
+              sessionId: normalizedSessionId,
+              scope: 'sidechain',
+              sidechainId: normalizedSidechainId,
+          });
+      }
+
+        public async loadOlderMessagesForkAware(childSessionId: string, options?: LoadOlderMessagesOptions): Promise<{
+            loaded: number;
+            hasMore: boolean;
+            status: 'loaded' | 'no_more' | 'not_ready' | 'in_flight';
+        }> {
+            const fork = getForkedTranscriptSnapshotCached(storage.getState() as any, childSessionId);
+            if (!fork) return this.loadOlderMessages(childSessionId, options);
+
+            const request = resolveNextForkedTranscriptLoadOlderRequest({
+                fork,
+                getHasMoreOlder: (id) => {
+                    const key = this.buildSessionMessagesPaginationKey({ sessionId: id, scope: 'main' });
+                    return this.sessionMessagesHasMoreOlderByKey.get(key);
+                },
+                getBeforeSeqCursor: (id) => {
+                    const key = this.buildSessionMessagesPaginationKey({ sessionId: id, scope: 'main' });
+                    return this.sessionMessagesBeforeSeqByKey.get(key);
+                },
+            });
+            if (!request) {
+                return { loaded: 0, hasMore: false, status: 'no_more' };
+            }
+
+            if (request.sessionId !== childSessionId) {
+                const hydration = await this.ensureSessionVisibleForMessageRoute(request.sessionId);
+                if (hydration.kind !== 'available') {
+                    return { loaded: 0, hasMore: true, status: 'not_ready' };
+                }
+            }
+
+            const result =
+                request.kind === 'loadOlderFromCursor'
+                    ? await this.loadOlderMessagesFromCursor(request.sessionId, request.beforeSeq, options)
+                    : await this.loadOlderMessages(request.sessionId, options);
+
+            const overallHasMore = computeForkedTranscriptHasMoreOlder({
+                fork,
+                getHasMoreOlder: (id) => {
+                    const key = this.buildSessionMessagesPaginationKey({ sessionId: id, scope: 'main' });
+                    return this.sessionMessagesHasMoreOlderByKey.get(key);
+                },
+            });
+
+            if (overallHasMore === false) {
+                return { ...result, hasMore: false, status: 'no_more' };
+            }
+            // A forked transcript can page multiple segments (child first, then ancestors). If the selected
+            // segment is exhausted (`status: no_more`) but older context remains in another segment, treat the
+            // overall forked transcript as still having more. This avoids UI/FlashList consumers prematurely
+            // terminating paging based on the segment-local status.
+            const normalizedStatus = result.status === 'no_more' ? 'loaded' : result.status;
+            return { ...result, hasMore: true, status: normalizedStatus };
+        }
+
+        /**
+         * Prefetch fork ancestor context once nearer fork segments are exhausted.
+         *
+         * This does NOT materialize/copy messages into the child session. It only loads the relevant
+         * ancestor session pages into the local cache (bounded by each segment's cutoff), and avoids
+         * revealing older read-only context before the child transcript's own older pages are loaded.
+         */
+        public async prefetchForkedTranscriptContext(childSessionId: string): Promise<void> {
+            const fork = getForkedTranscriptSnapshotCached(storage.getState() as any, childSessionId);
+            if (!fork) return;
+
+            const missingSegments = fork.segments.filter((seg, index) => {
+                if (
+                    seg.isReadOnlyContext !== true ||
+                    typeof seg.cutoffSeqInclusive !== 'number' ||
+                    !Number.isFinite(seg.cutoffSeqInclusive) ||
+                    seg.cutoffSeqInclusive < 0 ||
+                    (seg.messageIdsOldestFirst?.length ?? 0) > 0
+                ) {
+                    return false;
+                }
+
+                for (let i = index + 1; i < fork.segments.length; i += 1) {
+                    const closerSegment = fork.segments[i];
+                    if (!closerSegment) continue;
+                    const key = this.buildSessionMessagesPaginationKey({ sessionId: closerSegment.sessionId, scope: 'main' });
+                    if (this.sessionMessagesHasMoreOlderByKey.get(key) !== false) {
+                        return false;
+                    }
+                }
+
+                return true;
+            });
+            if (missingSegments.length === 0) return;
+
+            for (const seg of missingSegments) {
+                const hydration = await this.ensureSessionVisibleForMessageRoute(seg.sessionId);
+                if (hydration.kind !== 'available') continue;
+
+                const cutoff = Math.max(0, Math.trunc(seg.cutoffSeqInclusive as number));
+                await this.loadOlderMessagesFromCursor(seg.sessionId, cutoff + 1).catch(() => {});
+            }
+        }
+
+      public markSessionLiveTailIntent(sessionId: string): void {
+          if (!sessionId) return;
+          this.ensureSessionViewportHydrated();
+          const hadDeferredForwardLoading = this.deferredForwardLoadingSessions.has(sessionId);
+          this.sessionViewport.set(sessionId, {
+              isPinned: true,
+              offsetY: 0,
+              anchor: null,
+              lastUpdatedAt: Date.now(),
+              source: 'default',
+          });
+          // Live-tail intent beats any stale persisted anchor across restarts
+          // (mirrors messageCatchUpPolicy precedence): absence of a persisted
+          // record IS the durable live-tail default.
+          if (this.persistedSessionViewportIds.delete(sessionId)) {
+              deletePersistedSessionViewport(sessionId, getActiveServerAccountScope());
+          }
+          if (hadDeferredForwardLoading) {
+              this.getOrCreateMessagesSync(sessionId).invalidateCoalesced();
+          }
+      }
+
+      public onSessionViewportChange(sessionId: string, state: SessionViewportChangeState): void {
+          if (!sessionId) return;
+          this.ensureSessionViewportHydrated();
+          if (state.shouldRestoreViewport !== true) {
+              this.markSessionLiveTailIntent(sessionId);
+              return;
+          }
+          if (state.isPinned === true) {
+              const prevViewport = this.sessionViewport.get(sessionId);
+              if (prevViewport?.source === 'observed' && prevViewport.isPinned === false) {
+                  return;
+              }
+              this.markSessionLiveTailIntent(sessionId);
+              return;
+          }
+          // N2b.5: passive observation emits carry no anchor field — merge by
+          // preserving the stored identity anchor and updating only the offset
+          // metadata. Only an explicit capture outcome (anchor object or null)
+          // or live-tail intent (above) may replace/clear the identity.
+          const anchor = state.anchor === undefined
+              ? this.sessionViewport.get(sessionId)?.anchor ?? null
+              : sanitizeSessionViewportAnchor(state.anchor);
+          const lastUpdatedAt = Date.now();
+          this.sessionViewport.set(sessionId, {
+              isPinned: false,
+              offsetY: state.offsetY,
+              anchor,
+              lastUpdatedAt,
+              source: 'observed',
+          });
+          this.persistSessionViewport(sessionId, { offsetY: state.offsetY, anchor, lastUpdatedAt });
+      }
+
+      public getSessionViewport(sessionId: string): SessionViewportSnapshot | null {
+          if (!sessionId) return null;
+          this.ensureSessionViewportHydrated();
+          return this.sessionViewport.get(sessionId) ?? null;
+      }
+
+      /**
+       * Hydrates persisted per-session viewport anchors (N2b.1) into the
+       * in-memory map once per active server-account scope. The map stays the
+       * hot path; persistence is write-through on capture and delete-through
+       * on live-tail intent.
+       */
+      private ensureSessionViewportHydrated(): void {
+          const scope = getActiveServerAccountScope();
+          const storageKey = sessionViewportStorageKey(scope);
+          if (this.sessionViewportHydratedStorageKey === storageKey) return;
+          this.sessionViewportHydratedStorageKey = storageKey;
+          const persisted = loadPersistedSessionViewports(scope);
+          this.persistedSessionViewportIds = new Set(Object.keys(persisted));
+          for (const [sessionId, record] of Object.entries(persisted)) {
+              if (this.sessionViewport.has(sessionId)) continue;
+              this.sessionViewport.set(sessionId, {
+                  isPinned: record.isPinned,
+                  offsetY: record.offsetY,
+                  anchor: record.anchor
+                      ? {
+                          kind: record.anchor.kind,
+                          messageId: record.anchor.messageId,
+                          seq: record.anchor.seq,
+                          itemId: record.anchor.itemId,
+                          itemOffsetPx: record.anchor.itemOffsetPx,
+                          capturedAtMs: record.anchor.capturedAtMs,
+                      }
+                      : null,
+                  lastUpdatedAt: record.lastUpdatedAt,
+                  source: 'observed',
+              });
+          }
+      }
+
+      private persistSessionViewport(
+          sessionId: string,
+          snapshot: Readonly<{ offsetY: number; anchor: SessionViewportAnchorSnapshot | null; lastUpdatedAt: number }>,
+      ): void {
+          const capturedMessageId = snapshot.anchor?.messageId?.trim() ?? '';
+          const durable = capturedMessageId
+              ? this.resolveDurableSessionMessageIdentity(sessionId, capturedMessageId)
+              : null;
+          upsertPersistedSessionViewport(sessionId, {
+              isPinned: false,
+              offsetY: snapshot.offsetY,
+              lastUpdatedAt: snapshot.lastUpdatedAt,
+              // Identity-first: the persistence layer drops identity-less
+              // anchors, keeping offsetY as degraded fallback metadata only.
+              anchor: snapshot.anchor && durable
+                  ? {
+                      kind: snapshot.anchor.kind,
+                      messageId: durable.messageId,
+                      seq: snapshot.anchor.seq ?? durable.seq,
+                      itemId: snapshot.anchor.itemId,
+                      itemOffsetPx: snapshot.anchor.itemOffsetPx,
+                      capturedAtMs: snapshot.anchor.capturedAtMs,
+                  }
+                  : null,
+          }, getActiveServerAccountScope());
+          this.persistedSessionViewportIds.add(sessionId);
+      }
+
+      /**
+       * Rendered transcript message ids are runtime-local (reducer-allocated),
+       * so the durable anchor identity is the server message id (`realID`)
+       * plus the transcript `seq`. Accepts either a rendered id or a server id.
+       */
+      private resolveDurableSessionMessageIdentity(
+          sessionId: string,
+          messageId: string,
+      ): Readonly<{ messageId: string; seq: number | null }> {
+          const session = storage.getState().sessionMessages[sessionId];
+          const messagesById = session?.messagesById ?? {};
+          let message = messagesById[messageId] ?? null;
+          if (!message) {
+              for (const candidate of Object.values(messagesById)) {
+                  if (candidate?.realID === messageId) {
+                      message = candidate;
+                      break;
+                  }
+              }
+          }
+          if (!message) return { messageId, seq: null };
+          const realId = typeof message.realID === 'string' && message.realID.trim() ? message.realID.trim() : null;
+          const seq = typeof message.seq === 'number' && Number.isFinite(message.seq) ? message.seq : null;
+          return { messageId: realId ?? messageId, seq };
+      }
+
+      public hasDeferredNewerMessages(sessionId: string): boolean {
+          return this.deferredForwardLoadingSessions.has(sessionId);
+      }
+
+      /**
+       * C6/D3: sync-owned reactive drain for the deferred-forward-loading backlog (mechanism B).
+       *
+       * The data layer accrues the backlog and must own when to release it. Previously the
+       * release lived only in ChatList.onScroll, so a list shell that did not reproduce those
+       * callbacks silently stalled newer-message catch-up. The list now only reports geometry;
+       * the threshold + decision + fetch are owned here. Drains when pinned or near the bottom
+       * (within the forward-prefetch threshold); a scrolled-up session is left deferred so the
+       * viewport is never yanked.
+       */
+      public maybeDrainDeferredNewerMessages(
+          sessionId: string,
+          viewport: Readonly<{ isPinned: boolean; distanceFromBottomPx: number }>,
+      ): void {
+          if (!sessionId || !this.hasDeferredNewerMessages(sessionId)) return;
+          const nearBottom = viewport.isPinned
+              || viewport.distanceFromBottomPx <= this.syncTuning.transcriptForwardPrefetchThresholdPx;
+          if (!nearBottom) return;
+          fireAndForget(this.loadNewerMessages(sessionId), { tag: 'Sync.maybeDrainDeferredNewerMessages' });
+      }
+
+      public async loadNewerMessages(sessionId: string): Promise<{
+          loaded: number;
+          hasMore: boolean;
+          status: 'loaded' | 'no_more' | 'not_ready' | 'in_flight';
+      }> {
+          const pagingKey = this.buildSessionMessagesPaginationKey({ sessionId, scope: 'main' });
+          if (this.sessionMessagesLoadingNewerByKey.has(pagingKey)) {
+              return { loaded: 0, hasMore: true, status: 'in_flight' };
+          }
+
+          const supported = this.sessionMessagesPaginationSupportedByKey.get(pagingKey);
+          if (supported === false) {
+              return { loaded: 0, hasMore: false, status: 'no_more' };
+          }
+
+          const afterSeq = this.sessionMaterializedMaxSeqById[sessionId] ?? 0;
+          if (!afterSeq) {
+              return { loaded: 0, hasMore: true, status: 'not_ready' };
+          }
+
+          this.sessionMessagesLoadingNewerByKey.add(pagingKey);
+          // §13: bracket inline (mirrors `withSessionCatchUpNewer`) — the catch-up signal shares
+          // this method's exact begin/finally lifecycle with the paging-key in-flight guard.
+          storage.getState().beginSessionCatchUpNewer(sessionId);
+          const requestMessages = this.createSessionMessagesRequest(sessionId);
+          const session = storage.getState().sessions[sessionId] ?? null;
+          const sessionEncryptionMode = session?.encryptionMode === 'plain' ? 'plain' : 'e2ee';
+          try {
+              const result = await fetchAndApplyNewerMessages({
+                  sessionId,
+                  sessionEncryptionMode,
+                  afterSeq,
+                  limit: this.getSessionMessagesPageSize(),
+                  getSessionEncryption: (id) => this.encryption.getSessionEncryption(id),
+                  isSessionKnown: (id) => this.isSessionKnownOnResolvedOwnerServer(id),
+                  request: requestMessages,
+                  sessionReceivedMessages: this.sessionReceivedMessages,
+                  applyMessages: (sid, messages) => this.applyMessages(sid, messages, { notifyVoice: false }),
+                  onNormalizedMessages: (messages) => ingestWorkspaceMutationMessages(sessionId, messages),
+                  onTaskLifecycleEvent: (event) => this.applySessionThinkingFromTaskLifecycle(sessionId, event),
+                  onMessagesPage: (page) => {
+                      this.updateSessionMessagesPaginationFromPage(sessionId, { scope: 'main' }, page, { allowHasMoreInference: true, direction: 'newer' });
+                  },
+                  ...this.getMessageDecryptBatchOptions(),
+                  log,
+              });
+
+              if (result.page.messages.length === 0) {
+                  this.deferredForwardLoadingSessions.delete(sessionId);
+                  return { loaded: 0, hasMore: false, status: 'no_more' };
+              }
+
+              const hasMore = Boolean(result.page.nextAfterSeq);
+              if (!hasMore) {
+                  this.deferredForwardLoadingSessions.delete(sessionId);
+                  return { loaded: result.applied, hasMore: false, status: 'no_more' };
+              }
+
+              return { loaded: result.applied, hasMore, status: 'loaded' };
+          } catch (error) {
+              console.error('Failed to load newer messages:', error);
+              return { loaded: 0, hasMore: true, status: 'loaded' };
+          } finally {
+              this.sessionMessagesLoadingNewerByKey.delete(pagingKey);
+              storage.getState().endSessionCatchUpNewer(sessionId);
+          }
+      }
+
+      /**
+       * C6/D2a: re-materialize the stale (edited-while-hidden) region and merge it in place.
+       *
+       * Fetches newer messages from just below the lowest stale seq so the edited rows are
+       * re-pulled and upserted by applyMessages without dropping any other materialized row.
+       * Falls back to a coalesced catch-up invalidate when the stale seq is unknown (the
+       * catch-up policy then fetches-and-merges; it is non-destructive after D2b).
+       */
+      private async refetchStaleTranscriptRegion(
+          sessionId: string,
+          staleSnapshot: Readonly<{ minSeq: number | null; messageIds: readonly string[] }>,
+      ): Promise<void> {
+          const staleMinSeq = staleSnapshot.minSeq;
+          if (typeof staleMinSeq !== 'number' || !Number.isFinite(staleMinSeq) || staleMinSeq <= 0) {
+              this.getOrCreateMessagesSync(sessionId).invalidateCoalesced();
+              return;
+          }
+          if (this.hasFetchedSessionsSnapshotForActiveServer && !this.isSessionKnownOnResolvedOwnerServer(sessionId)) {
+              return;
+          }
+          const afterSeq = Math.max(0, Math.trunc(staleMinSeq) - 1);
+          const requestMessages = this.createSessionMessagesRequest(sessionId);
+          const session = storage.getState().sessions[sessionId] ?? null;
+          const sessionEncryptionMode = session?.encryptionMode === 'plain' ? 'plain' : 'e2ee';
+          try {
+              await fetchAndApplyNewerMessages({
+                  sessionId,
+                  sessionEncryptionMode,
+                  afterSeq,
+                  limit: this.getSessionMessagesPageSize(),
+                  getSessionEncryption: (id) => this.encryption.getSessionEncryption(id),
+                  isSessionKnown: (id) => this.isSessionKnownOnResolvedOwnerServer(id),
+                  request: requestMessages,
+                  sessionReceivedMessages: this.sessionReceivedMessages,
+                  applyMessages: (sid, messages) => this.applyMessages(sid, messages, { notifyVoice: false }),
+                  onNormalizedMessages: (messages) => ingestWorkspaceMutationMessages(sessionId, messages),
+                  onTaskLifecycleEvent: (event) => this.applySessionThinkingFromTaskLifecycle(sessionId, event),
+                  onMessagesPage: (page) => {
+                      this.updateSessionMessagesPaginationFromPage(sessionId, { scope: 'main' }, page, { allowHasMoreInference: true, direction: 'newer' });
+                  },
+                  ...this.getMessageDecryptBatchOptions(),
+                  log,
+              });
+              this.deferredTranscriptState = acknowledgeStaleTranscriptRepair(
+                  this.deferredTranscriptState,
+                  sessionId,
+                  { messageIds: staleSnapshot.messageIds, minSeq: staleSnapshot.minSeq },
+              );
+          } catch (error) {
+              console.error('Failed to refetch stale transcript region:', error);
+          }
+      }
+
+      private registerPushToken = async () => {
+          log.log('registerPushToken');
+          await registerPushTokenIfAvailable({ credentials: this.credentials, log });
+    }
+
+    private subscribeToUpdates = () => {
+        // Subscribe to message updates
+        apiSocket.onMessage('update', this.handleUpdate.bind(this));
+        apiSocket.onMessage('ephemeral', this.handleEphemeralUpdate.bind(this));
+        // Broadcast-safe session events are optional hints; ignore by default.
+        apiSocket.onMessage('session', () => {});
+
+	          apiSocket.onStatusChange((status) => {
+	              if (status === 'connected') {
+	                  if (this.lastSocketDisconnectedAtMs != null) {
+	                      this.lastSocketOfflineDurationMs = Date.now() - this.lastSocketDisconnectedAtMs;
+                          this.socketOfflineCatchUpConsumedSessionIds.clear();
+	                  }
+	                  this.lastSocketDisconnectedAtMs = null;
+	                  return;
+	              }
+	              if (status === 'disconnected' || status === 'error') {
+	                  if (this.lastSocketDisconnectedAtMs == null) {
+	                      this.lastSocketDisconnectedAtMs = Date.now();
+                          this.lastSocketOfflineDurationMs = null;
+                          this.socketOfflineCatchUpConsumedSessionIds.clear();
+	                  }
+	              }
+	          });
+
+          // Subscribe to connection state changes
+          apiSocket.onReconnected(() => {
+              fireAndForget(this.resumeSync('socket-reconnect'), { tag: 'Sync.resumeSync.socket-reconnect' });
+          });
+      }
+
+      private resetSessionTranscriptState(sessionId: string): void {
+          storage.getState().resetSessionMessages(sessionId);
+
+          this.sessionReceivedMessages.delete(sessionId);
+          this.deleteSessionMessagesPaginationStateForSession(sessionId);
+          this.deferredForwardLoadingSessions.delete(sessionId);
+          this.deferredTranscriptState = clearDeferredTranscriptStateForSession(this.deferredTranscriptState, sessionId);
+
+          if ((this.sessionMaterializedMaxSeqById[sessionId] ?? 0) !== 0) {
+              this.sessionMaterializedMaxSeqById = { ...this.sessionMaterializedMaxSeqById, [sessionId]: 0 };
+              this.sessionMaterializedMaxSeqDirty = true;
+              this.scheduleSessionMaterializedMaxSeqFlush();
+          }
+      }
+
+        private getOrCreateMessagesSync(sessionId: string): InvalidateSync {
+            let ex = this.messagesSync.get(sessionId);
+            if (!ex) {
+                ex = new InvalidateSync(() => this.fetchMessages(sessionId), {
+                    pause: this.pauseController,
+                    backoff: {
+                        minDelayMs: this.syncTuning.invalidateSyncBackoffMinDelayMs,
+                        maxDelayMs: this.syncTuning.invalidateSyncBackoffMaxDelayMs,
+                        maxFailureCount: 'infinite',
+                    },
+                });
+                this.messagesSync.set(sessionId, ex);
+            }
+            return ex;
+        }
+
+    private flushChangesCursorNow(): void {
+        // Changes cursors are synchronously persisted by decideChangesCursorCheckpoint.
+        // Hidden/background lifecycle calls this as an idempotent safety hook.
+    }
+
+    private rememberBlockedChangesCursorLag(params: Readonly<{
+        blockedCursor: string;
+        blockedReason: string;
+        safeAdvanceCursor: string | null;
+        nowMs?: number;
+    }>): void {
+        this.safeCursorLagState = rememberBlockedCursorLag(this.safeCursorLagState, {
+            blockedCursor: params.blockedCursor,
+            blockedReason: params.blockedReason,
+            safeAdvanceCursor: params.safeAdvanceCursor,
+            nowMs: params.nowMs ?? Date.now(),
+        });
+    }
+
+    private evaluateSafeCursorLagTripwireNow(nowMs: number = Date.now()): void {
+        const evaluation = evaluateSafeCursorLagTripwire(this.safeCursorLagState, {
+            nowMs,
+            alertMs: this.syncTuning.safeCursorLagAlertMs,
+        });
+        this.safeCursorLagState = evaluation.state;
+        if (!evaluation.event) return;
+        syncReliabilityTelemetry.recordCritical('sync.cursor.safeCursorLagExceeded', {
+            blockedCursor: evaluation.event.blockedCursor,
+            blockedReason: evaluation.event.blockedReason,
+            safeAdvanceCursor: evaluation.event.safeAdvanceCursor,
+            lagMs: evaluation.event.lagMs,
+            consecutiveOverThresholdTicks: evaluation.event.consecutiveOverThresholdTicks,
+        });
+    }
+
+    private clearNativeInactiveCheckpointTimer(): void {
+        if (!this.nativeInactiveCheckpointTimer) return;
+        clearTimeout(this.nativeInactiveCheckpointTimer);
+        this.nativeInactiveCheckpointTimer = null;
+    }
+
+    private flushBackgroundSyncCheckpointsNow(): void {
+        try {
+            this.flushPendingSettingsForCurrentScopeNow();
+        } catch {
+            // ignore
+        }
+        try {
+            this.flushSessionMaterializedMaxSeq();
+        } catch {
+            // ignore
+        }
+        try {
+            this.flushChangesCursorNow();
+        } catch {
+            // ignore
+        }
+    }
+
+    private scheduleNativeInactiveCheckpoint(): void {
+        this.clearNativeInactiveCheckpointTimer();
+        const debounceMs = this.syncTuning.nativeInactiveCheckpointDebounceMs;
+        const shouldContinue = this.createServerScopeGuard();
+        if (debounceMs <= 0) {
+            if (!this.isForeground) {
+                if (!shouldContinue()) return;
+                this.flushBackgroundSyncCheckpointsNow();
+            }
+            return;
+        }
+        this.nativeInactiveCheckpointTimer = setTimeout(() => {
+            this.nativeInactiveCheckpointTimer = null;
+            if (!this.isForeground) {
+                if (!shouldContinue()) return;
+                this.flushBackgroundSyncCheckpointsNow();
+            }
+        }, debounceMs);
+    }
+
+      private async resumeViaChanges(opts: {
+          accountId: string;
+          shouldContinue?: () => boolean;
+      }): Promise<'ok' | 'fallback' | 'aborted'> {
+          const CHANGES_PAGE_LIMIT = this.syncTuning.changesPageLimit;
+          const afterCursor = this.changesCursor ?? '0';
+          const shouldContinue = opts.shouldContinue ?? (() => true);
+          const cursorScope = this.getChangesCursorScope();
+          let aborted = false;
+
+          const canWriteCursor = (): boolean => {
+              if (shouldContinue()) {
+                  return true;
+              }
+              aborted = true;
+              return false;
+          };
+
+          const offlineForMs = this.readSocketOfflineDurationMs();
+          const forceSnapshotRefresh = offlineForMs >= this.syncTuning.messageForceSnapshotOfflineMs;
+
+          const catchUp = await runSocketReconnectCatchUpViaChanges({
+              credentials: this.credentials,
+              accountId: opts.accountId,
+              afterCursor,
+              changesPageLimit: CHANGES_PAGE_LIMIT,
+              maxChangesPagesPerResume: this.syncTuning.changesMaxPagesPerResume,
+              forceSnapshotRefresh,
+                fetchChanges,
+                fetchCurrentCursor: fetchCurrentChangesCursor,
+                checkpointCursor: async (cursor, context) => {
+                    if (!canWriteCursor()) {
+                        return false;
+                    }
+                    const checkpoint = decideChangesCursorCheckpoint({
+                        currentCursor: this.changesCursor,
+                        approvedCursor: cursor,
+                        shouldAdvance: true,
+                        scope: cursorScope,
+                    });
+                    if (checkpoint.status === 'storage-write-failed') {
+                        syncReliabilityTelemetry.recordCritical('sync.cursor.checkpointStorageWriteFailed', {
+                            cursor,
+                            reason: context.reason,
+                        });
+                        return false;
+                    }
+                    this.changesCursor = checkpoint.cursor;
+                    this.safeCursorLagState = null;
+                    syncReliabilityTelemetry.record('sync.cursor.checkpointAdvanced', {
+                        cursor,
+                        reason: context.reason,
+                        changes: context.changes.length,
+                    });
+                    if (context.changes.length > 0) {
+                        this.flushSessionMaterializedMaxSeq();
+                        verifyChangesCursorMaterializationProofs({
+                            changes: context.changes,
+                            advancedCursor: cursor,
+                            isSessionMessagesLoaded: (sessionId) => storage.getState().sessionMessages[sessionId]?.isLoaded === true,
+                            loadSessionMaterializedMaxSeqById: () => loadSessionMaterializedMaxSeqById(this.pendingSettingsScope),
+                            telemetry: syncReliabilityTelemetry,
+                        });
+                    }
+                    return true;
+                },
+                onCursorBlocked: ({ blockedCursor, blockedReason, safeAdvanceCursor, changes }) => {
+                    this.rememberBlockedChangesCursorLag({
+                        blockedCursor,
+                        blockedReason,
+                        safeAdvanceCursor,
+                    });
+                    const blockedChange = changes.find((change) => String(change.cursor) === blockedCursor);
+                    syncReliabilityTelemetry.recordCritical('sync.cursor.blocked', {
+                        blockedCursor,
+                        blockedReason,
+                        safeAdvanceCursor,
+                        kind: blockedChange?.kind ?? null,
+                        entityId: blockedChange?.entityId ?? null,
+                    });
+                    if (blockedReason === 'unsupported-kind') {
+                        syncReliabilityTelemetry.recordCritical('sync.changes.unsupportedKind', {
+                            cursor: blockedCursor,
+                            kind: blockedChange?.kind ?? null,
+                            entityId: blockedChange?.entityId ?? null,
+                        });
+                    }
+                },
+                onUnsupportedChanges: (unsupportedChanges) => {
+                    for (const unsupportedChange of unsupportedChanges) {
+                        syncReliabilityTelemetry.recordCritical('sync.changes.unsupportedKind', {
+                            cursor: unsupportedChange.cursor,
+                            kind: unsupportedChange.kind,
+                            entityId: unsupportedChange.entityId,
+                        });
+                    }
+                },
+                onSnapshotBaseCursorFetchFailed: ({ trigger, fallbackCursor, error }) => {
+                    syncReliabilityTelemetry.recordCritical('sync.cursor.snapshotBaseFetchFailed', {
+                        trigger,
+                        fallbackCursor,
+                        error,
+                    });
+                },
+                onCursorContractAnomaly: ({ reason, afterCursor: anomalyAfterCursor, offendingCursor, nextCursor }) => {
+                    syncReliabilityTelemetry.recordCritical('sync.cursor.contractAnomaly', {
+                        reason,
+                        afterCursor: anomalyAfterCursor,
+                        offendingCursor,
+                        nextCursor,
+                    });
+                },
+                snapshotRefresh: async () => {
+                    await this.snapshotRefreshOnResume({ mode: 'long-offline', reason: 'snapshot-refresh' });
+                },
+                applyPlanned: async (planned) => {
+                    return await applyPlannedChangeActions({
+                        planned,
+                        credentials: this.credentials,
+                        isSessionMessagesLoaded: (sessionId) => storage.getState().sessionMessages[sessionId]?.isLoaded === true,
+                        getSessionMaterializedMaxSeq: (sessionId) => this.sessionMaterializedMaxSeqById[sessionId] ?? 0,
+                        invalidate: {
+                            settings: () => this.settingsSync.invalidateAndAwait(),
+                            profile: () => this.profileSync.invalidateAndAwait(),
+                            machines: () => this.machinesSync.invalidateAndAwait(),
+                            artifacts: () => this.artifactsSync.invalidateAndAwait(),
+                            friends: () => this.friendsSync.invalidateAndAwait(),
+                            friendRequests: () => this.friendRequestsSync.invalidateAndAwait(),
+                            feed: () => this.feedSync.invalidateAndAwait(),
+                            automations: () => this.automationsSync.invalidateAndAwait(),
+                            pets: () => fetchAndApplyAccountPets({
+                                credentials: this.credentials,
+                                readScope: () => storage.getState().petsScope,
+                                applyAccountPets: (pets) => storage.getState().applyAccountPets(pets),
+                                applyAccountPetsForScope: (scope, pets) =>
+                                    storage.getState().applyAccountPetsForScope(scope, pets),
+                            }),
+                            sessions: ({ requiredHydrationSessionIds, prioritizeSessionIds }) => this.fetchSessions({
+                                awaitSessionListHydration: true,
+                                requiredHydrationSessionIds,
+                                prioritizeSessionIds,
+                            }),
+                            todos: () => this.todosSync.invalidateAndAwait(),
+                        },
+                        invalidateMessagesForSession: async (sessionId) => {
+                            await this.withSessionCatchUpNewer(sessionId, () =>
+                                this.getOrCreateMessagesSync(sessionId).invalidateAndAwait());
+                        },
+                        invalidateScmStatusForSession: (sessionId) => scmStatusSync.invalidate(sessionId),
+                        applyTodoSocketUpdates: (changes) => this.applyTodoSocketUpdates(changes),
+                        kvBulkGet,
+                        refreshSessionFolderAssignments: async (plan) => {
+                            const serverId = String(getActiveServerSnapshot().serverId ?? '').trim();
+                            if (!serverId) {
+                                throw new Error('Cannot refresh session folder assignments without an active server');
+                            }
+                            const sessionIds = plan.mode === 'sessions'
+                                ? plan.sessionIds
+                                : Object.values(storage.getState().sessions)
+                                    .filter((session) => !session.serverId || areServerProfileIdentifiersEquivalent(session.serverId, serverId))
+                                    .map((session) => session.id);
+                            await fetchAndApplySessionFolderAssignments({
+                                credentials: this.credentials,
+                                serverId,
+                                sessionIds,
+                            });
+                        },
+                        convergePendingForSession: (sessionId) => this.fetchPendingMessages(sessionId),
+                        concurrencyLimit: this.syncTuning.resumeConcurrencyLimit,
+                    });
+                },
+            });
+
+          if (aborted) {
+              return 'aborted';
+          }
+          if (catchUp.status === 'fallback') {
+              return 'fallback';
+          }
+
+          if (catchUp.shouldPersistCursor) {
+              if (!canWriteCursor()) {
+                  return 'aborted';
+              }
+              const checkpoint = decideChangesCursorCheckpoint({
+                  currentCursor: this.changesCursor,
+                  approvedCursor: catchUp.nextCursor,
+                  shouldAdvance: true,
+                  scope: cursorScope,
+              });
+              if (checkpoint.status === 'storage-write-failed') {
+                  return 'fallback';
+              }
+              this.changesCursor = checkpoint.cursor;
+              this.safeCursorLagState = null;
+          }
+
+          return 'ok';
+      }
+
+    private hydrateSessionShellByIdFromSocket(
+        sessionId: string,
+        reason: string,
+        sourceServerId: string | null,
+        shouldContinue: () => boolean,
+    ): void {
+        const normalized = String(sessionId ?? '').trim();
+        if (!normalized) return;
+        const credentials = this.credentials;
+        if (!credentials) {
+            this.sessionsSync.invalidate();
+            return;
+        }
+        const scopedServerId = sourceServerId ?? resolvePreferredServerIdForSessionId(normalized);
+        const stagedSessionDataKeys = new Map(this.sessionDataKeys);
+        const stagedSessionDataKeyEnvelopes = new Map(this.sessionDataKeyEnvelopes);
+        fireAndForget((async () => {
+            const result = await fetchSessionByIdWithServerScope({
+                sessionId: normalized,
+                serverId: scopedServerId,
+                activeCredentials: credentials,
+                activeEncryption: this.encryption,
+                sessionDataKeys: stagedSessionDataKeys,
+                sessionDataKeyEnvelopes: stagedSessionDataKeyEnvelopes,
+                activeRequest: (path, init) => apiSocket.request(path, init),
+                getExistingSession: (targetSessionId) => storage.getState().sessions[targetSessionId] ?? null,
+                applySessions: (sessions) => {
+                    if (!shouldContinue()) return;
+                    this.applySessions(sessions);
+                },
+                log,
+                includeTurnsProjection: reason === 'socket-update-turn-projection',
+            });
+            if (!shouldContinue()) return;
+            if (!result.ok) {
+                log.log(`[Sync.socketHydrateSession] ${reason} failed for ${normalized}: ${result.errorCode ?? 'unknown'}`);
+                this.sessionsSync.invalidate();
+                return;
+            }
+            this.commitSessionDataKeyCacheEntry(
+                normalized,
+                stagedSessionDataKeys,
+                stagedSessionDataKeyEnvelopes,
+            );
+            const hydratedServerId = String(result.session?.serverId ?? '').trim();
+            const activeServerId = String(getActiveServerSnapshot().serverId ?? '').trim();
+            if (!hydratedServerId || areServerProfileIdentifiersEquivalent(hydratedServerId, activeServerId)) {
+                this.activeServerSessionIds.add(normalized);
+            }
+        })(), {
+            tag: `Sync.socketHydrateSession.${reason}`,
+            logToConsole: false,
+            onError: (error) => {
+                const message = error instanceof Error ? error.message : String(error);
+                log.log(`[Sync.socketHydrateSession] ${reason} failed for ${normalized}: ${message}`);
+                this.sessionsSync.invalidate();
+            },
+        });
+    }
+
+    private handleUpdate = async (update: unknown) => {
+          const sourceServerId = String(getActiveServerSnapshot().serverId ?? '').trim() || null;
+          const { shouldContinue } = createSyncGenerationGuard({
+              getCurrentGeneration: () => this.serverScopeGeneration,
+              capturedGeneration: this.serverScopeGeneration,
+          });
+          await handleSocketUpdate({
+              update,
+              encryption: this.encryption,
+              settingsScope: this.pendingSettingsScope,
+              getPendingSettings: () => this.pendingSettings,
+              sourceServerId,
+              shouldContinue,
+              artifactDataKeys: this.artifactDataKeys,
+              applySessions: (sessions) => this.applySessions(sessions),
+              fetchSessions: () => {
+                  fireAndForget(this.fetchSessions(), {
+                      tag: 'Sync.handleUpdate.fetchSessions',
+                      logToConsole: false,
+                      onError: (error) => {
+                          const message = error instanceof Error ? error.message : String(error);
+                          log.log(`[Sync.handleUpdate.fetchSessions] background refresh failed: ${message}`);
+                      },
+                  });
+              },
+              hydrateSessionById: (sessionId, reason) => {
+                  this.hydrateSessionShellByIdFromSocket(sessionId, reason, sourceServerId, shouldContinue);
+              },
+              applyMessages: (sessionId, messages) => this.applyMessages(sessionId, messages),
+                onSessionVisible: (sessionId) => this.onSessionVisible(sessionId),
+                isSessionMessagesLoaded: (sessionId) => storage.getState().sessionMessages[sessionId]?.isLoaded === true,
+                getSessionMaterializedMaxSeq: (sessionId) => this.sessionMaterializedMaxSeqById[sessionId] ?? 0,
+              markSessionMaterializedMaxSeq: (sessionId, seq) => this.markSessionMaterializedMaxSeq(sessionId, seq),
+              onMessageGapDetected: (sessionId, _info) => {
+                  this.getOrCreateMessagesSync(sessionId).invalidateCoalesced();
+              },
+              markSessionKnownRemoteSeq: (sessionId, seq) => this.markSessionKnownRemoteSeq(sessionId, seq),
+              markSessionTranscriptDeferred: (sessionId, marker) => this.markSessionTranscriptDeferred(sessionId, marker),
+              markSessionTranscriptStale: (sessionId, marker) => this.markSessionTranscriptStale(sessionId, marker),
+              markSessionStateHydrationDeferred: (sessionId) => this.markSessionStateHydrationDeferred(sessionId),
+              onReadyProjectionAdvance: (sessionId, seq) => this.notifyReadyProjectionAdvance(sessionId, seq),
+              assumeUsers: (userIds) => this.assumeUsers(userIds),
+              applyTodoSocketUpdates: (changes) => this.applyTodoSocketUpdates(changes),
+              invalidateMachines: () => this.machinesSync.invalidate(),
+              invalidateSessions: () => this.sessionsSync.invalidate(),
+            invalidateArtifacts: () => this.artifactsSync.invalidate(),
+            invalidateFriends: () => this.friendsSync.invalidate(),
+            invalidateFriendRequests: () => this.friendRequestsSync.invalidate(),
+            invalidateFeed: () => this.feedSync.invalidate(),
+            invalidateAutomations: () => this.automationsSync.invalidate(),
+            invalidateAutomationsCoalesced: () => this.automationsSync.invalidateCoalesced(),
+            invalidateTodos: () => this.todosSync.invalidate(),
+            onTaskLifecycleEvent: (sessionId, event) => this.applySessionThinkingFromTaskLifecycle(sessionId, event),
+            log,
+        });
+    }
+
+    private flushActivityUpdates = (updates: Map<string, ApiEphemeralActivityUpdate>, options?: ActivityUpdateAccumulatorFlushOptions) => {
+        flushActivityUpdatesEngine({
+            updates,
+            sourceServerId: options?.sourceServerId,
+            applySessions: (sessions) => this.applySessions(sessions),
+        });
+    }
+
+    private flushMachineActivityUpdates = (updates: Map<string, MachineActivityUpdate>, options?: { sourceServerId?: string | null }) => {
+        flushMachineActivityUpdatesEngine({
+            updates,
+            sourceServerId: options?.sourceServerId,
+            applyMachines: (machines, applyOptions) => storage.getState().applyMachines(machines, false, applyOptions),
+        });
+    }
+
+    private handleEphemeralUpdate = (update: unknown) => {
+        const sourceServerId = String(getActiveServerSnapshot().serverId ?? '').trim() || null;
+        const { shouldContinue } = createSyncGenerationGuard({
+            getCurrentGeneration: () => this.serverScopeGeneration,
+            capturedGeneration: this.serverScopeGeneration,
+        });
+        const getSessionEncryption = this.encryption
+            ? this.encryption.getSessionEncryption.bind(this.encryption)
+            : (() => null);
+        fireAndForget(handleEphemeralSocketUpdate({
+            update,
+            sourceServerId,
+            shouldContinue,
+            addActivityUpdate: (ephemeralUpdate) => {
+                this.activityAccumulator.addUpdate(ephemeralUpdate, { shouldContinue, sourceServerId });
+            },
+            addMachineActivityUpdate: (machineUpdate) => {
+                this.machineActivityAccumulator.addUpdate(machineUpdate, { shouldContinue, sourceServerId });
+            },
+            getSessionEncryption,
+            getSession: (sessionId) => storage.getState().sessions[sessionId],
+            applyMessages: (sessionId, messages) => this.applyMessages(sessionId, messages, { notifyVoice: false, notifyActivity: true }),
+            updateDirectSessionTranscript: (ephemeralUpdate) => this.handleDirectSessionTranscriptEphemeralUpdate(ephemeralUpdate),
+        }), { tag: 'Sync.handleEphemeralUpdate' });
+    }
+
+    //
+    // Apply store
+    //
+
+    private markSessionKnownRemoteSeq(sessionId: string, seq: number): void {
+        this.deferredTranscriptState = markDeferredTranscriptRemoteSeq(this.deferredTranscriptState, sessionId, seq);
+    }
+
+    private markSessionTranscriptDeferred(sessionId: string, marker: DeferredTranscriptMarker): void {
+        this.deferredTranscriptState = markTranscriptDeferred(this.deferredTranscriptState, sessionId, marker);
+    }
+
+    private markSessionTranscriptStale(sessionId: string, marker: DeferredTranscriptMarker): void {
+        this.deferredTranscriptState = markTranscriptStale(this.deferredTranscriptState, sessionId, marker);
+    }
+
+    private markSessionStateHydrationDeferred(sessionId: string): void {
+        this.deferredSessionStateHydrationState = markSessionStateHydrationDeferred(
+            this.deferredSessionStateHydrationState,
+            sessionId,
+        );
+    }
+
+    private shouldNotifyReadyProjectionSeq(sessionId: string, seq: number | null): boolean {
+        if (seq === null) return true;
+        if (!Number.isFinite(seq)) return true;
+        const normalizedSeq = Math.trunc(seq);
+        const previous = this.readyNotificationProgressBySessionId[sessionId];
+        if (previous && previous.seq >= normalizedSeq) return false;
+        this.readyNotificationProgressBySessionId = {
+            ...this.readyNotificationProgressBySessionId,
+            [sessionId]: {
+                seq: normalizedSeq,
+                transcriptNotified: false,
+            },
+        };
+        return true;
+    }
+
+    private shouldNotifyReadyFromMessages(sessionId: string, seq: number | null): boolean {
+        if (seq === null) return true;
+        if (!Number.isFinite(seq)) return true;
+        const normalizedSeq = Math.trunc(seq);
+        const previous = this.readyNotificationProgressBySessionId[sessionId];
+        if (!previous || previous.seq < normalizedSeq) {
+            this.readyNotificationProgressBySessionId = {
+                ...this.readyNotificationProgressBySessionId,
+                [sessionId]: {
+                    seq: normalizedSeq,
+                    transcriptNotified: true,
+                },
+            };
+            return true;
+        }
+        if (previous.seq === normalizedSeq && previous.transcriptNotified === false) {
+            this.readyNotificationProgressBySessionId = {
+                ...this.readyNotificationProgressBySessionId,
+                [sessionId]: {
+                    seq: normalizedSeq,
+                    transcriptNotified: true,
+                },
+            };
+            return true;
+        }
+        return false;
+    }
+
+    private notifyReadyProjectionAdvance(sessionId: string, seq: number): void {
+        if (!this.shouldNotifyReadyProjectionSeq(sessionId, seq)) return;
+        voiceHooks.onReady(sessionId, []);
+    }
+
+    private applyMessages = (
+        sessionId: string,
+        messages: NormalizedMessage[],
+        options?: { notifyVoice?: boolean; notifyActivity?: boolean }
+    ) => {
+        const result = storage.getState().applyMessages(sessionId, messages);
+        const notifyVoice = options?.notifyVoice !== false;
+        const notifyActivity = options?.notifyActivity ?? notifyVoice;
+        if (notifyVoice || notifyActivity) {
+            let m: Message[] = [];
+            for (let messageId of result.changed) {
+                const message = storage.getState().sessionMessages[sessionId].messagesMap[messageId];
+                if (message) {
+                    m.push(message);
+                }
+            }
+            if (notifyVoice && m.length > 0) {
+                voiceHooks.onMessages(sessionId, m);
+            }
+            if (result.hasReadyEvent && this.shouldNotifyReadyFromMessages(sessionId, result.latestReadyEventSeq)) {
+                if (notifyVoice) {
+                    voiceHooks.onReady(sessionId, m);
+                }
+                if (notifyActivity) {
+                    notifyActivityReady(sessionId, m);
+                }
+            }
+        }
+        return result;
+    }
+
+    private updateSessionMessagesPaginationFromPage(
+        sessionId: string,
+        chain: { scope: SessionMessagesScope; sidechainId?: string | null },
+        page: {
+            messages: Array<{ seq: number }>;
+            hasMore?: boolean;
+            nextBeforeSeq?: number | null;
+            nextAfterSeq?: number | null;
+        },
+        options?: { allowHasMoreInference?: boolean; direction?: 'older' | 'newer' },
+    ): void {
+        const pagingKey = this.buildSessionMessagesPaginationKey({
+            sessionId,
+            scope: chain.scope,
+            sidechainId: chain.sidechainId,
+        });
+
+        const prev: SessionMessagesPaginationState = {
+            beforeSeq: this.sessionMessagesBeforeSeqByKey.get(pagingKey) ?? null,
+            hasMoreOlder: this.sessionMessagesHasMoreOlderByKey.has(pagingKey)
+                ? (this.sessionMessagesHasMoreOlderByKey.get(pagingKey) as boolean)
+                : null,
+            paginationSupported: this.sessionMessagesPaginationSupportedByKey.has(pagingKey)
+                ? (this.sessionMessagesPaginationSupportedByKey.get(pagingKey) as boolean)
+                : null,
+        };
+
+        const update = computeSessionMessagesPaginationUpdateFromPage({
+            prev,
+            page,
+            pageSize: this.getSessionMessagesPageSize(),
+            allowHasMoreInference: options?.allowHasMoreInference === true,
+            direction: options?.direction ?? 'older',
+        });
+
+        if (chain.scope === 'main' && typeof update.maxSeq === 'number') {
+            this.markSessionMaterializedMaxSeq(sessionId, update.maxSeq);
+        }
+
+        if (typeof update.next.beforeSeq === 'number') {
+            this.sessionMessagesBeforeSeqByKey.set(pagingKey, update.next.beforeSeq);
+        }
+
+        if (update.next.hasMoreOlder == null) {
+            this.sessionMessagesHasMoreOlderByKey.delete(pagingKey);
+        } else {
+            this.sessionMessagesHasMoreOlderByKey.set(pagingKey, update.next.hasMoreOlder);
+        }
+
+        if (update.next.paginationSupported == null) {
+            this.sessionMessagesPaginationSupportedByKey.delete(pagingKey);
+        } else {
+            this.sessionMessagesPaginationSupportedByKey.set(pagingKey, update.next.paginationSupported);
+        }
+    }
+
+    private applySessions = (sessions: (Omit<Session, "presence"> & {
+        presence?: "online" | number;
+    })[]) => {
+        const active = storage.getState().getActiveSessions();
+
+        // When multi-server mode is enabled, we use `activeServerSessionIds` as a conservative
+        // guard to avoid cross-server message fetches after the initial session snapshot. Ensure
+        // that any newly-applied sessions (via socket updates, create flows, etc.) are treated as
+        // "known" on the active server too, otherwise message fetches can be incorrectly skipped.
+        for (const session of sessions) {
+            if (session?.id) {
+                this.activeServerSessionIds.add(session.id);
+            }
+        }
+        storage.getState().applySessions(sessions);
+        const newActive = storage.getState().getActiveSessions();
+        this.applySessionDiff(active, newActive);
+    }
+
+    private markSessionMaterializedMaxSeq(sessionId: string, seq: number): void {
+        if (!sessionId) return;
+        if (typeof seq !== 'number' || !Number.isFinite(seq) || seq < 0) return;
+        const prev = this.sessionMaterializedMaxSeqById[sessionId] ?? 0;
+        if (seq <= prev) return;
+        this.sessionMaterializedMaxSeqById = { ...this.sessionMaterializedMaxSeqById, [sessionId]: seq };
+        this.sessionMaterializedMaxSeqDirty = true;
+        this.scheduleSessionMaterializedMaxSeqFlush();
+    }
+
+    private scheduleSessionMaterializedMaxSeqFlush(): void {
+        if (this.sessionMaterializedMaxSeqFlushTimer) return;
+        const scope = this.pendingSettingsScope;
+        const generation = this.serverScopeGeneration;
+        this.sessionMaterializedMaxSeqFlushTimer = setTimeout(() => {
+            this.sessionMaterializedMaxSeqFlushTimer = null;
+            if (
+                this.serverScopeGeneration !== generation ||
+                !areAccountSettingsScopesEqual(this.pendingSettingsScope, scope)
+            ) {
+                return;
+            }
+            this.flushSessionMaterializedMaxSeq();
+        }, 2_000);
+    }
+
+    private flushSessionMaterializedMaxSeq(): void {
+        this.flushSessionMaterializedMaxSeqForCurrentScopeNow();
+    }
+
+    private flushSessionMaterializedMaxSeqForCurrentScopeNow(): void {
+        if (this.sessionMaterializedMaxSeqFlushTimer) {
+            clearTimeout(this.sessionMaterializedMaxSeqFlushTimer);
+            this.sessionMaterializedMaxSeqFlushTimer = null;
+        }
+        if (!this.sessionMaterializedMaxSeqDirty) return;
+        this.sessionMaterializedMaxSeqDirty = false;
+        if (!this.pendingSettingsScope) return;
+        saveSessionMaterializedMaxSeqById(this.sessionMaterializedMaxSeqById, this.pendingSettingsScope);
+    }
+
+    private applySessionDiff = (active: Session[], newActive: Session[]) => {
+        let wasActive = new Set(active.map(s => s.id));
+        let isActive = new Set(newActive.map(s => s.id));
+        for (let s of active) {
+            if (!isActive.has(s.id)) {
+                voiceHooks.onSessionOffline(s.id, s.metadata ?? undefined);
+            }
+        }
+        for (let s of newActive) {
+            if (!wasActive.has(s.id)) {
+                voiceHooks.onSessionOnline(s.id, s.metadata ?? undefined);
+            }
+        }
+    }
+
+}
+
+// Global singleton instance
+export const sync = new Sync();
+
+//
+// Init sequence
+//
+
+let isInitialized = false;
+export async function syncCreate(credentials: AuthCredentials) {
+    if (isInitialized) {
+        console.warn('Sync already initialized: ignoring');
+        return;
+    }
+    isInitialized = true;
+    await syncInit(credentials, false);
+}
+
+export async function syncRestore(credentials: AuthCredentials) {
+    if (isInitialized) {
+        console.warn('Sync already initialized: ignoring');
+        return;
+    }
+    isInitialized = true;
+    await syncInit(credentials, true);
+}
+
+export async function syncSwitchServer(credentials: AuthCredentials | null): Promise<void> {
+    if (!credentials) {
+        if (isInitialized) {
+            sync.disconnectServer();
+            isInitialized = false;
+        }
+        return;
+    }
+
+    if (!isInitialized) {
+        await syncCreate(credentials);
+        return;
+    }
+
+    await sync.switchServer(credentials);
+}
+
+async function syncInit(credentials: AuthCredentials, restore: boolean) {
+
+    // Initialize sync engine
+    const encryption = await createEncryptionFromAuthCredentials(credentials);
+
+    // Initialize tracking
+    initializeTracking(encryption.anonID);
+
+    // Initialize socket connection
+    apiSocket.initialize({ endpoint: getActiveServerSnapshot().serverUrl, token: credentials.token }, encryption);
+
+    // Wire socket status to storage
+    apiSocket.onStatusChange((status) => {
+        storage.getState().setSocketStatus(status);
+    });
+    apiSocket.onError((error) => {
+        if (!error) {
+            storage.getState().setSocketError(null);
+            return;
+        }
+        const msg = error.message || 'Connection error';
+        storage.getState().setSocketError(msg);
+
+        // Prefer explicit status if provided by the socket error (depends on server implementation).
+        const status = (error as any)?.data?.status;
+        const statusNum = typeof status === 'number' ? status : null;
+        const kind: 'auth' | 'config' | 'network' | 'server' | 'unknown' =
+            statusNum === 401 || statusNum === 403 ? 'auth' : 'unknown';
+        const retryable = kind !== 'auth';
+
+        storage.getState().setSyncError({ message: msg, retryable, kind, at: Date.now() });
+    });
+
+    // Initialize sessions engine
+    if (restore) {
+        await sync.restore(credentials, encryption);
+    } else {
+        await sync.create(credentials, encryption);
+    }
+}

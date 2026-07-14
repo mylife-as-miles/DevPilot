@@ -1,0 +1,322 @@
+import { createHash } from 'node:crypto';
+import { existsSync } from 'node:fs';
+import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
+import { dirname, join, resolve } from 'node:path';
+import { setTimeout as delay } from 'node:timers/promises';
+import { isPidAlive } from '../proc/pids.mjs';
+import { isTcpPortFree, listListenPids } from '../net/ports.mjs';
+import { runCapture } from '../proc/proc.mjs';
+
+export { isPidAlive };
+
+function resolveMetroStatusTimeoutMsFromEnv(env = process.env) {
+  const raw = (env.HAPPIER_STACK_EXPO_METRO_STATUS_TIMEOUT_MS ?? '').toString().trim();
+  const n = raw ? Number(raw) : null;
+  if (Number.isFinite(n) && n > 0) return n;
+  return 800;
+}
+
+export async function looksLikeExpoMetro({ port, timeoutMs = null } = {}) {
+  const p = Number(port);
+  if (!Number.isFinite(p) || p <= 0) return false;
+  const ms = Number.isFinite(Number(timeoutMs)) && Number(timeoutMs) > 0 ? Number(timeoutMs) : resolveMetroStatusTimeoutMsFromEnv();
+  const url = `http://127.0.0.1:${p}/status`;
+  try {
+    const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+    const timeout = setTimeout(() => controller?.abort(), ms);
+    try {
+      const res = await fetch(url, { signal: controller?.signal });
+      const txt = await res.text().catch(() => '');
+      return res.ok && String(txt).toLowerCase().includes('packager-status:running');
+    } finally {
+      clearTimeout(timeout);
+    }
+  } catch {
+    return false;
+  }
+}
+
+function resolveMetroWaitTimeoutMsFromEnv(env = process.env) {
+  const raw = (env.HAPPIER_STACK_EXPO_METRO_WAIT_TIMEOUT_MS ?? '').toString().trim();
+  const n = raw ? Number(raw) : null;
+  if (Number.isFinite(n) && n > 0) return Math.floor(n);
+  return 120_000;
+}
+
+function resolveMetroWaitIntervalMsFromEnv(env = process.env) {
+  const raw = (env.HAPPIER_STACK_EXPO_METRO_WAIT_INTERVAL_MS ?? '').toString().trim();
+  const n = raw ? Number(raw) : null;
+  if (Number.isFinite(n) && n > 0) return Math.floor(n);
+  return 500;
+}
+
+export async function waitForExpoMetroRunning(
+  {
+    port,
+    timeoutMs = null,
+    intervalMs = null,
+    env = process.env,
+  } = {},
+  {
+    looksLikeExpoMetroImpl = looksLikeExpoMetro,
+    delayImpl = delay,
+    nowMsImpl = () => Date.now(),
+  } = {},
+) {
+  const p = Number(port);
+  if (!Number.isFinite(p) || p <= 0) {
+    return { ok: false, reason: 'invalid_port', probes: 0 };
+  }
+  const resolvedTimeoutMs =
+    Number.isFinite(Number(timeoutMs)) && Number(timeoutMs) > 0
+      ? Number(timeoutMs)
+      : resolveMetroWaitTimeoutMsFromEnv(env);
+  const resolvedIntervalMs =
+    Number.isFinite(Number(intervalMs)) && Number(intervalMs) > 0
+      ? Number(intervalMs)
+      : resolveMetroWaitIntervalMsFromEnv(env);
+
+  const startMs = nowMsImpl();
+  let probes = 0;
+  while (nowMsImpl() - startMs <= resolvedTimeoutMs) {
+    // eslint-disable-next-line no-await-in-loop
+    const ok = await looksLikeExpoMetroImpl({ port: p });
+    probes += 1;
+    if (ok) {
+      return { ok: true, probes };
+    }
+    // eslint-disable-next-line no-await-in-loop
+    await delayImpl(resolvedIntervalMs);
+  }
+  return { ok: false, reason: 'timeout', probes };
+}
+
+function hashDir(dir) {
+  return createHash('sha1').update(String(dir ?? '')).digest('hex').slice(0, 12);
+}
+
+export function getExpoStatePaths({ baseDir, kind, projectDir, stateFileName = 'expo.state.json' }) {
+  const key = hashDir(projectDir);
+  const stateDir = join(baseDir, kind, key);
+  return {
+    key,
+    stateDir,
+    statePath: join(stateDir, stateFileName),
+    expoHomeDir: join(stateDir, 'expo-home'),
+    tmpDir: join(stateDir, 'tmp'),
+  };
+}
+
+export function resolveExpoTmpDir({ env = process.env, defaultTmpDir, kind, projectDir } = {}) {
+  const def = String(defaultTmpDir ?? '').trim();
+  const base = (env?.HAPPIER_STACK_EXPO_SHARED_TMPDIR_BASE_DIR ?? '').toString().trim();
+  if (!base) return def;
+
+  const keyRaw = (env?.HAPPIER_STACK_EXPO_SHARED_TMPDIR_KEY ?? '').toString().trim();
+  const keySource = keyRaw || String(projectDir ?? '').trim() || def;
+  if (!keySource) return def;
+
+  const k = String(kind ?? '').trim() || 'expo';
+  const key = hashDir(keySource);
+  return join(base, 'tmp', k, key);
+}
+
+export async function ensureExpoIsolationEnv({ env, stateDir, expoHomeDir, tmpDir }) {
+  await mkdir(stateDir, { recursive: true });
+  await mkdir(expoHomeDir, { recursive: true });
+  await mkdir(tmpDir, { recursive: true });
+
+  // Expo CLI uses this to override ~/.expo.
+  // Always override: stack/worktree isolation must not fall back to the user's global ~/.expo.
+  env.__UNSAFE_EXPO_HOME_DIRECTORY = expoHomeDir;
+
+  // Metro default cache root is `path.join(os.tmpdir(), 'metro-cache')`, so TMPDIR isolates it.
+  // Always override: macOS sets TMPDIR by default, so a "set-if-missing" guard would not isolate Metro.
+  env.TMPDIR = tmpDir;
+}
+
+export function wantsExpoClearCache({ env }) {
+  const raw = (env.HAPPIER_STACK_EXPO_CLEAR_CACHE ?? '').trim();
+  if (raw) {
+    return raw !== '0';
+  }
+  // Default: clear cache when non-interactive (LLMs/services), keep fast iteration in TTY shells.
+  return !(process.stdin.isTTY && process.stdout.isTTY);
+}
+
+export async function readPidState(statePath) {
+  try {
+    if (!existsSync(statePath)) return null;
+    const raw = await readFile(statePath, 'utf-8');
+    const state = JSON.parse(raw);
+    const pid = Number(state?.pid);
+    if (!Number.isFinite(pid) || pid <= 0) return null;
+    return state;
+  } catch {
+    return null;
+  }
+}
+
+async function readProcessIdentityLine(pid) {
+  const n = Number(pid);
+  if (!Number.isFinite(n) || n <= 1) return null;
+  if (process.platform === 'win32') return null;
+  if (process.platform === 'linux') {
+    const [cmdline, environ] = await Promise.all([
+      readFile(`/proc/${n}/cmdline`, 'utf-8')
+        .then((raw) => String(raw ?? '').replaceAll('\0', ' ').trim())
+        .catch(() => ''),
+      readFile(`/proc/${n}/environ`, 'utf-8')
+        .then((raw) => String(raw ?? '').replaceAll('\0', ' ').trim())
+        .catch(() => ''),
+    ]);
+    const line = `${cmdline} ${environ}`.trim();
+    return line || null;
+  }
+  try {
+    const out = await runCapture('ps', ['eww', '-p', String(n)]);
+    const lines = out.split('\n').map((l) => l.trim()).filter(Boolean);
+    if (lines.length >= 2) return lines[1];
+    if (lines.length === 1) return lines[0];
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+async function verifyStatePidIdentity({ pid, state, statePath }) {
+  const line = await readProcessIdentityLine(pid);
+  if (!line) {
+    return { ok: process.platform === 'win32', reason: 'pid_unverified' };
+  }
+
+  const expectedExpoHomeDir = join(dirname(statePath), 'expo-home');
+  const expectedExpoHomeDirs = new Set([expectedExpoHomeDir, resolve(expectedExpoHomeDir)]);
+  const expoHomeNeedle = '__UNSAFE_EXPO_HOME_DIRECTORY=';
+  if (line.includes(expoHomeNeedle)) {
+    for (const candidate of expectedExpoHomeDirs) {
+      if (line.includes(`${expoHomeNeedle}${candidate}`)) {
+        return { ok: true, reason: 'pid' };
+      }
+    }
+    return { ok: false, reason: 'pid_identity_mismatch' };
+  }
+
+  const projectDir = String(state?.projectDir ?? state?.uiDir ?? '').trim();
+  if (projectDir && line.includes(resolve(projectDir))) {
+    return { ok: true, reason: 'pid' };
+  }
+  if (projectDir) {
+    return { ok: false, reason: 'pid_identity_mismatch' };
+  }
+  return { ok: true, reason: 'pid' };
+}
+
+export async function isStateProcessRunning(statePath) {
+  const state = await readPidState(statePath);
+  if (!state) return { running: false, state: null };
+  const pid = Number(state.pid);
+  if (isPidAlive(pid)) {
+    const identity = await verifyStatePidIdentity({ pid, state, statePath });
+    if (!identity.ok) {
+      return { running: false, state, reason: identity.reason };
+    }
+    return { running: true, state, reason: identity.reason };
+  }
+
+  async function looksOwnedByProjectDir(port, projectDir) {
+    const p = Number(port);
+    const raw = String(projectDir ?? '').trim();
+    if (!Number.isFinite(p) || p <= 0) return false;
+    if (!raw) return false;
+    const needle = resolve(raw);
+    const pids = await listListenPids(p, { timeoutMs: 4000 }).catch(() => []);
+    for (const listenPid of pids) {
+      // eslint-disable-next-line no-await-in-loop
+      const line = await runCapture('ps', ['-o', 'command=', '-p', String(listenPid)]).catch(() => '');
+      if (line && String(line).includes(needle)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  // Expo/Metro can sometimes be “up” even if the original wrapper pid exited (pm/yarn layers).
+  // If we have a port and something is listening on it, treat it as running only if it looks like Metro.
+  const port = Number(state?.port);
+  if (Number.isFinite(port) && port > 0) {
+    try {
+      const free = await isTcpPortFree(port, { host: '127.0.0.1' });
+      if (!free) {
+        const ok = await looksLikeExpoMetro({ port });
+        if (ok) {
+          const projectDir = String(state?.projectDir ?? '').trim() || String(state?.uiDir ?? '').trim();
+          if (projectDir) {
+            const owned = await looksOwnedByProjectDir(port, projectDir);
+            if (!owned) {
+              return { running: false, state, reason: 'port_project_mismatch' };
+            }
+          }
+          return { running: true, state, reason: 'port' };
+        }
+        return { running: false, state };
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  return { running: false, state };
+}
+
+export async function writePidState(statePath, state) {
+  await mkdir(dirname(statePath), { recursive: true }).catch(() => {});
+  await writeFile(statePath, JSON.stringify(state, null, 2) + '\n', 'utf-8');
+}
+
+export async function findRunningExpoStateInRoot({ expoDevRoot, requireWeb = false, expectedProjectDir = '' } = {}) {
+  const root = String(expoDevRoot ?? '').trim();
+  if (!root) return null;
+  if (!existsSync(root)) return null;
+  const expected = String(expectedProjectDir ?? '').trim();
+  const expectedResolved = expected ? resolve(expected) : '';
+  let entries = [];
+  try {
+    entries = await readdir(root, { withFileTypes: true });
+  } catch {
+    return null;
+  }
+  for (const ent of entries) {
+    if (!ent.isDirectory()) continue;
+    const statePath = join(root, ent.name, 'expo.state.json');
+    if (!existsSync(statePath)) continue;
+    // eslint-disable-next-line no-await-in-loop
+    const res = await isStateProcessRunning(statePath);
+    if (!res?.running) continue;
+    if (requireWeb && res?.state?.webEnabled === false) continue;
+    if (expectedResolved) {
+      const projectDirRaw = String(res?.state?.projectDir ?? res?.state?.uiDir ?? '').trim();
+      if (!projectDirRaw) continue;
+      if (resolve(projectDirRaw) !== expectedResolved) continue;
+    }
+    return { statePath, state: res.state };
+  }
+  return null;
+}
+
+export async function killPid(pid) {
+  const n = Number(pid);
+  if (!Number.isFinite(n) || n <= 1) return;
+  try {
+    process.kill(n, 'SIGTERM');
+  } catch {
+    return;
+  }
+  await delay(500);
+  try {
+    process.kill(n, 0);
+    process.kill(n, 'SIGKILL');
+  } catch {
+    // exited
+  }
+}

@@ -1,0 +1,278 @@
+import * as React from 'react';
+import { Ionicons } from '@expo/vector-icons';
+import { Platform, View } from 'react-native';
+import { useUnistyles } from 'react-native-unistyles';
+
+import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
+import { Switch } from '@/components/ui/forms/Switch';
+import { Item } from '@/components/ui/lists/Item';
+import { ItemGroup } from '@/components/ui/lists/ItemGroup';
+import { ItemList } from '@/components/ui/lists/ItemList';
+import { t } from '@/text';
+import { useSettingMutable } from '@/sync/domains/state/storage';
+import type { BusySteerSendPolicy, MessageSendMode, NonSteerableSendPromptSetting } from '@/sync/domains/session/control/submitMode';
+
+type PendingQueueDrainMode = 'one_at_a_time' | 'drain_all';
+
+export const SessionComposerSettingsView = React.memo(function SessionComposerSettingsView() {
+    const { theme } = useUnistyles();
+    const popoverBoundaryRef = React.useRef<any>(null);
+    const [messageSendMode, setMessageSendMode] = useSettingMutable('sessionMessageSendMode');
+    const [busySteerSendPolicy, setBusySteerSendPolicy] = useSettingMutable('sessionBusySteerSendPolicy');
+    const [nonSteerableSendPrompt, setNonSteerableSendPrompt] = useSettingMutable('sessionNonSteerableSendPrompt');
+    const [pendingQueueDrainMode, setPendingQueueDrainMode] = useSettingMutable('sessionPendingQueueDrainMode');
+    const [agentInputEnterToSend, setAgentInputEnterToSend] = useSettingMutable('agentInputEnterToSend');
+    const [agentInputEnterToSendNative, setAgentInputEnterToSendNative] = useSettingMutable('agentInputEnterToSendNative');
+    const [agentInputHistoryScope, setAgentInputHistoryScope] = useSettingMutable('agentInputHistoryScope');
+    const [agentInputActionBarLayout, setAgentInputActionBarLayout] = useSettingMutable('agentInputActionBarLayout');
+    const [agentInputChipDensity, setAgentInputChipDensity] = useSettingMutable('agentInputChipDensity');
+    const [alwaysShowContextSize, setAlwaysShowContextSize] = useSettingMutable('alwaysShowContextSize');
+    const [composerSurfaceStyle, setComposerSurfaceStyle] = useSettingMutable('composerSurfaceStyle');
+    const [openHistoryScopeMenu, setOpenHistoryScopeMenu] = React.useState(false);
+
+    const enterToSendEnabled = Platform.OS === 'web' ? agentInputEnterToSend : agentInputEnterToSendNative;
+    const setEnterToSendEnabled = Platform.OS === 'web' ? setAgentInputEnterToSend : setAgentInputEnterToSendNative;
+    const enterToSendSubtitle = enterToSendEnabled
+        ? Platform.OS === 'web'
+            ? t('settingsFeatures.enterToSendEnabled')
+            : t('settingsSession.inputBehavior.enterToSendEnabledNativeSubtitle')
+        : t('settingsFeatures.enterToSendDisabled');
+    const normalizedHistoryScope = agentInputHistoryScope === 'global' ? 'global' : 'perSession';
+    const historyScopeOptions = [
+        {
+            id: 'perSession',
+            title: t('settingsFeatures.historyScopePerSessionOption'),
+            subtitle: t('settingsFeatures.historyScopePerSession'),
+            iconName: 'repeat-outline',
+        },
+        {
+            id: 'global',
+            title: t('settingsFeatures.historyScopeGlobalOption'),
+            subtitle: t('settingsFeatures.historyScopeGlobal'),
+            iconName: 'globe-outline',
+        },
+    ] as const;
+    const sendOptions: Array<{ key: MessageSendMode; title: string; subtitle: string }> = [
+        {
+            key: 'agent_queue',
+            title: t('settingsSession.messageSending.queueInAgentTitle'),
+            subtitle: t('settingsSession.messageSending.queueInAgentSubtitle'),
+        },
+        {
+            key: 'interrupt',
+            title: t('settingsSession.messageSending.interruptTitle'),
+            subtitle: t('settingsSession.messageSending.interruptSubtitle'),
+        },
+        {
+            key: 'server_pending',
+            title: t('settingsSession.messageSending.pendingTitle'),
+            subtitle: t('settingsSession.messageSending.pendingSubtitle'),
+        },
+    ];
+    const busySteerOptions: Array<{ key: BusySteerSendPolicy; title: string; subtitle: string }> = [
+        {
+            key: 'steer_immediately',
+            title: t('settingsSession.messageSending.busySteerPolicy.steerImmediatelyTitle'),
+            subtitle: t('settingsSession.messageSending.busySteerPolicy.steerImmediatelySubtitle'),
+        },
+        {
+            key: 'server_pending',
+            title: t('settingsSession.messageSending.busySteerPolicy.queueForReviewTitle'),
+            subtitle: t('settingsSession.messageSending.busySteerPolicy.queueForReviewSubtitle'),
+        },
+    ];
+    const nonSteerablePromptOptions: Array<{ key: NonSteerableSendPromptSetting; title: string; subtitle: string }> = [
+        {
+            key: 'ask',
+            title: t('settingsSession.messageSending.nonSteerablePrompt.askTitle'),
+            subtitle: t('settingsSession.messageSending.nonSteerablePrompt.askSubtitle'),
+        },
+        {
+            key: 'queue_silently',
+            title: t('settingsSession.messageSending.nonSteerablePrompt.queueSilentlyTitle'),
+            subtitle: t('settingsSession.messageSending.nonSteerablePrompt.queueSilentlySubtitle'),
+        },
+        {
+            key: 'off',
+            title: t('settingsSession.messageSending.nonSteerablePrompt.offTitle'),
+            subtitle: t('settingsSession.messageSending.nonSteerablePrompt.offSubtitle'),
+        },
+    ];
+    const pendingQueueDrainModeOptions: Array<{ key: PendingQueueDrainMode; title: string; subtitle: string }> = [
+        {
+            key: 'one_at_a_time',
+            title: t('settingsSession.messageSending.pendingDrainMode.oneAtATimeTitle'),
+            subtitle: t('settingsSession.messageSending.pendingDrainMode.oneAtATimeSubtitle'),
+        },
+        {
+            key: 'drain_all',
+            title: t('settingsSession.messageSending.pendingDrainMode.drainAllTitle'),
+            subtitle: t('settingsSession.messageSending.pendingDrainMode.drainAllSubtitle'),
+        },
+    ];
+    const pendingQueueMayBeUsed = messageSendMode === 'server_pending' || busySteerSendPolicy === 'server_pending';
+
+    return (
+        <ItemList ref={popoverBoundaryRef} style={{ paddingTop: 0 }}>
+            <ItemGroup title={t('settingsSession.inputBehavior.title')} footer={t('settingsSession.inputBehavior.footer')}>
+                <Item
+                    title={t('settingsFeatures.enterToSend')}
+                    subtitle={enterToSendSubtitle}
+                    icon={<Ionicons name="return-down-forward-outline" size={29} color={theme.colors.accent.indigo} />}
+                    rightElement={<Switch value={enterToSendEnabled} onValueChange={setEnterToSendEnabled} />}
+                    showChevron={false}
+                    onPress={() => setEnterToSendEnabled(!enterToSendEnabled)}
+                />
+                {Platform.OS === 'web' ? (
+                    <DropdownMenu
+                        open={openHistoryScopeMenu}
+                        onOpenChange={setOpenHistoryScopeMenu}
+                        variant="selectable"
+                        search={false}
+                        selectedId={normalizedHistoryScope as any}
+                        showCategoryTitles={false}
+                        matchTriggerWidth={true}
+                        connectToTrigger={true}
+                        rowKind="item"
+                        popoverBoundaryRef={popoverBoundaryRef}
+                        itemTrigger={{
+                            title: t('settingsFeatures.historyScope'),
+                            icon: <Ionicons name="time-outline" size={29} color={theme.colors.accent.blue} />,
+                        }}
+                        items={historyScopeOptions.map((opt) => ({
+                            id: opt.id,
+                            title: opt.title,
+                            subtitle: opt.subtitle,
+                            icon: (
+                                <View style={{ width: 32, height: 32, alignItems: 'center', justifyContent: 'center' }}>
+                                    <Ionicons name={opt.iconName as any} size={22} color={theme.colors.text.secondary} />
+                                </View>
+                            ),
+                        }))}
+                        onSelect={(id) => {
+                            setAgentInputHistoryScope(id as any);
+                            setOpenHistoryScopeMenu(false);
+                        }}
+                    />
+                ) : null}
+            </ItemGroup>
+
+            <ItemGroup title={t('settingsSession.messageSending.title')} footer={t('settingsSession.messageSending.footer')}>
+                {sendOptions.map((option) => (
+                    <Item
+                        key={option.key}
+                        title={option.title}
+                        subtitle={option.subtitle}
+                        icon={<Ionicons name="send-outline" size={29} color={theme.colors.accent.blue} />}
+                        rightElement={messageSendMode === option.key ? <Ionicons name="checkmark" size={20} color={theme.colors.accent.blue} /> : null}
+                        onPress={() => setMessageSendMode(option.key)}
+                        showChevron={false}
+                    />
+                ))}
+            </ItemGroup>
+
+            {messageSendMode === 'agent_queue' || messageSendMode === 'server_pending' ? (
+                <ItemGroup title={t('settingsSession.messageSending.busySteerPolicyTitle')} footer={t('settingsSession.messageSending.busySteerPolicyFooter')}>
+                    {busySteerOptions.map((option) => (
+                        <Item
+                            key={option.key}
+                            title={option.title}
+                            subtitle={option.subtitle}
+                            icon={<Ionicons name="git-branch-outline" size={29} color={theme.colors.accent.blue} />}
+                            rightElement={busySteerSendPolicy === option.key ? <Ionicons name="checkmark" size={20} color={theme.colors.accent.blue} /> : null}
+                            onPress={() => setBusySteerSendPolicy(option.key)}
+                            showChevron={false}
+                        />
+                    ))}
+                </ItemGroup>
+            ) : null}
+
+            <ItemGroup title={t('settingsSession.messageSending.nonSteerablePromptTitle')} footer={t('settingsSession.messageSending.nonSteerablePromptFooter')}>
+                {nonSteerablePromptOptions.map((option) => (
+                    <Item
+                        key={option.key}
+                        title={option.title}
+                        subtitle={option.subtitle}
+                        icon={<Ionicons name="hand-left-outline" size={29} color={theme.colors.accent.blue} />}
+                        rightElement={nonSteerableSendPrompt === option.key ? <Ionicons name="checkmark" size={20} color={theme.colors.accent.blue} /> : null}
+                        onPress={() => setNonSteerableSendPrompt(option.key)}
+                        showChevron={false}
+                    />
+                ))}
+            </ItemGroup>
+
+            {pendingQueueMayBeUsed ? (
+                <ItemGroup title={t('settingsSession.messageSending.pendingDrainModeTitle')} footer={t('settingsSession.messageSending.pendingDrainModeFooter')}>
+                    {pendingQueueDrainModeOptions.map((option) => (
+                        <Item
+                            key={option.key}
+                            title={option.title}
+                            subtitle={option.subtitle}
+                            icon={<Ionicons name="layers-outline" size={29} color={theme.colors.accent.blue} />}
+                            rightElement={pendingQueueDrainMode === option.key ? <Ionicons name="checkmark" size={20} color={theme.colors.accent.blue} /> : null}
+                            onPress={() => setPendingQueueDrainMode(option.key)}
+                            showChevron={false}
+                        />
+                    ))}
+                </ItemGroup>
+            ) : null}
+
+            <ItemGroup title={t('settingsSession.input.title')} footer={t('settingsSession.input.footer')}>
+                <Item
+                    title={t('settingsAppearance.agentInputActionBarLayout')}
+                    subtitle={t('settingsAppearance.agentInputActionBarLayoutDescription')}
+                    icon={<Ionicons name="menu-outline" size={29} color={theme.colors.accent.indigo} />}
+                    detail={agentInputActionBarLayout === 'auto'
+                        ? t('settingsAppearance.agentInputActionBarLayoutOptions.auto')
+                        : agentInputActionBarLayout === 'wrap'
+                            ? t('settingsAppearance.agentInputActionBarLayoutOptions.wrap')
+                            : agentInputActionBarLayout === 'scroll'
+                                ? t('settingsAppearance.agentInputActionBarLayoutOptions.scroll')
+                                : t('settingsAppearance.agentInputActionBarLayoutOptions.collapsed')}
+                    onPress={() => {
+                        const order: Array<typeof agentInputActionBarLayout> = ['auto', 'wrap', 'scroll', 'collapsed'];
+                        const idx = Math.max(0, order.indexOf(agentInputActionBarLayout));
+                        setAgentInputActionBarLayout(order[(idx + 1) % order.length]!);
+                    }}
+                />
+                <Item
+                    title={t('settingsAppearance.agentInputChipDensity')}
+                    subtitle={t('settingsAppearance.agentInputChipDensityDescription')}
+                    icon={<Ionicons name="text-outline" size={29} color={theme.colors.accent.indigo} />}
+                    detail={agentInputChipDensity === 'auto'
+                        ? t('settingsAppearance.agentInputChipDensityOptions.auto')
+                        : agentInputChipDensity === 'labels'
+                            ? t('settingsAppearance.agentInputChipDensityOptions.labels')
+                            : t('settingsAppearance.agentInputChipDensityOptions.icons')}
+                    onPress={() => {
+                        const order: Array<typeof agentInputChipDensity> = ['auto', 'labels', 'icons'];
+                        const idx = Math.max(0, order.indexOf(agentInputChipDensity));
+                        setAgentInputChipDensity(order[(idx + 1) % order.length]!);
+                    }}
+                />
+                <Item
+                    title={t('settingsAppearance.alwaysShowContextSize')}
+                    subtitle={t('settingsAppearance.alwaysShowContextSizeDescription')}
+                    icon={<Ionicons name="analytics-outline" size={29} color={theme.colors.accent.indigo} />}
+                    rightElement={<Switch value={alwaysShowContextSize} onValueChange={setAlwaysShowContextSize} />}
+                    showChevron={false}
+                />
+                <Item
+                    title={t('settingsAppearance.glass.composer')}
+                    subtitle={t('settingsAppearance.glass.composerHint')}
+                    icon={<Ionicons name="chatbox-outline" size={29} color={theme.colors.accent.indigo} />}
+                    rightElement={
+                        <Switch
+                            testID="settings-composer-glassSurface-switch"
+                            value={composerSurfaceStyle === 'glass'}
+                            onValueChange={(next) => setComposerSurfaceStyle(next ? 'glass' : 'standard')}
+                        />
+                    }
+                    showChevron={false}
+                />
+            </ItemGroup>
+        </ItemList>
+    );
+});
+
+export default SessionComposerSettingsView;

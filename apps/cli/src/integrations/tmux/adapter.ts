@@ -1,0 +1,208 @@
+import type {
+  TerminalHostAdapter,
+  TerminalHostHandle,
+  TerminalInjectionDuplicateRisk,
+  TerminalInjectionFailurePhase,
+  TerminalInputInjectionResult,
+  TerminalInputState,
+  TerminalPromptInput,
+} from '../terminalHost/_types';
+import { delay } from '@/utils/time';
+
+import { createTmuxTerminalControlPort } from './control';
+import { resolveTmuxPromptSubmitDelayMs, resolveTmuxSendKeysChunkSize } from './env';
+import { evaluateTmuxPaneLiveness } from './paneLiveness';
+import { TmuxUtilities } from './TmuxUtilities';
+import { typeTextViaSendKeys } from './typeText';
+
+/**
+ * Stability sampling delay between the two full-pane captures used to detect that the user is
+ * actively typing into the attached TUI. Mirrors zellij's `inputStabilityDelayMs` default.
+ */
+const INPUT_STABILITY_DELAY_MS = 50;
+
+function targetFromHandle(handle: TerminalHostHandle): string {
+  return handle.paneId ? `${handle.sessionName}:${handle.paneId}` : handle.sessionName;
+}
+
+function cursorPositionsEqual(
+  first: Readonly<{ x: number; y: number }> | null,
+  second: Readonly<{ x: number; y: number }> | null,
+): boolean {
+  if (first === null || second === null) return true;
+  return first.x === second.x && first.y === second.y;
+}
+
+function scheduledDeferral(input: TerminalPromptInput): Extract<TerminalInputInjectionResult, { status: 'deferred' }> | null {
+  const reason = input.scheduling.deferReason;
+  if (!reason) return null;
+  return {
+    status: 'deferred',
+    reason,
+    ...(input.scheduling.retryAfterMs !== undefined ? { retryAfterMs: input.scheduling.retryAfterMs } : {}),
+  };
+}
+
+function failedInjectionResult(params: Readonly<{
+  reason: Extract<TerminalInputInjectionResult, { status: 'failed' }>['reason'];
+  phase: TerminalInjectionFailurePhase;
+  duplicateRisk: TerminalInjectionDuplicateRisk;
+  recoverable: boolean;
+}>): Extract<TerminalInputInjectionResult, { status: 'failed' }> {
+  return {
+    status: 'failed',
+    reason: params.reason,
+    phase: params.phase,
+    duplicateRisk: params.duplicateRisk,
+    recoverable: params.recoverable,
+  };
+}
+
+export function createTmuxTerminalHostAdapter(params?: Readonly<{ tmux?: TmuxUtilities }>): TerminalHostAdapter {
+  const tmux = params?.tmux ?? new TmuxUtilities();
+
+  async function evaluateLiveness(handle: TerminalHostHandle) {
+    return evaluateTmuxPaneLiveness({
+      target: targetFromHandle(handle),
+      executor: (args) => tmux.executeTmuxCommand([...args]),
+    });
+  }
+
+  async function captureInputState(handle: TerminalHostHandle): Promise<TerminalInputState> {
+    // R-E1/R-E3: two FULL-pane normalized captures (matching the zellij adapter) give the multi-line
+    // `parseClaudeScreenState` parser the whole screen AND a real stability signal in one path. The
+    // previous `captureCurrentInput` + `isUserTyping(50, 2)` combination did 3 captures (the first
+    // `isUserTyping` sample re-read what `captureCurrentInput` had just read) and fed the parser only
+    // the bottom line.
+    const target = targetFromHandle(handle);
+    const firstInput = await tmux.captureCurrentInput(target);
+    const firstCursor = await tmux.captureCursorPosition(target);
+    await delay(INPUT_STABILITY_DELAY_MS);
+    const currentInput = await tmux.captureCurrentInput(target);
+    const cursor = await tmux.captureCursorPosition(target);
+    return {
+      stable: firstInput === currentInput && cursorPositionsEqual(firstCursor, cursor),
+      currentInput,
+      ...(cursor !== null ? { cursor } : {}),
+      observedAt: Date.now(),
+    };
+  }
+
+  return {
+    kind: 'tmux',
+    async createOrAttachHost(opts) {
+      const result = await tmux.spawnInTmux([...opts.spawnArgv], {
+        sessionName: opts.sessionName,
+        windowName: opts.sessionName,
+        cwd: opts.workingDirectory,
+      }, { ...opts.spawnEnv });
+      if (!result.success) {
+        throw new Error(result.error ?? 'Failed to create tmux terminal host');
+      }
+      return {
+        kind: 'tmux',
+        sessionName: result.sessionName ?? opts.sessionName,
+        paneId: result.windowName,
+        attachMetadata: {
+          attachStrategy: 'terminal_host',
+          topology: 'shared',
+          locality: 'same_machine',
+          maxClients: null,
+          requiresLocalAttachmentInfo: true,
+          liveProbe: 'required',
+        },
+      };
+    },
+    async injectUserPrompt(handle: TerminalHostHandle, input: TerminalPromptInput): Promise<TerminalInputInjectionResult> {
+      const deferral = scheduledDeferral(input);
+      if (deferral) return deferral;
+
+      if (handle.sessionName.trim().length === 0) {
+        return failedInjectionResult({
+          reason: 'no_target',
+          phase: 'liveness',
+          duplicateRisk: 'none',
+          recoverable: true,
+        });
+      }
+
+      const liveness = await evaluateLiveness(handle);
+      if (!liveness.paneAlive) {
+        if (liveness.paneDead !== true) {
+          return {
+            status: 'deferred',
+            reason: 'pane_initializing',
+            ...(input.scheduling.retryAfterMs !== undefined ? { retryAfterMs: input.scheduling.retryAfterMs } : {}),
+          };
+        }
+        return failedInjectionResult({
+          reason: 'pane_dead',
+          phase: 'liveness',
+          duplicateRisk: 'none',
+          recoverable: false,
+        });
+      }
+      if (input.scheduling.deferredUntilQuietMs !== undefined && input.scheduling.deferredUntilQuietMs > 0) {
+        const inputState = await captureInputState(handle);
+        if (!inputState.stable) {
+          return {
+            status: 'deferred',
+            reason: 'user_typing',
+            retryAfterMs: input.scheduling.deferredUntilQuietMs,
+          };
+        }
+      }
+      const result = await typeTextViaSendKeys({
+        target: targetFromHandle(handle),
+        text: input.text,
+        chunkSize: resolveTmuxSendKeysChunkSize(),
+        submitDelayMs: resolveTmuxPromptSubmitDelayMs(),
+        timeoutMs: input.scheduling.timeoutMs,
+        executor: (args, options) => tmux.executeTmuxCommand(
+          [...args],
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          options?.stdin,
+          options?.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : undefined,
+        ),
+      });
+      if (!result.success) {
+        return failedInjectionResult({
+          reason: result.reason === 'timeout' ? 'timeout' : 'host_unreachable',
+          phase: result.phase,
+          duplicateRisk: result.duplicateRisk,
+          recoverable: true,
+        });
+      }
+      return { status: 'injected', at: Date.now(), bytesWritten: Buffer.byteLength(input.text) };
+    },
+    async interruptTurn(handle: TerminalHostHandle): Promise<void> {
+      const success = await tmux.sendKeys('Escape', targetFromHandle(handle));
+      if (!success) {
+        throw new Error('Failed to interrupt tmux terminal host');
+      }
+    },
+    evaluateLiveness,
+    captureInputState,
+    createControlPort(handle: TerminalHostHandle) {
+      if (handle.sessionName.trim().length === 0) return null;
+      return createTmuxTerminalControlPort({
+        target: targetFromHandle(handle),
+        executor: (args, options) => tmux.executeTmuxCommand(
+          [...args],
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          options?.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : undefined,
+        ),
+      });
+    },
+    async dispose(handle: TerminalHostHandle) {
+      await tmux.killWindow(targetFromHandle(handle));
+    },
+  };
+}

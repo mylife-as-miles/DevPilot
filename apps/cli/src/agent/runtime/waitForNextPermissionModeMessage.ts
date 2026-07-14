@@ -1,0 +1,41 @@
+import type { ApiSessionClient } from '@/api/session/sessionClient';
+import type { MessageQueue2 } from '@/agent/runtime/modeMessageQueue';
+import { createSessionProviderInputConsumer } from '@/agent/runtime/sessionInput/SessionProviderInputConsumer';
+import type {
+  SessionProviderInputConsumerOptions,
+  SessionProviderInputConsumerSession,
+} from '@/agent/runtime/sessionInput/SessionProviderInputConsumer';
+import type { MessageBatch } from '@/agent/runtime/sessionInput/types';
+
+export async function waitForNextPermissionModeMessage<Mode, Message>(opts: {
+  messageQueue: MessageQueue2<Mode, Message>;
+  abortSignal: AbortSignal;
+  session: ApiSessionClient;
+  onMetadataUpdate?: (() => void | Promise<void>) | null;
+}): Promise<MessageBatch<Mode, Message> | null> {
+  const session: SessionProviderInputConsumerSession = {
+    popPendingMessage: () => opts.session.popPendingMessage(),
+    shouldAttemptPendingMaterialization: () => opts.session.shouldAttemptPendingMaterialization?.() ?? true,
+    reconcilePendingQueueState: async (reconcileOpts) => {
+      await opts.session.reconcilePendingQueueState?.(reconcileOpts);
+    },
+    waitForMetadataUpdate: (signal) => opts.session.waitForMetadataUpdate(signal),
+  };
+  const safeMaterialize = opts.session.materializeNextPendingMessageSafely;
+  if (safeMaterialize) {
+    session.materializeNextPendingMessageSafely = (materializeOpts) => safeMaterialize.call(opts.session, materializeOpts);
+  }
+
+  const consumerOptions: SessionProviderInputConsumerOptions<Mode, Message> = {
+    messageQueue: opts.messageQueue,
+    session,
+    reconcileWhenEmpty: 'skip',
+  };
+  if (opts.onMetadataUpdate !== undefined) {
+    consumerOptions.onMetadataUpdate = opts.onMetadataUpdate;
+  }
+
+  const inputConsumer = createSessionProviderInputConsumer(consumerOptions);
+
+  return await inputConsumer.waitForNextInput({ abortSignal: opts.abortSignal });
+}

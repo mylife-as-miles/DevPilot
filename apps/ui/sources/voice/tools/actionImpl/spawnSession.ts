@@ -1,0 +1,198 @@
+import { machineSpawnNewSession } from '@/sync/ops/machines';
+import { storage } from '@/sync/domains/state/storage';
+import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
+import { useVoiceTargetStore } from '@/voice/runtime/voiceTargetStore';
+import { resolveEffectiveWindowsRemoteSessionLaunchMode } from '@/sync/domains/session/spawn/windowsRemoteSessionLaunchMode';
+import { buildSafeWorkspaceLabel } from '@/utils/worktree/workspaceHandles';
+import type { Machine, Session } from '@/sync/domains/state/storageTypes';
+import type { StorageState } from '@/sync/store/types';
+
+import { normalizeNonEmptyString, resolveVoiceMachineLabel } from './shared';
+import { postprocessSpawnedSession } from './spawnSessionPostProcess';
+import { resolveSpawnAgentIdFromState } from './spawnSessionAgent';
+import { isAgentId } from '@/agents/registry/registryCore';
+import { resolveVoiceSessionRef } from './sessionReference';
+import { resolveCanonicalMachineId } from '@/sync/domains/machines/identity/resolveCanonicalMachineId';
+import { resolveMachineExactSpawnReadiness } from '@/sync/domains/machines/identity/resolveMachineExactSpawnReadiness';
+import {
+  resolveMachineTargetForSessionFromState,
+  type SessionMachineTargetState,
+} from '@/sync/ops/sessionMachineTarget';
+
+type VoiceSpawnTarget = Readonly<{
+  machineId: string;
+  directory: string;
+  replacementCanonicalized: boolean;
+}>;
+
+function canonicalizeSpawnTarget(
+  target: Readonly<{ machineId: string; directory: string }> | null,
+  machines: ReadonlyArray<Machine>,
+): VoiceSpawnTarget | null {
+  if (!target) return null;
+  const canonical = resolveCanonicalMachineId(target.machineId, machines);
+  const machineId = canonical?.machineId ?? target.machineId;
+  return {
+    machineId,
+    directory: target.directory,
+    replacementCanonicalized: canonical?.reason === 'replacement',
+  };
+}
+
+function resolveSpawnTarget(state: StorageState): VoiceSpawnTarget | null {
+  const sessionsObj = state?.sessions ?? {};
+  const machines = Object.values(state?.machines ?? {}) as Machine[];
+  const voiceTarget = useVoiceTargetStore.getState();
+  const candidates = [voiceTarget.primaryActionSessionId, voiceTarget.lastFocusedSessionId]
+    .map((v) => normalizeNonEmptyString(v))
+    .filter(Boolean) as string[];
+
+  for (const sid of candidates) {
+    const resolvedTarget = resolveMachineTargetForSessionFromState(state as SessionMachineTargetState, sid);
+    if (resolvedTarget) {
+      return canonicalizeSpawnTarget({
+        machineId: resolvedTarget.machineId,
+        directory: resolvedTarget.basePath,
+      }, machines);
+    }
+
+    const s = sessionsObj?.[sid] as Session | null | undefined;
+    const machineId = normalizeNonEmptyString(s?.metadata?.machineId);
+    const directory = normalizeNonEmptyString(s?.metadata?.path);
+    if (machineId && directory) return canonicalizeSpawnTarget({ machineId, directory }, machines);
+  }
+
+  const recent = state?.settings?.recentMachinePaths?.[0] ?? null;
+  const machineId = normalizeNonEmptyString(recent?.machineId);
+  const directory = normalizeNonEmptyString(recent?.path);
+  if (machineId && directory) return canonicalizeSpawnTarget({ machineId, directory }, machines);
+
+  for (const s of Object.values(sessionsObj) as Session[]) {
+    const sessionId = normalizeNonEmptyString(s?.id);
+    const resolvedTarget = sessionId
+      ? resolveMachineTargetForSessionFromState(state as SessionMachineTargetState, sessionId)
+      : null;
+    if (resolvedTarget) {
+      return canonicalizeSpawnTarget({
+        machineId: resolvedTarget.machineId,
+        directory: resolvedTarget.basePath,
+      }, machines);
+    }
+
+    const fallbackMachineId = normalizeNonEmptyString(s?.metadata?.machineId);
+    const fallbackDirectory = normalizeNonEmptyString(s?.metadata?.path);
+    if (fallbackMachineId && fallbackDirectory) return canonicalizeSpawnTarget({ machineId: fallbackMachineId, directory: fallbackDirectory }, machines);
+  }
+
+  return null;
+}
+
+export async function spawnSessionForVoiceTool(params: Readonly<{
+  tag?: string;
+  agentId?: string;
+  modelId?: string;
+  path?: string;
+  host?: string;
+  initialMessage?: string;
+}>): Promise<unknown> {
+  const state = storage.getState();
+
+  const requestedHost = normalizeNonEmptyString(params.host);
+  const machinesObj = state?.machines ?? {};
+  const machines = Object.values(machinesObj) as Machine[];
+  const fallbackTarget = resolveSpawnTarget(state);
+  let machineId = fallbackTarget?.machineId ?? null;
+  if (requestedHost) {
+    const hostMatches = Object.values(machinesObj)
+      .filter((machine) => normalizeNonEmptyString(machine?.metadata?.host) === requestedHost);
+    const exactMachine = machineId ? machinesObj[machineId] ?? null : null;
+    if (hostMatches.length === 0) {
+      return { type: 'error', errorCode: 'host_not_found', errorMessage: 'host_not_found', host: requestedHost };
+    }
+
+    if (hostMatches.length === 1) {
+      machineId = hostMatches[0]?.id ?? null;
+    } else if (normalizeNonEmptyString(exactMachine?.metadata?.host) !== requestedHost) {
+      return {
+        type: 'error',
+        errorCode: 'host_ambiguous',
+        errorMessage: 'host_ambiguous',
+        host: requestedHost,
+      };
+    }
+
+    if (hostMatches.length > 1 && fallbackTarget?.replacementCanonicalized !== true) {
+      return {
+        type: 'error',
+        errorCode: 'host_ambiguous',
+        errorMessage: 'host_ambiguous',
+        host: requestedHost,
+      };
+    }
+  }
+
+  const directory = normalizeNonEmptyString(params.path) ?? fallbackTarget?.directory ?? null;
+  if (!machineId || !directory) {
+    return { type: 'error', errorCode: 'spawn_target_missing', errorMessage: 'spawn_target_missing' };
+  }
+  const targetMachine = machinesObj[machineId] ?? null;
+  const targetReadiness = resolveMachineExactSpawnReadiness(targetMachine);
+  if (targetReadiness.status !== 'ready') {
+    return {
+      type: 'error',
+      errorCode: 'spawn_target_unavailable',
+      errorMessage: 'spawn_target_unavailable',
+      machineId,
+      readinessStatus: targetReadiness.status,
+    };
+  }
+
+  const serverId = getActiveServerSnapshot().serverId;
+  const requestedAgentId = normalizeNonEmptyString(params.agentId);
+  if (requestedAgentId && !isAgentId(requestedAgentId)) {
+    return { type: 'error', errorCode: 'agent_not_found', errorMessage: 'agent_not_found' };
+  }
+  const agent = requestedAgentId && isAgentId(requestedAgentId) ? requestedAgentId : resolveSpawnAgentIdFromState(state);
+  const requestedModelId = normalizeNonEmptyString(params.modelId);
+  const modelId = requestedModelId && requestedModelId !== 'default' ? requestedModelId : null;
+  const modelUpdatedAt = modelId ? Date.now() : null;
+  const machineRecord: Machine | { id: string; metadata: Machine['metadata'] } = state.machines[machineId] ?? { id: machineId, metadata: null };
+  const machineMetadata = machineRecord.metadata ?? null;
+  const windowsRemoteSessionLaunchMode = resolveEffectiveWindowsRemoteSessionLaunchMode({
+    machineMetadata,
+    settings: state?.settings ?? {},
+  }).mode;
+  const targetLabel = buildSafeWorkspaceLabel({
+    machineLabel: resolveVoiceMachineLabel(machineRecord),
+    path: directory,
+  });
+
+  const spawned = await machineSpawnNewSession({
+    machineId,
+    directory,
+    backendTarget: { kind: 'builtInAgent', agentId: agent },
+    serverId,
+    ...(windowsRemoteSessionLaunchMode ? { windowsRemoteSessionLaunchMode } : {}),
+    ...(modelId ? { modelId, modelUpdatedAt: modelUpdatedAt ?? Date.now() } : {}),
+  });
+
+  const spawnedSessionId = spawned.type === 'success' && typeof spawned.sessionId === 'string'
+    ? spawned.sessionId
+    : null;
+
+  const tag = normalizeNonEmptyString(params.tag);
+  const initialMessage = normalizeNonEmptyString(params.initialMessage);
+  await postprocessSpawnedSession({ sessionId: spawnedSessionId, tag, initialMessage });
+
+  if (!spawned || typeof spawned !== 'object' || Array.isArray(spawned)) {
+    return spawned;
+  }
+
+  const session = spawnedSessionId ? resolveVoiceSessionRef(spawnedSessionId, storage.getState()) : null;
+
+  return {
+    ...(spawned as Record<string, unknown>),
+    ...(session ? { session } : {}),
+    target: { label: targetLabel },
+  };
+}

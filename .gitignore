@@ -1,6 +1,45 @@
 # Local Happier upstream source/reference clone
 /happier/
 
+# JavaScript dependencies
+/node_modules/
+**/node_modules/
+
+# Build output
+/dist/
+/build/
+/target/
+**/dist/
+**/build/
+**/target/
+
+# Tauri and local desktop output
+/src-tauri/target/
+**/src-tauri/target/
+
+# Expo and bundler output
+/.expo/
+**/.expo/
+.expo-shared/
+.web-build/
+
+# Local caches
+/.yarn/cache/
+.cache/
+*.log
+
+# Environment and secrets
+.env
+.env.*
+!.env.example
+
+# Local editor and OS artifacts
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# Legacy Python workspace output (removed with the embedded runtime copy)
 # Python
 __pycache__/
 *.py[cod]
@@ -12,11 +51,11 @@ dist/
 *.so
 
 # Virtual environments
-.venv/
-venv/
-env/
-ENV/
-.venv-docs/
+/.venv/
+/venv/
+/env/
+/ENV/
+/.venv-docs/
 
 # Packaging / tooling caches
 .mypy_cache/
@@ -31,15 +70,10 @@ site/
 # DevPilot runtime artifacts
 .devpilot/
 research_sessions/
-*.log
 
-# Editor / OS
-.DS_Store
-.idea/
-.vscode/
+# Editor swap files
 *.swp
 
 # Project page build output
-project_page/node_modules/
-project_page/dist/
-node_modules
+/project_page/node_modules/
+/project_page/dist/

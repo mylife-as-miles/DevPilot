@@ -1,0 +1,66 @@
+import { machineSpawnNewSession } from '@/sync/ops/machines';
+import { storage } from '@/sync/domains/state/storage';
+import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
+import { resolveEffectiveWindowsRemoteSessionLaunchMode } from '@/sync/domains/session/spawn/windowsRemoteSessionLaunchMode';
+import { resolveMachineExactSpawnReadiness } from '@/sync/domains/machines/identity/resolveMachineExactSpawnReadiness';
+
+import { openVoiceSessionSpawnPicker } from '@/voice/pickers/openVoiceSessionSpawnPicker';
+import { resolveSpawnAgentIdFromState } from './spawnSessionAgent';
+import { postprocessSpawnedSession } from './spawnSessionPostProcess';
+import { normalizeNonEmptyString } from './shared';
+import { isAgentId } from '@/agents/registry/registryCore';
+
+export async function spawnSessionWithPickerForVoiceTool(params: Readonly<{ tag?: string; agentId?: string; modelId?: string; initialMessage?: string }>): Promise<unknown> {
+  const picked = await openVoiceSessionSpawnPicker();
+  if (!picked) {
+    return { ok: false, errorCode: 'user_cancelled', errorMessage: 'user_cancelled' };
+  }
+
+  const state: any = storage.getState();
+  const serverId = getActiveServerSnapshot().serverId;
+  const requestedAgentId = normalizeNonEmptyString(params.agentId);
+  if (requestedAgentId && !isAgentId(requestedAgentId)) {
+    return { ok: false, errorCode: 'agent_not_found', errorMessage: 'agent_not_found' };
+  }
+  const agent = requestedAgentId ? (requestedAgentId as any) : resolveSpawnAgentIdFromState(state);
+  const requestedModelId = normalizeNonEmptyString(params.modelId);
+  const modelId = requestedModelId && requestedModelId !== 'default' ? requestedModelId : null;
+  const modelUpdatedAt = modelId ? Date.now() : null;
+  const pickedMachine = state?.machines?.[picked.machineId] ?? Object.values(state?.machines ?? {}).find((entry: any) => entry?.id === picked.machineId) ?? null;
+  const readiness = resolveMachineExactSpawnReadiness(pickedMachine as any, picked.machineId);
+  if (readiness.status !== 'ready') {
+    return {
+      ok: false,
+      errorCode: 'spawn_target_unavailable',
+      errorMessage: 'spawn_target_unavailable',
+      readinessStatus: readiness.status,
+    };
+  }
+  const machineMetadata = pickedMachine?.metadata ?? null;
+  const windowsRemoteSessionLaunchMode = resolveEffectiveWindowsRemoteSessionLaunchMode({
+    machineMetadata,
+    settings: state?.settings ?? {},
+  }).mode;
+
+  const spawned = await machineSpawnNewSession({
+    machineId: picked.machineId,
+    directory: picked.directory,
+    backendTarget: { kind: 'builtInAgent', agentId: agent },
+    serverId,
+    ...(windowsRemoteSessionLaunchMode ? { windowsRemoteSessionLaunchMode } : {}),
+    ...(modelId ? { modelId, modelUpdatedAt: modelUpdatedAt ?? Date.now() } : {}),
+  });
+
+  const spawnedSessionId =
+    spawned && (spawned as any).type === 'success' && typeof (spawned as any).sessionId === 'string'
+      ? String((spawned as any).sessionId)
+      : null;
+
+  await postprocessSpawnedSession({
+    sessionId: spawnedSessionId,
+    tag: normalizeNonEmptyString(params.tag),
+    initialMessage: normalizeNonEmptyString(params.initialMessage),
+  });
+
+  return spawned;
+}

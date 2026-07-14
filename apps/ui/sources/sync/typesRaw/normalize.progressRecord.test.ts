@@ -1,0 +1,69 @@
+import { describe, expect, it } from 'vitest';
+
+import { normalizeRawMessage } from './normalize';
+import { RawRecordSchema } from './schemas';
+
+describe('typesRaw progress record handling', () => {
+  it('accepts output progress records and drops them during normalization', () => {
+    const raw: any = {
+      role: 'agent',
+      content: {
+        type: 'output',
+        data: {
+          type: 'progress',
+          uuid: 'progress-1',
+          status: 'running',
+        },
+      },
+      meta: { source: 'cli' },
+    };
+
+    const parsed = RawRecordSchema.safeParse(raw);
+    expect(parsed.success).toBe(true);
+
+    const normalized = normalizeRawMessage('msg-progress', null, 1000, raw);
+    expect(normalized).toBeNull();
+  });
+
+  it('drops legacy Claude JSONL consumed-marker output records during normalization', () => {
+    const raw: any = {
+      role: 'agent',
+      content: {
+        type: 'output',
+        data: {
+          type: 'claude_jsonl_consumed_marker',
+          reason: 'prompt_echo_suppressed',
+        },
+      },
+      meta: {
+        source: 'cli',
+        happier: { kind: 'claude_jsonl_consumed_marker.v1' },
+      },
+    };
+
+    const parsed = RawRecordSchema.safeParse(raw);
+    expect(parsed.success).toBe(true);
+
+    const normalized = normalizeRawMessage('msg-consumed-marker', 'claude-jsonl:main:user:user-1', 1000, raw);
+    expect(normalized).toBeNull();
+  });
+
+  it('accepts codex turn_aborted records and drops them during normalization', () => {
+    const raw: any = {
+      role: 'agent',
+      content: {
+        type: 'codex',
+        data: {
+          type: 'turn_aborted',
+        },
+      },
+      meta: { source: 'cli' },
+    };
+
+    const parsed = RawRecordSchema.safeParse(raw);
+    expect(parsed.success).toBe(true);
+
+    const normalized = normalizeRawMessage('msg-turn-aborted', null, 1000, raw);
+    expect(normalized).toBeNull();
+  });
+});

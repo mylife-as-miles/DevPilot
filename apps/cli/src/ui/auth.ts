@@ -1,0 +1,885 @@
+import { decodeBase64, encodeBase64, encodeBase64Url } from "@/api/encryption";
+import { configuration, reloadConfiguration } from "@/configuration";
+import { createHash, randomBytes } from "node:crypto";
+import tweetnacl from 'tweetnacl';
+import axios from 'axios';
+import { displayQRCode } from "./qrcode";
+import { delay } from "@/utils/time";
+import { writeCredentialsLegacy, readCredentials, readSettings, updateSettings, Credentials, writeCredentialsDataKey } from "@/persistence";
+import { generateWebAuthUrl } from "@/api/webAuth";
+import { sanitizeServerIdForFilesystem } from "@/server/serverId";
+import { openBrowser } from '@/ui/openBrowser';
+import { AuthSelector, AuthMethod } from "./ink/AuthSelector";
+import { render } from 'ink';
+import React from 'react';
+import { randomUUID } from 'node:crypto';
+import { logger } from './logger';
+import { ensureDaemonRunningForSessionCommand, shouldAutoStartDaemonAfterAuth } from '@/daemon/ensureDaemon';
+import { buildConfigureServerLinks, buildTerminalConnectLinks } from '@happier-dev/cli-common/links';
+import { tailscaleServeHttpsUrlForInternalServerUrl } from '@/integrations/tailscale/tailscaleServe';
+import { isInsecureRemoteHttpServerUrl, isLocalishServerUrl, isLoopbackHttpServerUrl } from '@/server/serverUrlClassification';
+import { decodeJwtPayload } from '@/cloud/decodeJwtPayload';
+
+export type PostTerminalAuthRequestCompatibleResponse =
+    | { state: 'requested' }
+    | { state: 'authorized' }
+    | { state: 'authorized'; token: string; response: string };
+
+function isAuthorizedWithTokenAndResponse(
+    value: PostTerminalAuthRequestCompatibleResponse,
+): value is Extract<PostTerminalAuthRequestCompatibleResponse, { state: 'authorized'; token: string; response: string }> {
+    if (value.state !== 'authorized') return false;
+    return (
+        'token' in value &&
+        typeof (value as any).token === 'string' &&
+        'response' in value &&
+        typeof (value as any).response === 'string'
+    );
+}
+
+function isLoopbackServerHost(serverUrl: string): boolean {
+    try {
+        const url = new URL(serverUrl);
+        const host = String(url.hostname ?? '').trim().toLowerCase();
+        if (!host) return false;
+        if (host === '127.0.0.1' || host === 'localhost' || host === '0.0.0.0' || host === '::1') return true;
+        if (host.endsWith('.localhost')) return true;
+        return false;
+    } catch {
+        return false;
+    }
+}
+
+function shouldAutoInferPublicServerUrl(): boolean {
+    const raw = String(process.env.HAPPIER_TAILSCALE_AUTO_PUBLIC_URL ?? '').trim().toLowerCase();
+    if (!raw) return true;
+    return ['1', 'true', 'yes', 'on'].includes(raw);
+}
+
+function resolveTailscaleServeStatusTimeoutMs(): number {
+    const raw = Number.parseInt(String(process.env.HAPPIER_TAILSCALE_SERVE_STATUS_TIMEOUT_MS ?? ''), 10);
+    return Number.isFinite(raw) && raw > 0 ? raw : 750;
+}
+
+function printServerUrlReachabilityHint(serverUrl: string): void {
+    let url: URL | null = null;
+    try {
+        url = new URL(serverUrl);
+    } catch {
+        url = null;
+    }
+
+    if (isInsecureRemoteHttpServerUrl(serverUrl)) {
+        console.log('Warning: your relay URL uses HTTP on a non-local host.');
+        console.log('This is insecure, and many web flows require HTTPS. Prefer an https:// URL (Tailscale Serve or a reverse proxy).');
+        console.log('');
+        return;
+    }
+
+    if (isLoopbackServerHost(serverUrl) && url?.protocol !== 'https:') {
+        console.log('Note: your relay URL is a localhost/loopback URL.');
+        console.log('This will work only on this same machine.');
+        console.log('For remote/phone access, use an HTTPS URL (Tailscale Serve or a reverse proxy) as your relay URL.');
+        console.log('');
+        return;
+    }
+
+    if (isLocalishServerUrl(serverUrl) && url?.protocol !== 'https:') {
+        console.log('Note: your relay URL looks like a LAN-only URL.');
+        console.log('This will work only when your phone/laptop are on the same LAN/VPN.');
+        console.log('For remote/phone access, use an HTTPS URL (Tailscale Serve or a reverse proxy) as your relay URL.');
+        console.log('');
+    }
+}
+
+function printMobileLinkMissingServerUrlHint(params: Readonly<{ serverUrl: string; kind: 'terminalConnect' | 'configureServer' }>): void {
+    // eslint-disable-next-line no-console
+    console.log('Note: this mobile link does not include a relay URL.');
+    if (isLoopbackServerHost(params.serverUrl)) {
+        // eslint-disable-next-line no-console
+        console.log('Your relay URL is set to localhost, which is only reachable on this machine.');
+        // eslint-disable-next-line no-console
+        console.log('On your phone, open Happier → Settings → Relays and add a URL your phone can reach (LAN IP/VPN/Tailscale).');
+        // eslint-disable-next-line no-console
+        console.log('Tip (recommended): set HAPPIER_PUBLIC_SERVER_URL to a shareable https:// URL so future QR codes include it automatically.');
+    } else {
+        // eslint-disable-next-line no-console
+        console.log('Your phone will use its currently configured relay (Happier → Settings → Relays).');
+    }
+    // eslint-disable-next-line no-console
+    console.log('');
+}
+
+async function applyAutoPublicServerUrlFromTailscaleServeBestEffort(): Promise<void> {
+    if (!shouldAutoInferPublicServerUrl()) return;
+    if (String(process.env.HAPPIER_PUBLIC_SERVER_URL ?? '').trim()) return;
+
+    const serverUrl = String(configuration.serverUrl ?? '').trim();
+    const publicServerUrl = String(configuration.publicServerUrl ?? '').trim();
+    if (!serverUrl) return;
+    if (publicServerUrl && publicServerUrl !== serverUrl) return;
+    if (!isLoopbackHttpServerUrl(serverUrl)) return;
+
+    const inferred = await tailscaleServeHttpsUrlForInternalServerUrl({
+        internalServerUrl: serverUrl,
+        timeoutMs: resolveTailscaleServeStatusTimeoutMs(),
+        env: process.env,
+    });
+    if (!inferred) return;
+
+    process.env.HAPPIER_PUBLIC_SERVER_URL = inferred;
+    reloadConfiguration();
+
+    const serverId = String(configuration.activeServerId ?? '').trim();
+    if (!serverId) return;
+
+    try {
+        await updateSettings((current: any) => {
+            const servers = current?.servers && typeof current.servers === 'object' ? current.servers : {};
+            const existing = servers[serverId];
+            if (!existing || typeof existing !== 'object') return current;
+
+            const existingServerUrl = String((existing as any).serverUrl ?? '').trim();
+            if (!existingServerUrl || existingServerUrl !== serverUrl) return current;
+
+            const existingPublic = String((existing as any).publicServerUrl ?? '').trim();
+            // Don't override an explicit non-loopback public URL.
+            if (existingPublic && existingPublic !== existingServerUrl) return current;
+
+            const now = Date.now();
+            return {
+                ...current,
+                servers: {
+                    ...servers,
+                    [serverId]: {
+                        ...existing,
+                        publicServerUrl: inferred,
+                        updatedAt: now,
+                    },
+                },
+            };
+        });
+    } catch {
+        // best-effort
+    }
+}
+
+function rehydrateRelayScopeEnvFromConfiguration(): void {
+    const activeServerId = sanitizeServerIdForFilesystem(configuration.activeServerId ?? '', '');
+    if (activeServerId) {
+        process.env.HAPPIER_ACTIVE_SERVER_ID = activeServerId;
+    }
+
+    const serverUrl = String(configuration.serverUrl ?? '').trim();
+    if (serverUrl) {
+        process.env.HAPPIER_SERVER_URL = serverUrl;
+    }
+
+    const publicServerUrl = String(configuration.publicServerUrl ?? '').trim();
+    if (publicServerUrl) {
+        process.env.HAPPIER_PUBLIC_SERVER_URL = publicServerUrl;
+    }
+
+    const webappUrl = String(configuration.webappUrl ?? '').trim();
+    if (webappUrl) {
+        process.env.HAPPIER_WEBAPP_URL = webappUrl;
+    }
+}
+
+export async function doAuth(): Promise<Credentials | null> {
+    // Ink requires raw mode support; in daemon/non-tty contexts we must never render Ink
+    // (it will crash with "Raw mode is not supported on the current process.stdin").
+    const hasRawMode = Boolean(process.stdin.isTTY && typeof (process.stdin as any).setRawMode === 'function');
+    const isInteractive = Boolean(hasRawMode && process.stdout.isTTY);
+    if (isInteractive) {
+        console.clear();
+    }
+    const debugRaw = (process.env.DEBUG ?? '').toString();
+    const debugEnabled = Boolean(debugRaw) && debugRaw !== '0' && debugRaw.toLowerCase() !== 'false';
+
+    const envMethodRaw = (process.env.HAPPIER_AUTH_METHOD ?? '').toString().trim().toLowerCase();
+    const envMethod = envMethodRaw === 'web' || envMethodRaw === 'browser' ? 'web' : envMethodRaw === 'mobile' ? 'mobile' : null;
+    const authMethod: AuthMethod | 'both' | null = envMethod ?? (isInteractive ? await selectAuthenticationMethod() : 'both');
+    if (!authMethod) {
+        console.log('\nAuthentication cancelled.\n');
+        process.exit(0);
+    }
+
+    await applyAutoPublicServerUrlFromTailscaleServeBestEffort();
+
+    // Generating ephemeral key
+    const secret = new Uint8Array(randomBytes(32));
+    const keypair = tweetnacl.box.keyPair.fromSecretKey(secret);
+    const claimSecret = new Uint8Array(randomBytes(32));
+    const claimSecretB64Url = Buffer.from(claimSecret).toString('base64url');
+    const claimSecretHash = createHash('sha256').update(Buffer.from(claimSecret)).digest('base64url');
+
+    // Create a new authentication request
+    try {
+        const publicKey = encodeBase64(keypair.publicKey);
+        if (debugEnabled) {
+            console.log(`[AUTH DEBUG] Sending auth request to: ${configuration.apiServerUrl}/v1/auth/request`);
+            console.log(`[AUTH DEBUG] Public key: ${publicKey.substring(0, 20)}...`);
+        }
+        await postTerminalAuthRequestCompatible({
+            publicKey,
+            supportsV2: true,
+            claimSecretHash,
+        });
+        if (debugEnabled) {
+            console.log(`[AUTH DEBUG] Auth request sent successfully`);
+        }
+    } catch (error) {
+        if (debugEnabled) {
+            console.log(`[AUTH DEBUG] Failed to send auth request:`, error);
+        }
+        console.log('Failed to create authentication request, please try again later.');
+        return null;
+    }
+
+    // Handle authentication based on selected method
+    if (authMethod === 'mobile') {
+        return await doMobileAuth({ keypair, claimSecret: claimSecretB64Url });
+    }
+    if (authMethod === 'web') {
+        return await doWebAuth({ keypair, claimSecret: claimSecretB64Url });
+    }
+    return await doBothAuth({ keypair, claimSecret: claimSecretB64Url });
+}
+
+async function doBothAuth(params: Readonly<{ keypair: tweetnacl.BoxKeyPair; claimSecret: string }>): Promise<Credentials | null> {
+    if (process.stdout.isTTY) {
+        console.clear();
+    }
+
+    const publicKeyB64Url = encodeBase64Url(params.keypair.publicKey);
+    const terminalLinks = buildTerminalConnectLinks({
+        webappUrl: configuration.webappUrl,
+        serverUrl: configuration.serverUrl,
+        publicKeyB64Url,
+    });
+    const terminalMobileEmbedsServerUrl = terminalLinks.mobileUrl.includes('server=');
+
+    console.log('\nAuthenticate this machine\n');
+    console.log(`Relay URL: ${configuration.serverUrl}`);
+    if (configuration.apiServerUrl !== configuration.serverUrl) {
+        console.log(`API URL: ${configuration.apiServerUrl}`);
+    }
+    console.log(`Web app URL: ${configuration.webappUrl}`);
+    console.log('');
+    printServerUrlReachabilityHint(configuration.serverUrl);
+    console.log('Recommended: use the mobile app first. It makes linking additional devices easier.');
+    console.log('');
+    console.log('Before you continue:');
+    if (terminalMobileEmbedsServerUrl) {
+        console.log('- Make sure your phone/browser can reach the relay URL embedded in the QR/deep link');
+        console.log('- The app/web UI may prompt you to switch relays automatically (because the link includes server=...)');
+    } else {
+        console.log('- Make sure your phone is already configured to the right relay (Happier → Settings → Relays)');
+        console.log('- Tip: set HAPPIER_PUBLIC_SERVER_URL to embed a shareable relay URL in future QR codes');
+    }
+    console.log('- Sign in (or create an account)');
+    console.log('- If you already have a Happier account on another device, sign in with that same account');
+    console.log('');
+
+    if (!terminalMobileEmbedsServerUrl) {
+        printMobileLinkMissingServerUrlHint({ serverUrl: configuration.serverUrl, kind: 'terminalConnect' });
+    }
+
+    const printConfigureLinksRaw = String(process.env.HAPPIER_AUTH_PRINT_CONFIGURE_LINKS ?? '').trim().toLowerCase();
+    const printConfigureLinks = ['1', 'true', 'yes', 'on'].includes(printConfigureLinksRaw);
+    if (printConfigureLinks) {
+        const configureLinks = buildConfigureServerLinks({
+            webappUrl: configuration.webappUrl,
+            serverUrl: configuration.serverUrl,
+        });
+        console.log('Optional — Configure relay in app/web (advanced)');
+        console.log('Web (prefill + confirm):');
+        console.log(configureLinks.webUrl);
+        console.log('Mobile deep link:');
+        console.log(configureLinks.mobileUrl);
+        console.log('');
+        if (!configureLinks.mobileUrl.includes('url=')) {
+            printMobileLinkMissingServerUrlHint({ serverUrl: configuration.serverUrl, kind: 'configureServer' });
+        }
+    }
+
+    console.log('Mobile (recommended)');
+    console.log('Scan this QR code with your Happier mobile app:\n');
+    displayQRCode(terminalLinks.mobileUrl);
+    console.log('\nOr manually open this URL:');
+    console.log(terminalLinks.mobileUrl);
+    console.log('');
+
+    console.log('Web (fallback)');
+    console.log('Open this URL in a browser where you are signed in to Happier:');
+    console.log(terminalLinks.webUrl);
+    console.log('');
+
+    const noOpenRaw = (process.env.HAPPIER_NO_BROWSER_OPEN ?? '').toString().trim();
+    const noOpen = Boolean(noOpenRaw) && noOpenRaw !== '0' && noOpenRaw.toLowerCase() !== 'false';
+    if (!noOpen && process.stdout.isTTY) {
+        try {
+            await openBrowser(terminalLinks.webUrl);
+        } catch {
+            // best-effort
+        }
+    }
+
+    return await waitForAuthentication({ keypair: params.keypair, claimSecret: params.claimSecret });
+}
+
+async function postTerminalAuthRequestCompatible(params: Readonly<{
+    publicKey: string;
+    supportsV2?: boolean;
+    claimSecretHash?: string;
+}>): Promise<PostTerminalAuthRequestCompatibleResponse> {
+    try {
+        const res = await axios.post<PostTerminalAuthRequestCompatibleResponse>(`${configuration.apiServerUrl}/v1/auth/request`, {
+            publicKey: params.publicKey,
+            ...(typeof params.supportsV2 === 'boolean' ? { supportsV2: params.supportsV2 } : {}),
+            ...(typeof params.claimSecretHash === 'string' ? { claimSecretHash: params.claimSecretHash } : {}),
+        });
+        return res.data;
+    } catch (error: any) {
+        const code = error?.response?.status;
+        if (code === 400 || code === 422) {
+            // Some legacy servers validate request bodies strictly and reject unknown keys.
+            // Retry with the minimal legacy payload.
+            const res = await axios.post<PostTerminalAuthRequestCompatibleResponse>(`${configuration.apiServerUrl}/v1/auth/request`, {
+                publicKey: params.publicKey,
+            });
+            return res.data;
+        }
+        throw error;
+    }
+}
+
+/**
+ * Display authentication method selector and return user choice
+ */
+function selectAuthenticationMethod(): Promise<AuthMethod | null> {
+    return new Promise((resolve) => {
+        let hasResolved = false;
+
+        const onSelect = (method: AuthMethod) => {
+            if (!hasResolved) {
+                hasResolved = true;
+                app.unmount();
+                resolve(method);
+            }
+        };
+
+        const onCancel = () => {
+            if (!hasResolved) {
+                hasResolved = true;
+                app.unmount();
+                resolve(null);
+            }
+        };
+
+        const app = render(React.createElement(AuthSelector, { onSelect, onCancel }), {
+            exitOnCtrlC: false,
+            patchConsole: false
+        });
+    });
+}
+
+/**
+ * Handle mobile authentication flow
+ */
+async function doMobileAuth(params: Readonly<{ keypair: tweetnacl.BoxKeyPair; claimSecret: string }>): Promise<Credentials | null> {
+    if (process.stdout.isTTY) {
+        console.clear();
+    }
+    console.log('\nMobile Authentication\n');
+    console.log(`Relay URL: ${configuration.serverUrl}`);
+    if (configuration.apiServerUrl !== configuration.serverUrl) {
+        console.log(`API URL: ${configuration.apiServerUrl}`);
+    }
+    console.log(`Web app URL: ${configuration.webappUrl}\n`);
+    printServerUrlReachabilityHint(configuration.serverUrl);
+    console.log('Recommended: use the mobile app first. It makes linking additional devices easier.');
+    console.log('If you already have a Happier account on another device, sign in with that same account.\n');
+
+    const publicKeyB64Url = encodeBase64Url(params.keypair.publicKey);
+    const terminalLinks = buildTerminalConnectLinks({
+        webappUrl: configuration.webappUrl,
+        serverUrl: configuration.serverUrl,
+        publicKeyB64Url,
+    });
+    const terminalMobileEmbedsServerUrl = terminalLinks.mobileUrl.includes('server=');
+
+    const printConfigureLinksRaw = String(process.env.HAPPIER_AUTH_PRINT_CONFIGURE_LINKS ?? '').trim().toLowerCase();
+    const printConfigureLinks = ['1', 'true', 'yes', 'on'].includes(printConfigureLinksRaw);
+    if (printConfigureLinks) {
+        const configureLinks = buildConfigureServerLinks({
+            webappUrl: configuration.webappUrl,
+            serverUrl: configuration.serverUrl,
+        });
+        console.log('Optional — Configure relay in app/web (advanced)');
+        console.log('Web (prefill + confirm):');
+        console.log(configureLinks.webUrl);
+        console.log('Mobile deep link:');
+        console.log(configureLinks.mobileUrl);
+        console.log('');
+        if (!configureLinks.mobileUrl.includes('url=')) {
+            printMobileLinkMissingServerUrlHint({ serverUrl: configuration.serverUrl, kind: 'configureServer' });
+        }
+    }
+
+    if (!terminalMobileEmbedsServerUrl) {
+        printMobileLinkMissingServerUrlHint({ serverUrl: configuration.serverUrl, kind: 'terminalConnect' });
+    }
+
+    console.log('Scan this QR code with your Happier mobile app:\n');
+    displayQRCode(terminalLinks.mobileUrl);
+
+    console.log('\nOr manually enter this URL:');
+    console.log(terminalLinks.mobileUrl);
+    console.log('');
+
+    console.log('Web (fallback):');
+    console.log(terminalLinks.webUrl);
+    console.log('');
+
+    return await waitForAuthentication({ keypair: params.keypair, claimSecret: params.claimSecret });
+}
+
+/**
+ * Handle web authentication flow
+ */
+async function doWebAuth(params: Readonly<{ keypair: tweetnacl.BoxKeyPair; claimSecret: string }>): Promise<Credentials | null> {
+    if (process.stdout.isTTY) {
+        console.clear();
+    }
+    console.log('\nWeb Authentication\n');
+    console.log(`This terminal is connected to: ${configuration.serverUrl}`);
+    if (configuration.apiServerUrl !== configuration.serverUrl) {
+        console.log(`API URL: ${configuration.apiServerUrl}`);
+    }
+    console.log(`Web app URL: ${configuration.webappUrl}\n`);
+    printServerUrlReachabilityHint(configuration.serverUrl);
+    console.log('If you already have a Happier account on another device, sign in with that same account.\n');
+
+    const publicKeyB64Url = encodeBase64Url(params.keypair.publicKey);
+    const terminalLinks = buildTerminalConnectLinks({
+        webappUrl: configuration.webappUrl,
+        serverUrl: configuration.serverUrl,
+        publicKeyB64Url,
+    });
+    const webUrl = terminalLinks.webUrl;
+    const noOpenRaw = (process.env.HAPPIER_NO_BROWSER_OPEN ?? '').toString().trim();
+    const noOpen = Boolean(noOpenRaw) && noOpenRaw !== '0' && noOpenRaw.toLowerCase() !== 'false';
+    if (!noOpen) {
+        console.log('Opening your browser...');
+
+        const browserOpened = await openBrowser(webUrl);
+
+        if (browserOpened) {
+            console.log('✓ Browser opened\n');
+            console.log('Complete authentication in your browser window.');
+        } else {
+            console.log('Could not open browser automatically.');
+        }
+    } else {
+        console.log('Browser opening is disabled (HAPPIER_NO_BROWSER_OPEN is set).');
+        console.log('Open the URL below in the browser profile/account you want to authenticate.');
+    }
+
+    // I changed this to always show the URL because we got a report from
+    // someone running happy inside the dev-box container image that they saw the
+    // "Complete authentication in your browser window." but nothing opened.
+    // https://github.com/slopus/happy/issues/19
+    console.log('\nIf the browser did not open, please copy and paste this URL:');
+    console.log(webUrl);
+    console.log('');
+    console.log('If you want to use the mobile app instead, manually open this deep link:');
+    console.log(terminalLinks.mobileUrl);
+    console.log('');
+    if (!terminalLinks.mobileUrl.includes('server=')) {
+        printMobileLinkMissingServerUrlHint({ serverUrl: configuration.serverUrl, kind: 'terminalConnect' });
+    }
+
+    return await waitForAuthentication({ keypair: params.keypair, claimSecret: params.claimSecret });
+}
+
+/**
+ * Wait for authentication to complete and return credentials
+ */
+async function waitForAuthentication(params: Readonly<{ keypair: tweetnacl.BoxKeyPair; claimSecret: string }>): Promise<Credentials | null> {
+    process.stdout.write('Waiting for authentication');
+    let dots = 0;
+    let cancelled = false;
+
+    // Handle Ctrl-C during waiting
+    const handleInterrupt = () => {
+        cancelled = true;
+        console.log('\n\nAuthentication cancelled.');
+        process.exit(0);
+    };
+
+    process.on('SIGINT', handleInterrupt);
+
+    try {
+        const pollIntervalMsRaw = Number(process.env.HAPPIER_AUTH_POLL_INTERVAL_MS ?? '');
+        const pollIntervalMs = Number.isFinite(pollIntervalMsRaw) && pollIntervalMsRaw > 0 ? pollIntervalMsRaw : 1000;
+        const publicKey = encodeBase64(params.keypair.publicKey);
+
+        let mode: 'status-claim' | 'legacy-post' = 'status-claim';
+
+        while (!cancelled) {
+            try {
+                const tryFinalizeWithTokenAndEncryptedResponse = async (token: string, responseB64: string): Promise<Credentials | null> => {
+                    const r = decodeBase64(responseB64);
+                    const decrypted = decryptWithEphemeralKey(r, params.keypair.secretKey);
+                    if (!decrypted) {
+                        console.log('\n\nFailed to decrypt response. Please try again.');
+                        return null;
+                    }
+
+                    if (decrypted.length === 32) {
+                        await writeCredentialsLegacy({ secret: decrypted, token });
+                        console.log('\n\n✓ Authentication successful\n');
+                        return { encryption: { type: 'legacy', secret: decrypted }, token };
+                    }
+
+                    if (decrypted[0] === 0) {
+                        const machineKey = decrypted.slice(1, 33);
+                        const publicKeyBytes = tweetnacl.box.keyPair.fromSecretKey(machineKey).publicKey;
+                        await writeCredentialsDataKey({ publicKey: publicKeyBytes, machineKey, token });
+                        console.log('\n\n✓ Authentication successful\n');
+                        return { encryption: { type: 'dataKey', publicKey: publicKeyBytes, machineKey }, token };
+                    }
+
+                    console.log('\n\nFailed to decrypt response. Please try again.');
+                    return null;
+                };
+
+                const legacyPollOnce = async (): Promise<
+                    PostTerminalAuthRequestCompatibleResponse
+                > => {
+                    const data = await postTerminalAuthRequestCompatible({ publicKey, supportsV2: true });
+                    return data;
+                };
+
+                if (mode === 'legacy-post') {
+                    const legacy = await legacyPollOnce();
+                    if (isAuthorizedWithTokenAndResponse(legacy)) {
+                        const finalized = await tryFinalizeWithTokenAndEncryptedResponse(legacy.token, legacy.response);
+                        if (finalized) return finalized;
+                        return null;
+                    }
+                } else {
+                    let statusRes: any;
+                    try {
+                        statusRes = await axios.get(`${configuration.apiServerUrl}/v1/auth/request/status`, {
+                            params: { publicKey },
+                        });
+                    } catch (e: any) {
+                        const code = e?.response?.status;
+                        if (code === 404) {
+                            mode = 'legacy-post';
+                            const legacy = await legacyPollOnce();
+                            if (isAuthorizedWithTokenAndResponse(legacy)) {
+                                const finalized = await tryFinalizeWithTokenAndEncryptedResponse(legacy.token, legacy.response);
+                                if (finalized) return finalized;
+                                return null;
+                            }
+                            await delay(pollIntervalMs);
+                            continue;
+                        }
+                        throw e;
+                    }
+
+                    const status = statusRes.data?.status;
+                    if (status === 'not_found') {
+                        console.log('\n\nAuthentication request expired. Please run `happier auth login` again.');
+                        return null;
+                    }
+
+                    if (status === 'authorized') {
+                        try {
+                            const claimRes = await axios.post(`${configuration.apiServerUrl}/v1/auth/request/claim`, {
+                                publicKey,
+                                claimSecret: params.claimSecret,
+                            });
+
+                            const claimData = claimRes?.data;
+                            if (claimData?.state !== 'authorized') {
+                                await delay(pollIntervalMs);
+                                continue;
+                            }
+
+                            if (typeof claimData.token !== 'string' || typeof claimData.response !== 'string') {
+                                console.log('\n\nUnexpected response from the relay. Please try again.');
+                                return null;
+                            }
+
+                            const token = claimData.token;
+                            const responseB64 = claimData.response;
+                            const finalized = await tryFinalizeWithTokenAndEncryptedResponse(token, responseB64);
+                            if (finalized) return finalized;
+                            return null;
+                        } catch (e: any) {
+                            const code = e?.response?.status;
+                            const err = e?.response?.data?.error;
+                            if (code === 410 && (err === 'expired' || err === 'consumed')) {
+                                const message =
+                                    err === 'consumed'
+                                        ? 'Authentication request was already claimed. Please run `happier auth login` again.'
+                                        : 'Authentication request expired. Please run `happier auth login` again.';
+                                console.log(`\n\n${message}`);
+                                return null;
+                            }
+                            if (code === 404 || (code === 400 && err === 'claim_not_supported') || (code === 409 && err === 'claim_not_supported')) {
+                                mode = 'legacy-post';
+                                const legacy = await legacyPollOnce();
+                                if (isAuthorizedWithTokenAndResponse(legacy)) {
+                                    const finalized = await tryFinalizeWithTokenAndEncryptedResponse(legacy.token, legacy.response);
+                                    if (finalized) return finalized;
+                                    return null;
+                                }
+                                await delay(pollIntervalMs);
+                                continue;
+                            }
+                            throw e;
+                        }
+                    }
+                }
+            } catch (error) {
+                console.log('\n\nFailed to check authentication status. Please try again.');
+                return null;
+            }
+
+            // Animate waiting dots
+            process.stdout.write('\rWaiting for authentication' + '.'.repeat((dots % 3) + 1) + '   ');
+            dots++;
+
+            await delay(pollIntervalMs);
+        }
+    } finally {
+        process.off('SIGINT', handleInterrupt);
+    }
+
+    return null;
+}
+
+export function decryptWithEphemeralKey(encryptedBundle: Uint8Array, recipientSecretKey: Uint8Array): Uint8Array | null {
+    // Extract components from bundle: ephemeral public key (32 bytes) + nonce (24 bytes) + encrypted data
+    const ephemeralPublicKey = encryptedBundle.slice(0, 32);
+    const nonce = encryptedBundle.slice(32, 32 + tweetnacl.box.nonceLength);
+    const encrypted = encryptedBundle.slice(32 + tweetnacl.box.nonceLength);
+
+    const decrypted = tweetnacl.box.open(encrypted, nonce, ephemeralPublicKey, recipientSecretKey);
+    if (!decrypted) {
+        return null;
+    }
+
+    return decrypted;
+}
+
+export async function ensureMachineIdInSettings(opts?: {
+    forceNew?: boolean;
+    accountId?: string | null;
+}): Promise<{ machineId: string }> {
+    const forceNew = opts?.forceNew ?? false;
+    const accountId = typeof opts?.accountId === 'string' ? opts.accountId.trim() : '';
+
+    const settings = await updateSettings(async s => {
+        const activeServerId = sanitizeServerIdForFilesystem(
+            configuration.activeServerId ?? s.activeServerId ?? 'cloud',
+            'cloud',
+        );
+
+        const nextMachineIdByServerId = { ...(s.machineIdByServerId ?? {}) };
+        const prevMachineIdForServer = nextMachineIdByServerId[activeServerId];
+        const nextLastSubByServerId = { ...(s.lastTokenSubByServerId ?? {}) };
+        const nextConfirmed = { ...(s.machineIdConfirmedByServerByServerId ?? {}) };
+        const hadLastSub = activeServerId in nextLastSubByServerId;
+        const hadConfirmed = activeServerId in nextConfirmed;
+
+        if (!accountId) {
+            const current = prevMachineIdForServer;
+            if (hadLastSub) delete nextLastSubByServerId[activeServerId];
+            if (hadConfirmed) delete nextConfirmed[activeServerId];
+
+            if (forceNew || !current) {
+                const machineId = randomUUID();
+                nextMachineIdByServerId[activeServerId] = machineId;
+                return {
+                    ...s,
+                    machineIdByServerId: nextMachineIdByServerId,
+                    lastTokenSubByServerId: nextLastSubByServerId,
+                    machineIdConfirmedByServerByServerId: nextConfirmed,
+                    // derived (not persisted in v5+)
+                    machineId,
+                };
+            }
+
+            if (!hadLastSub && !hadConfirmed) {
+                return {
+                    ...s,
+                    machineId: current,
+                };
+            }
+
+            return {
+                ...s,
+                lastTokenSubByServerId: nextLastSubByServerId,
+                machineIdConfirmedByServerByServerId: nextConfirmed,
+                // derived (not persisted in v5+)
+                machineId: current,
+            };
+        }
+
+        const previousAccountId = typeof nextLastSubByServerId[activeServerId] === 'string'
+            ? String(nextLastSubByServerId[activeServerId]).trim()
+            : '';
+
+        const nextMachineIdByServerIdByAccountId = { ...(s.machineIdByServerIdByAccountId ?? {}) };
+        const currentPerAccount = { ...(nextMachineIdByServerIdByAccountId[activeServerId] ?? {}) };
+        const perAccountMachineId = typeof currentPerAccount[accountId] === 'string' ? String(currentPerAccount[accountId]).trim() : '';
+
+        const didAccountSwap = Boolean(previousAccountId && previousAccountId !== accountId);
+
+        let machineId: string | null = null;
+        if (!forceNew && perAccountMachineId) {
+            machineId = perAccountMachineId;
+        } else if (!forceNew && !didAccountSwap && prevMachineIdForServer && typeof prevMachineIdForServer === 'string' && prevMachineIdForServer.trim()) {
+            // Backfill mapping for older CLIs that only stored machineIdByServerId.
+            machineId = prevMachineIdForServer.trim();
+        }
+
+        if (!machineId) {
+            machineId = randomUUID();
+        }
+
+        const normalizedPrevMachineId = typeof prevMachineIdForServer === 'string' && prevMachineIdForServer.trim()
+            ? prevMachineIdForServer.trim()
+            : null;
+        const needsServerMachineIdUpdate = normalizedPrevMachineId !== machineId;
+        const needsLastSubUpdate = previousAccountId !== accountId;
+        const needsPerAccountUpdate = perAccountMachineId !== machineId;
+
+        const needsConfirmedUpdate = (needsServerMachineIdUpdate || needsLastSubUpdate) && activeServerId in nextConfirmed;
+
+        if (!needsServerMachineIdUpdate && !needsLastSubUpdate && !needsPerAccountUpdate && !needsConfirmedUpdate) {
+            return s;
+        }
+
+        nextMachineIdByServerId[activeServerId] = machineId;
+        nextLastSubByServerId[activeServerId] = accountId;
+        currentPerAccount[accountId] = machineId;
+        nextMachineIdByServerIdByAccountId[activeServerId] = currentPerAccount;
+
+        if (needsConfirmedUpdate) delete nextConfirmed[activeServerId];
+
+        return {
+            ...s,
+            machineIdByServerId: nextMachineIdByServerId,
+            lastTokenSubByServerId: nextLastSubByServerId,
+            machineIdByServerIdByAccountId: nextMachineIdByServerIdByAccountId,
+            machineIdConfirmedByServerByServerId: nextConfirmed,
+            // derived (not persisted in v5+)
+            machineId,
+        };
+    });
+
+    if (!settings.machineId) throw new Error('Failed to ensure machine id in settings');
+    return { machineId: settings.machineId };
+}
+
+export async function ensureMachineIdForCredentials(
+    credentials: Credentials,
+    opts?: { forceNew?: boolean },
+): Promise<{ machineId: string }> {
+    let tokenPayload: Record<string, unknown> | null = null;
+    try {
+        tokenPayload = decodeJwtPayload(credentials.token);
+    } catch {
+        tokenPayload = null;
+    }
+    const accountId = typeof tokenPayload?.sub === 'string' ? tokenPayload.sub.trim() : null;
+
+    let previousAccountId: string | null = null;
+    let activeServerIdForLog: string | null = null;
+    if (accountId) {
+        try {
+            const settings = await readSettings();
+            const activeServerId = sanitizeServerIdForFilesystem(
+                configuration.activeServerId ?? settings.activeServerId ?? 'cloud',
+                'cloud',
+            );
+            activeServerIdForLog = activeServerId;
+            const prev = settings.lastTokenSubByServerId?.[activeServerId];
+            previousAccountId = typeof prev === 'string' ? prev.trim() : null;
+        } catch {
+            // best-effort only
+        }
+    }
+
+    const ensured = await ensureMachineIdInSettings({
+        accountId,
+        forceNew: Boolean(opts?.forceNew) && !accountId,
+    });
+    if (accountId && previousAccountId && previousAccountId !== accountId) {
+        logger.info(
+            `[AUTH] tokenSub changed for server=${activeServerIdForLog ?? 'unknown'} machineId=${ensured.machineId} (account ids redacted)`,
+        );
+    }
+
+    return ensured;
+}
+
+
+/**
+ * Ensure authentication and machine setup
+ * This replaces the onboarding flow and ensures everything is ready
+ */
+export async function authAndSetupMachineIfNeeded(): Promise<{
+    credentials: Credentials;
+    machineId: string;
+}> {
+    logger.debug('[AUTH] Starting auth and machine setup...');
+
+    // Step 1: Handle authentication
+    let credentials = await readCredentials();
+    let newAuth = false;
+
+    if (!credentials) {
+        logger.debug('[AUTH] No credentials found, starting authentication flow...');
+        const authResult = await doAuth();
+        if (!authResult) {
+            throw new Error('Authentication failed or was cancelled');
+        }
+        credentials = authResult;
+        newAuth = true;
+    } else {
+        logger.debug('[AUTH] Using existing credentials');
+    }
+
+    // Make sure we have a machine ID.
+    // Server machine entity will be created either by the daemon or by the CLI.
+    const { machineId } = await ensureMachineIdForCredentials(credentials, { forceNew: newAuth });
+
+    logger.debug(`[AUTH] Machine ID: ${machineId}`);
+    rehydrateRelayScopeEnvFromConfiguration();
+
+    if (
+      shouldAutoStartDaemonAfterAuth({
+        env: process.env,
+        isDaemonProcess: configuration.isDaemonProcess,
+        startedBy: 'terminal',
+      })
+    ) {
+      try {
+        await ensureDaemonRunningForSessionCommand();
+      } catch (e) {
+        // Non-fatal: the session can still run without daemon, but remote spawn/control will be degraded.
+        logger.debug('[AUTH] Failed to auto-start daemon (non-fatal)', e);
+      }
+    }
+
+    return { credentials, machineId };
+}

@@ -1,0 +1,283 @@
+import type {
+    SessionListRowStateSnapshot,
+    SessionListRowStoreState,
+} from '@/components/sessions/shell/row/sessionListRowModelTypes';
+import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
+import {
+    isSessionListRenderableWarmCacheProgressOnlyChange,
+    type SessionListRenderableSession,
+} from '@/sync/domains/session/listing/sessionListRenderable';
+import {
+    SESSION_RUNTIME_STATUS_STALE_SIGNAL_MS,
+} from '@/sync/domains/session/attention/deriveSessionRuntimePresentationState';
+import { syncPerformanceTelemetry } from '@/sync/runtime/syncPerformanceTelemetry';
+import { formatShortRelativeTimeAt } from '@/utils/time/formatShortRelativeTime';
+
+type SessionListRowStateSnapshotScope = Readonly<{
+    sessionId: string;
+    serverId?: string | null;
+}>;
+
+type SessionListRowStoreStateSelectorInput = Readonly<{
+    sessions?: SessionListRowStoreState['sessions'];
+    sessionListRenderables?: SessionListRowStoreState['sessionListRenderables'];
+    sessionMessages?: SessionListRowStoreState['sessionMessages'];
+    sessionPending?: SessionListRowStoreState['sessionPending'];
+}>;
+
+type MutableSessionListRowStoreState = {
+    activeServerId?: string | null;
+    sessions: Record<string, ReturnType<typeof selectSessionListRowStateSnapshot>['session']>;
+    sessionListRenderables: Record<string, ReturnType<typeof selectSessionListRowStateSnapshot>['renderable']>;
+    sessionMessages: Record<string, ReturnType<typeof selectSessionListRowStateSnapshot>['messages']>;
+    sessionPending: Record<string, ReturnType<typeof selectSessionListRowStateSnapshot>['pending']>;
+};
+
+// Visible rows do not need to rebuild on every unread-stable streaming progress timestamp.
+// Keep the store fully fresh, but let the row selector expose at most ~30s progress
+// steps while relative labels remain equivalent; urgent unread/status/pending changes
+// still flow through immediately via the warm-cache progress-only guard below.
+const ROW_PROGRESS_RENDERABLE_MIN_UPDATE_INTERVAL_MS = 30_000;
+
+function normalizeId(value: unknown): string {
+    return typeof value === 'string' ? value.trim() : '';
+}
+
+function normalizeScope(scope: string | SessionListRowStateSnapshotScope): SessionListRowStateSnapshotScope {
+    if (typeof scope === 'string') {
+        return { sessionId: scope };
+    }
+    return scope;
+}
+
+function shouldReadActiveServerOverlay(
+    state: SessionListRowStoreState,
+    rowServerId: string | null | undefined,
+): boolean {
+    const activeServerId = normalizeId(state.activeServerId);
+    const normalizedRowServerId = normalizeId(rowServerId);
+    if (!activeServerId || !normalizedRowServerId) return true;
+    return areServerProfileIdentifiersEquivalent(activeServerId, normalizedRowServerId);
+}
+
+export function selectSessionListRowStateSnapshot(
+    state: SessionListRowStoreState,
+    scope: string | SessionListRowStateSnapshotScope,
+): SessionListRowStateSnapshot {
+    const normalizedScope = normalizeScope(scope);
+    const sessionId = normalizedScope.sessionId;
+    if (!shouldReadActiveServerOverlay(state, normalizedScope.serverId)) {
+        return {
+            session: undefined,
+            renderable: undefined,
+            messages: undefined,
+            pending: undefined,
+        };
+    }
+
+    return {
+        session: state.sessions?.[sessionId],
+        renderable: state.sessionListRenderables?.[sessionId],
+        messages: state.sessionMessages?.[sessionId],
+        pending: state.sessionPending?.[sessionId],
+    };
+}
+
+function countChangedRefs(previous: readonly unknown[] | null, next: readonly unknown[]): number {
+    if (previous === null) return next.length;
+    const maxLength = Math.max(previous.length, next.length);
+    let changed = 0;
+    for (let index = 0; index < maxLength; index += 1) {
+        if (previous[index] !== next[index]) changed += 1;
+    }
+    return changed;
+}
+
+function recordRowStoreSelectorChangeTelemetry(fields: Readonly<Record<string, number>>): void {
+    if (!syncPerformanceTelemetry.isEnabled()) return;
+    syncPerformanceTelemetry.count('ui.sessionsList.rowStoreSelector.changed', fields);
+}
+
+function recordRowStoreSelectorSuppressedTelemetry(fields: Readonly<Record<string, number>>): void {
+    if (!syncPerformanceTelemetry.isEnabled()) return;
+    syncPerformanceTelemetry.count('ui.sessionsList.rowStoreSelector.progressOnlySuppressed', fields);
+}
+
+function finiteTimestamp(value: unknown): number | null {
+    return typeof value === 'number' && Number.isFinite(value) && value > 0
+        ? Math.trunc(value)
+        : null;
+}
+
+function resolveProgressTimestamp(renderable: SessionListRenderableSession): number | null {
+    const updatedAt = finiteTimestamp(renderable.updatedAt);
+    const meaningfulActivityAt = finiteTimestamp(renderable.meaningfulActivityAt);
+    if (updatedAt === null) return meaningfulActivityAt;
+    if (meaningfulActivityAt === null) return updatedAt;
+    return Math.max(updatedAt, meaningfulActivityAt);
+}
+
+function canReuseActiveHeartbeatAdvance(input: Readonly<{
+    previous: SessionListRenderableSession;
+    next: SessionListRenderableSession;
+    nowMs: number;
+}>): boolean {
+    const { previous, next, nowMs } = input;
+    if (previous.activeAt === next.activeAt) return true;
+
+    const previousActiveAt = finiteTimestamp(previous.activeAt);
+    const nextActiveAt = finiteTimestamp(next.activeAt);
+    if (previousActiveAt === null || nextActiveAt === null) return false;
+    if (nextActiveAt <= previousActiveAt) return false;
+    if (nextActiveAt - previousActiveAt >= ROW_PROGRESS_RENDERABLE_MIN_UPDATE_INTERVAL_MS) return false;
+
+    return previousActiveAt + SESSION_RUNTIME_STATUS_STALE_SIGNAL_MS - nowMs
+        > ROW_PROGRESS_RENDERABLE_MIN_UPDATE_INTERVAL_MS;
+}
+
+function hasSameRelativeProgressLabels(
+    previous: SessionListRenderableSession,
+    next: SessionListRenderableSession,
+    nowMs: number,
+): boolean {
+    const previousUpdatedAt = finiteTimestamp(previous.updatedAt);
+    const nextUpdatedAt = finiteTimestamp(next.updatedAt);
+    if (previousUpdatedAt !== null && nextUpdatedAt !== null) {
+        if (formatShortRelativeTimeAt(previousUpdatedAt, nowMs) !== formatShortRelativeTimeAt(nextUpdatedAt, nowMs)) {
+            return false;
+        }
+    }
+
+    const previousMeaningfulActivityAt = finiteTimestamp(previous.meaningfulActivityAt);
+    const nextMeaningfulActivityAt = finiteTimestamp(next.meaningfulActivityAt);
+    if (previousMeaningfulActivityAt !== null && nextMeaningfulActivityAt !== null) {
+        if (
+            formatShortRelativeTimeAt(previousMeaningfulActivityAt, nowMs)
+            !== formatShortRelativeTimeAt(nextMeaningfulActivityAt, nowMs)
+        ) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+function shouldReusePreviousProgressRenderable(input: Readonly<{
+    previous: SessionListRenderableSession | undefined;
+    next: SessionListRenderableSession | undefined;
+    nowMs: number;
+}>): input is Readonly<{ previous: SessionListRenderableSession; next: SessionListRenderableSession; nowMs: number }> {
+    const { previous, next, nowMs } = input;
+    if (!previous || !next || previous === next) return false;
+    if (!isSessionListRenderableWarmCacheProgressOnlyChange(previous, next)) return false;
+    if (!canReuseActiveHeartbeatAdvance({ previous, next, nowMs })) return false;
+
+    const previousTimestamp = resolveProgressTimestamp(previous);
+    const nextTimestamp = resolveProgressTimestamp(next);
+    if (previousTimestamp === null || nextTimestamp === null) return false;
+    if (nextTimestamp <= previousTimestamp) return false;
+    if (nextTimestamp - previousTimestamp >= ROW_PROGRESS_RENDERABLE_MIN_UPDATE_INTERVAL_MS) return false;
+
+    return hasSameRelativeProgressLabels(previous, next, nowMs);
+}
+
+export function createSessionListRowStoreStateSelector(
+    scopes: readonly SessionListRowStateSnapshotScope[],
+    activeServerId: string | null | undefined,
+): (state: SessionListRowStoreStateSelectorInput) => SessionListRowStoreState {
+    const normalizedScopes = scopes.map(normalizeScope);
+    let previousSessions: readonly unknown[] | null = null;
+    let previousRenderables: readonly unknown[] | null = null;
+    let previousMessages: readonly unknown[] | null = null;
+    let previousPending: readonly unknown[] | null = null;
+    let previousOutput: SessionListRowStoreState | null = null;
+
+    return (state) => {
+        const nextSessions: unknown[] = [];
+        const nextRenderables: unknown[] = [];
+        const nextMessages: unknown[] = [];
+        const nextPending: unknown[] = [];
+        const sessions: MutableSessionListRowStoreState['sessions'] = {};
+        const sessionListRenderables: MutableSessionListRowStoreState['sessionListRenderables'] = {};
+        const sessionMessages: MutableSessionListRowStoreState['sessionMessages'] = {};
+        const sessionPending: MutableSessionListRowStoreState['sessionPending'] = {};
+
+        let suppressedProgressRenderableUpdates = 0;
+        const nowMs = Date.now();
+        for (let index = 0; index < normalizedScopes.length; index += 1) {
+            const scope = normalizedScopes[index];
+            const sessionId = scope.sessionId;
+            const rawRenderable = state.sessionListRenderables?.[sessionId];
+            const previousRenderable = previousRenderables?.[index] as SessionListRenderableSession | undefined;
+            const renderable = shouldReusePreviousProgressRenderable({
+                previous: previousRenderable,
+                next: rawRenderable,
+                nowMs,
+            })
+                ? previousRenderable
+                : rawRenderable;
+            if (renderable === previousRenderable && rawRenderable !== previousRenderable && rawRenderable !== undefined) {
+                suppressedProgressRenderableUpdates += 1;
+            }
+            const session = renderable ? undefined : state.sessions?.[sessionId];
+            const messages = renderable ? undefined : state.sessionMessages?.[sessionId];
+            const pending = state.sessionPending?.[sessionId];
+            nextSessions.push(session);
+            nextRenderables.push(renderable);
+            nextMessages.push(messages);
+            nextPending.push(pending);
+            sessions[sessionId] = session;
+            sessionListRenderables[sessionId] = renderable;
+            sessionMessages[sessionId] = messages;
+            sessionPending[sessionId] = pending;
+        }
+
+        if (suppressedProgressRenderableUpdates > 0) {
+            recordRowStoreSelectorSuppressedTelemetry({
+                renderables: suppressedProgressRenderableUpdates,
+                scopedRows: normalizedScopes.length,
+            });
+        }
+
+        if (
+            previousOutput !== null
+            && refsEqual(previousSessions, nextSessions)
+            && refsEqual(previousRenderables, nextRenderables)
+            && refsEqual(previousMessages, nextMessages)
+            && refsEqual(previousPending, nextPending)
+        ) {
+            return previousOutput;
+        }
+
+        recordRowStoreSelectorChangeTelemetry({
+            scopedRows: normalizedScopes.length,
+            initialOutput: previousOutput === null ? 1 : 0,
+            changedSessions: countChangedRefs(previousSessions, nextSessions),
+            changedRenderables: countChangedRefs(previousRenderables, nextRenderables),
+            changedMessages: countChangedRefs(previousMessages, nextMessages),
+            changedPending: countChangedRefs(previousPending, nextPending),
+        });
+
+        previousSessions = nextSessions;
+        previousRenderables = nextRenderables;
+        previousMessages = nextMessages;
+        previousPending = nextPending;
+        previousOutput = {
+            activeServerId,
+            sessions,
+            sessionListRenderables,
+            sessionMessages,
+            sessionPending,
+        };
+        return previousOutput;
+    };
+}
+
+function refsEqual(previous: readonly unknown[] | null, next: readonly unknown[]): boolean {
+    if (previous === null) return false;
+    if (previous.length !== next.length) return false;
+    for (let index = 0; index < previous.length; index += 1) {
+        if (previous[index] !== next[index]) return false;
+    }
+    return true;
+}

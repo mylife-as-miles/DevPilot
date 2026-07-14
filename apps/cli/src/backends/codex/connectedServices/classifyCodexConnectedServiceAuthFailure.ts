@@ -1,0 +1,237 @@
+import type { ConnectedServiceId, ConnectedServiceLimitCategoryV1, ConnectedServiceProfileId } from '@happier-dev/protocol';
+
+import { classifyPrimarySessionRuntimeIssue } from '@/agent/runtime/session/errors/classifyPrimarySessionRuntimeIssue';
+
+export type CodexConnectedServiceRuntimeFailureKind =
+  | 'usage_limit'
+  | 'auth_expired'
+  | 'account_changed'
+  | 'refresh_failed'
+  | 'permission_denied'
+  | 'unknown';
+
+export type CodexConnectedServiceRuntimeFailureClassification = Readonly<{
+  kind: CodexConnectedServiceRuntimeFailureKind;
+  limitCategory?: ConnectedServiceLimitCategoryV1;
+  serviceId: ConnectedServiceId;
+  profileId: ConnectedServiceProfileId | null;
+  groupId: string | null;
+  resetsAtMs: number | null;
+  retryAfterMs: number | null;
+  planType: string | null;
+  rateLimits: unknown | null;
+  source: 'structured_provider_error' | 'stable_provider_message' | 'provider_runtime_marker';
+  recoveryAction?: CodexConnectedServiceRecoveryAction | null;
+}>;
+
+export type CodexConnectedServiceRecoveryAction =
+  | Readonly<{ kind: 'provider_state_sharing_required' }>
+  | Readonly<{ kind: 'quota_recovery_required' }>;
+
+export type ClassifyCodexConnectedServiceAuthFailureInput = Readonly<{
+  providerErrorPath: boolean;
+  error: unknown;
+  serviceId: ConnectedServiceId;
+  profileId: ConnectedServiceProfileId | null;
+  groupId: string | null;
+}>;
+
+const CODEX_ACCOUNT_CHANGED_MESSAGE =
+  'Your access token could not be refreshed because you have since logged out or signed in to another account. Please sign in again.';
+
+const authExpiredProviderCodes = new Set([
+  'token_invalidated',
+  'token_revoked',
+]);
+
+const refreshFailedProviderCodes = new Set([
+  'refresh_token_invalidated',
+  'refresh_token_reused',
+  'refresh_token_revoked',
+]);
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+function readString(value: unknown): string | null {
+  return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
+}
+
+function readErrorRecord(value: unknown): Record<string, unknown> | null {
+  const root = isRecord(value) ? value : null;
+  const direct = isRecord(root?.error) ? root.error : null;
+  const turn = isRecord(root?.turn) ? root.turn : null;
+  const turnError = isRecord(turn?.error) ? turn.error : null;
+  return direct ?? turnError ?? root;
+}
+
+function readErrorText(value: unknown): string {
+  if (typeof value === 'string') return value;
+  if (value instanceof Error) return value.message;
+  const record = readErrorRecord(value);
+  if (!record) return '';
+  return [record.message, record.additionalDetails, record.additional_details, record.error, record.code, record.codexErrorInfo, record.codex_error_info]
+    .filter((part): part is string => typeof part === 'string')
+    .join(' ');
+}
+
+function isStructuredUsageLimitCode(value: string | null): boolean {
+  return value === 'UsageLimitExceeded'
+    || value === 'UsageLimitReached'
+    || value === 'usageLimitExceeded'
+    || value === 'usage_limit_exceeded'
+    || value === 'usage_limit_reached';
+}
+
+function normalizeProviderCode(value: string | null): string | null {
+  return value ? value.trim().toLowerCase() : null;
+}
+
+function containsAuthTokenInvalidatedMessage(text: string): boolean {
+  return /authentication\s+token\s+has\s+been\s+invalidated/i.test(text);
+}
+
+function containsOauthTokenInvalidatedMessage(text: string): boolean {
+  return /invalidated\s+oauth\s+token/i.test(text);
+}
+
+function containsRefreshTokenFailureMessage(text: string): boolean {
+  return /refresh\s+token\s+has\s+already\s+been\s+used/i.test(text)
+    || /refresh\s+token\s+was\s+already\s+used/i.test(text)
+    || /refresh\s+token\s+(?:(?:has\s+been|was)\s+)?(?:invalidated|revoked)/i.test(text);
+}
+
+function readResetAtMs(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isFinite(value) && value >= 0) {
+    return Math.trunc(value < 10_000_000_000 ? value * 1000 : value);
+  }
+  const text = readString(value);
+  if (!text) return null;
+  const parsed = Date.parse(text);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
+}
+
+function readRetryAfterMs(value: unknown): number | null {
+  const numeric = typeof value === 'number' ? value : typeof value === 'string' ? Number(value.trim()) : NaN;
+  if (!Number.isFinite(numeric) || numeric < 0) return null;
+  return Math.trunc(numeric);
+}
+
+// F11: human-readable "try again at <time/date>" retry wording carries no timezone/offset
+// and must stay advisory-only — it is never parsed into a durable daemon-local
+// `resetsAtMs`. Only structured provider reset metadata may drive reset timing.
+function buildClassification(
+  input: ClassifyCodexConnectedServiceAuthFailureInput,
+  params: Readonly<{
+    kind: CodexConnectedServiceRuntimeFailureKind;
+    limitCategory?: CodexConnectedServiceRuntimeFailureClassification['limitCategory'];
+    resetsAtMs?: number | null;
+    retryAfterMs?: number | null;
+    planType?: string | null;
+    rateLimits?: unknown | null;
+    source: CodexConnectedServiceRuntimeFailureClassification['source'];
+    recoveryAction?: CodexConnectedServiceRecoveryAction | null;
+  }>,
+): CodexConnectedServiceRuntimeFailureClassification {
+  return {
+    kind: params.kind,
+    ...(params.limitCategory ? { limitCategory: params.limitCategory } : {}),
+    serviceId: input.serviceId,
+    profileId: input.profileId,
+    groupId: input.groupId,
+    resetsAtMs: params.resetsAtMs ?? null,
+    retryAfterMs: params.retryAfterMs ?? null,
+    planType: params.planType ?? null,
+    rateLimits: params.rateLimits ?? null,
+    source: params.source,
+    ...(params.recoveryAction ? { recoveryAction: params.recoveryAction } : {}),
+  };
+}
+
+// Usage-limit (capacity) recovery is distinct from provider state-sharing capability.
+// Quota recovery is satisfied by proven fresh quota or canonical provider-account proof, not by
+// sharing vendor continuity state. Keep `provider_state_sharing_required` reserved for genuine
+// continuity/state-sharing failures.
+const codexUsageLimitRecoveryAction = { kind: 'quota_recovery_required' } as const;
+
+export function classifyCodexConnectedServiceAuthFailure(
+  input: ClassifyCodexConnectedServiceAuthFailureInput,
+): CodexConnectedServiceRuntimeFailureClassification | null {
+  const record = readErrorRecord(input.error);
+  const codexErrorInfo = readString(record?.codexErrorInfo ?? record?.codex_error_info);
+  const structuredCode = readString(record?.code ?? record?.type ?? record?.reason);
+  if (isStructuredUsageLimitCode(codexErrorInfo) || isStructuredUsageLimitCode(structuredCode)) {
+    return buildClassification(input, {
+      kind: 'usage_limit',
+      limitCategory: 'usage_limit',
+      resetsAtMs: readResetAtMs(record?.resetsAt ?? record?.resets_at),
+      retryAfterMs: readRetryAfterMs(record?.retryAfterMs ?? record?.retry_after_ms),
+      planType: readString(record?.planType ?? record?.plan_type),
+      rateLimits: record?.rateLimits ?? record?.rate_limits ?? null,
+      source: 'structured_provider_error',
+      recoveryAction: codexUsageLimitRecoveryAction,
+    });
+  }
+
+  const text = readErrorText(input.error);
+  if (text.includes(CODEX_ACCOUNT_CHANGED_MESSAGE)) {
+    return buildClassification(input, {
+      kind: 'account_changed',
+      limitCategory: 'auth_invalid',
+      source: record ? 'structured_provider_error' : 'stable_provider_message',
+    });
+  }
+
+  if (!input.providerErrorPath) return null;
+
+  const providerCode = normalizeProviderCode(structuredCode ?? codexErrorInfo);
+  if ((providerCode && refreshFailedProviderCodes.has(providerCode)) || containsRefreshTokenFailureMessage(text)) {
+    return buildClassification(input, {
+      kind: 'refresh_failed',
+      limitCategory: 'auth_invalid',
+      source: record ? 'structured_provider_error' : 'stable_provider_message',
+    });
+  }
+
+  if (
+    (providerCode && authExpiredProviderCodes.has(providerCode))
+    || containsAuthTokenInvalidatedMessage(text)
+    || containsOauthTokenInvalidatedMessage(text)
+  ) {
+    return buildClassification(input, {
+      kind: 'auth_expired',
+      limitCategory: 'auth_invalid',
+      source: record ? 'structured_provider_error' : 'stable_provider_message',
+    });
+  }
+
+  const generic = classifyPrimarySessionRuntimeIssue({
+    provider: 'codex',
+    cause: 'status_error',
+    error: input.error,
+  });
+  if (generic.source === 'usage_limit') {
+    return buildClassification(input, {
+      kind: 'usage_limit',
+      limitCategory: 'usage_limit',
+      source: 'stable_provider_message',
+      recoveryAction: codexUsageLimitRecoveryAction,
+    });
+  }
+  if (generic.source === 'auth_error') {
+    return buildClassification(input, {
+      kind: 'auth_expired',
+      limitCategory: 'auth_invalid',
+      source: 'stable_provider_message',
+    });
+  }
+  if (generic.source === 'permission_blocked') {
+    return buildClassification(input, {
+      kind: 'permission_denied',
+      limitCategory: 'plan_invalid',
+      source: 'stable_provider_message',
+    });
+  }
+  return null;
+}

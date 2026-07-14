@@ -1,0 +1,49 @@
+import type { ACPMessageData, ACPProvider } from './sessionMessageTypes';
+
+type TranscriptPortSession = Readonly<{
+  sendAgentMessage?: (
+    provider: ACPProvider,
+    body: ACPMessageData,
+    opts?: { localId?: string; meta?: Record<string, unknown> },
+  ) => void;
+  sendAgentMessageCommitted: (
+    provider: ACPProvider,
+    body: ACPMessageData,
+    opts: { localId: string; meta?: Record<string, unknown> },
+  ) => Promise<void>;
+  enqueueAgentMessageCommitted?: (
+    provider: ACPProvider,
+    body: ACPMessageData,
+    opts: { localId: string; meta?: Record<string, unknown> },
+  ) => Promise<Readonly<{ persisted: boolean; delivered: boolean }>>;
+  sendAgentMessageEphemeral?: (
+    provider: ACPProvider,
+    body: ACPMessageData,
+    opts: { localId: string; createdAt: number; updatedAt?: number; meta?: Record<string, unknown> },
+  ) => void;
+}>;
+
+export function createCurrentSessionTranscriptPort(
+  getSession: () => TranscriptPortSession,
+): TranscriptPortSession {
+  return {
+    sendAgentMessage: (provider, body, opts) => getSession().sendAgentMessage?.(provider, body, opts),
+    sendAgentMessageCommitted: (provider, body, opts) => getSession().sendAgentMessageCommitted(provider, body, opts),
+    get enqueueAgentMessageCommitted() {
+      if (typeof getSession().enqueueAgentMessageCommitted !== 'function') return undefined;
+      return (
+        provider: ACPProvider,
+        body: ACPMessageData,
+        opts: { localId: string; meta?: Record<string, unknown> },
+      ) => getSession().enqueueAgentMessageCommitted?.(provider, body, opts) ?? Promise.resolve({ persisted: false, delivered: false });
+    },
+    get sendAgentMessageEphemeral() {
+      if (typeof getSession().sendAgentMessageEphemeral !== 'function') return undefined;
+      return (
+        provider: ACPProvider,
+        body: ACPMessageData,
+        opts: { localId: string; createdAt: number; updatedAt?: number; meta?: Record<string, unknown> },
+      ) => getSession().sendAgentMessageEphemeral?.(provider, body, opts);
+    },
+  };
+}

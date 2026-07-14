@@ -1,0 +1,258 @@
+import { MessageAckResponseSchema } from '@happier-dev/protocol/updates';
+
+import { storage } from '@/sync/domains/state/storage';
+import { resolveSentFrom } from '@/sync/domains/messages/sentFrom';
+import { buildSendMessageMeta } from '@/sync/domains/messages/buildSendMessageMeta';
+import { getAgentCore, resolveAgentIdFromFlavor } from '@/agents/catalog/catalog';
+import type { RawRecord } from '@/sync/typesRaw';
+import { createEphemeralServerSocketClient } from '@/sync/runtime/orchestration/serverScopedRpc/createEphemeralServerSocketClient';
+import { resolveScopedSessionDataKey } from '@/sync/runtime/orchestration/serverScopedRpc/resolveScopedSessionDataKey';
+import { resolveServerScopedSessionContext } from '@/sync/runtime/orchestration/serverScopedRpc/resolveServerScopedSessionContext';
+import { randomUUID } from '@/platform/randomUUID';
+import { socketEmitWithAckFallback } from '@/sync/engine/socket/socketEmitWithAckFallback';
+import { assertEndpointAuthenticatedWithProbe } from '@/sync/runtime/connectivity/assertEndpointAuthenticatedWithProbe';
+import { isTerminalAuthError } from '@/sync/runtime/connectivity/authErrors';
+import { raceSocketIoAckTimeout } from '@/sync/runtime/socketIoAckTimeout';
+import { getSyncSingleton } from '@/sync/runtime/getSyncSingleton';
+
+import type { ResolvedServerSessionRpcContext } from './resolveServerScopedSessionContext';
+
+type ScopedSocketClientLike = Readonly<{
+  timeout: (ms: number) => { emitWithAck: (event: string, payload: any) => Promise<unknown> };
+  emit: (event: string, payload: any) => void;
+  disconnect: () => void;
+}>;
+
+type ScopedSessionEncryptionLike = Readonly<{
+  encryptRawRecord: (record: RawRecord) => Promise<string>;
+}>;
+
+export type ServerScopedSessionSendMessageResult =
+  | Readonly<{ ok: true; ack?: unknown }>
+  | Readonly<{ ok: false; errorCode: string; error: string }>;
+
+type Deps = Readonly<{
+  resolveContext: typeof resolveServerScopedSessionContext;
+  resolveSessionDataKey: typeof resolveScopedSessionDataKey;
+  createSocket: (params: Readonly<{ serverUrl: string; token: string; timeoutMs: number }>) => Promise<ScopedSocketClientLike>;
+  assertScopedEndpointAuthenticated: (
+    context: Extract<ResolvedServerSessionRpcContext, { scope: 'scoped' }>,
+    options?: Readonly<{ forceProbe?: boolean }>,
+  ) => Promise<void> | void;
+  getScopedSessionEncryption: (params: Readonly<{
+    context: Awaited<ReturnType<typeof resolveServerScopedSessionContext>>;
+    sessionId: string;
+  }>) => Promise<ScopedSessionEncryptionLike>;
+  sendMessageActive: (
+    sessionId: string,
+    message: string,
+    displayText?: string,
+    metaOverrides?: Record<string, unknown>,
+    options?: Readonly<{ localId?: string | null }>,
+  ) => Promise<void>;
+}>;
+
+function normalizeId(raw: unknown): string {
+  return String(raw ?? '').trim();
+}
+
+async function defaultGetScopedSessionEncryption(params: Readonly<{
+  context: Awaited<ReturnType<typeof resolveServerScopedSessionContext>>;
+  sessionId: string;
+}>): Promise<ScopedSessionEncryptionLike> {
+  if (params.context.scope !== 'scoped') {
+    throw new Error('Expected scoped context');
+  }
+
+  const context = params.context as Extract<ResolvedServerSessionRpcContext, { scope: 'scoped' }>;
+  const sessionDataKey = await resolveScopedSessionDataKey({
+    serverId: context.targetServerId,
+    serverUrl: context.targetServerUrl,
+    token: context.token,
+    sessionId: params.sessionId,
+    timeoutMs: context.timeoutMs,
+    decryptEncryptionKey: (value) => context.encryption.decryptEncryptionKey(value),
+  });
+
+  await context.encryption.initializeSessions(new Map([[params.sessionId, sessionDataKey]]));
+  const sessionEncryption = context.encryption.getSessionEncryption(params.sessionId);
+  if (!sessionEncryption) {
+    throw new Error(`Session encryption not found for ${params.sessionId}`);
+  }
+  return sessionEncryption as unknown as ScopedSessionEncryptionLike;
+}
+
+export function createServerScopedSessionSendMessage(deps?: Partial<Deps>): Readonly<{
+  sendSessionMessageWithServerScope: (args: Readonly<{
+    sessionId: string;
+    message: string;
+    serverId?: string | null;
+    timeoutMs?: number;
+    displayText?: string | null;
+    metaOverrides?: Record<string, unknown> | null;
+    profileId?: string | null;
+    localId?: string | null;
+  }>) => Promise<ServerScopedSessionSendMessageResult>;
+}> {
+  const d: Deps = {
+    resolveContext: deps?.resolveContext ?? resolveServerScopedSessionContext,
+    resolveSessionDataKey: deps?.resolveSessionDataKey ?? resolveScopedSessionDataKey,
+    createSocket: deps?.createSocket ?? (async (params) => await createEphemeralServerSocketClient(params)),
+    assertScopedEndpointAuthenticated:
+      deps?.assertScopedEndpointAuthenticated ??
+      (async (context, options) => {
+        await assertEndpointAuthenticatedWithProbe({
+          serverId: context.targetServerId,
+          serverUrl: context.targetServerUrl,
+          forceProbe: options?.forceProbe === true,
+          timeoutMs: context.timeoutMs,
+        });
+      }),
+    getScopedSessionEncryption: deps?.getScopedSessionEncryption ?? defaultGetScopedSessionEncryption,
+    sendMessageActive:
+      deps?.sendMessageActive ??
+      (async (sessionId, message, displayText, metaOverrides, options) => {
+        await getSyncSingleton().sendMessage(sessionId, message, displayText, metaOverrides, {
+          ...(options?.localId ? { localId: options.localId } : {}),
+          bypassPendingQueueReason: 'server_scoped_rpc_active',
+        });
+      }),
+  };
+
+  const sendSessionMessageWithServerScope = async (args: Readonly<{
+    sessionId: string;
+    message: string;
+    serverId?: string | null;
+    timeoutMs?: number;
+    displayText?: string | null;
+    metaOverrides?: Record<string, unknown> | null;
+    profileId?: string | null;
+    localId?: string | null;
+  }>): Promise<ServerScopedSessionSendMessageResult> => {
+    const sessionId = normalizeId(args.sessionId);
+    const message = String(args.message ?? '');
+    const profileId = normalizeId(args.profileId);
+    const requestedLocalId = normalizeId(args.localId);
+    const displayText = typeof args.displayText === 'string' ? args.displayText : undefined;
+    const metaOverrides = {
+      ...(args.metaOverrides ?? {}),
+      ...(profileId ? { profileId } : {}),
+    };
+    if (!sessionId || !message.trim()) {
+      return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
+    }
+
+    const timeoutMs = typeof args.timeoutMs === 'number' && args.timeoutMs > 0 ? args.timeoutMs : 30_000;
+    const context = await d.resolveContext({ serverId: args.serverId, timeoutMs });
+
+    if (context.scope === 'active') {
+      await d.sendMessageActive(
+        sessionId,
+        message,
+        displayText,
+        Object.keys(metaOverrides).length > 0 ? metaOverrides : undefined,
+        requestedLocalId ? { localId: requestedLocalId } : undefined,
+      );
+      return { ok: true, ack: { ok: true } };
+    }
+
+    // Scoped path: build + encrypt record, then emit `message` over an ephemeral scoped socket.
+    const state: any = storage.getState();
+    const session: any = state?.sessions?.[sessionId] ?? null;
+    if (!session) {
+      return { ok: false, errorCode: 'session_not_found', error: 'session_not_found' };
+    }
+    const sessionEncryptionMode: 'e2ee' | 'plain' = session.encryptionMode === 'plain' ? 'plain' : 'e2ee';
+
+    const permissionMode = (session.permissionMode || 'default') as string;
+    const flavor = session.metadata?.flavor;
+    const agentId = resolveAgentIdFromFlavor(flavor);
+    const modelMode = session.modelMode || (agentId ? getAgentCore(agentId).model.defaultMode : 'default');
+    const model =
+      agentId && getAgentCore(agentId).model.supportsSelection && modelMode !== 'default' ? modelMode : undefined;
+
+    const sentFrom = resolveSentFrom();
+    const meta = buildSendMessageMeta({
+      sentFrom,
+      permissionMode: permissionMode || 'default',
+      model,
+      displayText,
+      agentId: agentId ?? null,
+      settings: state?.settings ?? {},
+      session,
+      metaOverrides: Object.keys(metaOverrides).length > 0 ? metaOverrides : undefined,
+    });
+
+    const record: RawRecord = {
+      role: 'user',
+      content: { type: 'text', text: message },
+      meta,
+    };
+
+    const messagePayload =
+      sessionEncryptionMode === 'plain'
+        ? { t: 'plain' as const, v: record }
+        : await (async () => {
+            const sessionEncryption = await d.getScopedSessionEncryption({ context, sessionId });
+            return await sessionEncryption.encryptRawRecord(record);
+          })();
+    const localId = requestedLocalId || randomUUID();
+
+    const payload = {
+      sid: sessionId,
+      message: messagePayload,
+      localId,
+      sentFrom,
+      permissionMode: permissionMode || 'default',
+      messageRole: 'user' as const,
+    };
+
+    const socket = await d.createSocket({ serverUrl: context.targetServerUrl, token: context.token, timeoutMs: context.timeoutMs });
+    try {
+      await d.assertScopedEndpointAuthenticated(context);
+      const rawAck = await socketEmitWithAckFallback({
+        emitWithAck: async (event, payload, opts) => {
+          const timeoutMs = typeof opts?.timeoutMs === 'number' && opts.timeoutMs > 0 ? opts.timeoutMs : context.timeoutMs;
+          return await raceSocketIoAckTimeout(
+            socket.timeout(timeoutMs).emitWithAck(event, payload),
+            timeoutMs,
+          );
+        },
+        send: (event, payload) => {
+          socket.emit(event, payload);
+        },
+        event: 'message',
+        payload,
+        timeoutMs: context.timeoutMs,
+        onNoAck: () => {},
+        beforeFallback: () => d.assertScopedEndpointAuthenticated(context, { forceProbe: true }),
+      });
+      if (!rawAck) {
+        return { ok: true, ack: { ok: false, state: 'ack_unknown', localId } };
+      }
+      const parsed = MessageAckResponseSchema.safeParse(rawAck);
+      if (!parsed.success) {
+        return { ok: false, errorCode: 'send_failed', error: 'send_failed' };
+      }
+      if (parsed.data.ok !== true) {
+        return { ok: false, errorCode: 'send_failed', error: parsed.data.error ?? 'send_failed' };
+      }
+      return { ok: true, ack: parsed.data };
+    } catch (e: unknown) {
+      if (isTerminalAuthError(e)) {
+        throw e;
+      }
+      return { ok: false, errorCode: 'send_failed', error: e instanceof Error ? e.message : 'send_failed' };
+    } finally {
+      try {
+        socket.disconnect();
+      } catch {
+        // ignore
+      }
+    }
+  };
+
+  return { sendSessionMessageWithServerScope };
+}
+
+export const { sendSessionMessageWithServerScope } = createServerScopedSessionSendMessage();

@@ -1,0 +1,442 @@
+import type { SDKAssistantMessage, SDKMessage, SDKUserMessage } from '@/backends/claude/sdk';
+import type { RawJSONLines } from '@/backends/claude/types';
+import { configuration } from '@/configuration';
+import { startFileWatcher } from '@/integrations/watcher/startFileWatcher';
+import { parseRawJsonLinesObject } from '@/backends/claude/utils/parseRawJsonLines';
+
+import { extractAgentIdFromTaskResultText } from './extractAgentIdFromTaskResult';
+import {
+  coerceToolResultText,
+  extractOutputFilePathFromTaskResultText,
+  isPromptRootUserMessage,
+  markRecordAsSidechain,
+  markUuidSeenAndReturnIsDuplicate,
+  LruSet,
+} from './_shared';
+
+import { realpath } from 'node:fs/promises';
+import { createJsonlFollowController, type JsonlFollowController } from '@/agent/localControl/jsonlFollowController';
+import { normalizeJsonlFollowPolicy, type JsonlFollowPolicyInput, type JsonlFollowPolicyV1 } from '@/agent/localControl/jsonlFollowPolicy';
+import { isGenericSubAgentToolName } from '@happier-dev/protocol/tools/v2';
+
+type WatchFile = (file: string, onFileChange: (file: string) => void) => () => void;
+
+type EmitImported = (body: RawJSONLines, meta: Record<string, unknown>) => void;
+
+type ResolveJsonlPathForAgentId = (params: {
+  agentId: string;
+  sidechainId: string;
+  claudeSessionId: string | null;
+}) => string | null;
+
+type Entry = {
+  sidechainId: string; // Task tool_use id
+  agentId: string;
+  outputFilePath: string;
+  resolvedJsonlPath: string;
+  controller: JsonlFollowController;
+  createdAtMs: number;
+  lastTouchedAtMs: number;
+};
+
+type PendingRegistration = {
+  sidechainId: string;
+  agentId: string;
+  markCompletedAfterRegister: boolean;
+};
+
+export class ClaudeRemoteSubagentFileCollector {
+  private readonly emitImported: EmitImported;
+  private readonly watchFile: WatchFile;
+  private readonly resolveJsonlPathForAgentId: ResolveJsonlPathForAgentId | null;
+
+  private lastClaudeSessionId: string | null = null;
+  private toolNameByToolUseId = new Map<string, string>();
+  private agentIdByToolUseId = new Map<string, string>();
+  private pendingRegistrations = new Set<Promise<void>>();
+  private readonly pendingBySidechainId = new Map<string, PendingRegistration>();
+  private readonly entriesBySidechainId = new Map<string, Entry>();
+  private readonly closedSidechainIds = new Map<string, number>();
+  private readonly seenUuidsBySidechainId = new Map<string, LruSet>();
+  private readonly followPolicy: JsonlFollowPolicyV1;
+
+  constructor(opts: {
+    emitImported: EmitImported;
+    watchFile?: WatchFile;
+    resolveJsonlPathForAgentId?: ResolveJsonlPathForAgentId;
+    followPolicy?: JsonlFollowPolicyInput;
+  }) {
+    this.emitImported = opts.emitImported;
+    this.watchFile = opts.watchFile ?? startFileWatcher;
+    this.resolveJsonlPathForAgentId = opts.resolveJsonlPathForAgentId ?? null;
+    this.followPolicy = normalizeJsonlFollowPolicy(opts.followPolicy);
+  }
+
+  observe(message: SDKMessage): void {
+    this.observeClaudeSessionId(message);
+    if ((message as any)?.type === 'assistant') {
+      this.observeAssistantToolUses(message as SDKAssistantMessage);
+      return;
+    }
+    if ((message as any)?.type === 'user') {
+      this.observeUserToolResults(message as SDKUserMessage);
+    }
+  }
+
+  cleanup(): void {
+    for (const entry of this.entriesBySidechainId.values()) {
+      void entry.controller.stop();
+    }
+    this.entriesBySidechainId.clear();
+    this.closedSidechainIds.clear();
+    this.toolNameByToolUseId.clear();
+    this.agentIdByToolUseId.clear();
+    this.seenUuidsBySidechainId.clear();
+  }
+
+  async syncAll(): Promise<void> {
+    if (this.pendingRegistrations.size > 0) {
+      // Ensure we don't miss an initial import in the same tick as Task tool_result observation.
+      await Promise.allSettled([...this.pendingRegistrations]);
+    }
+    this.flushPendingRegistrations();
+    if (this.pendingRegistrations.size > 0) {
+      await Promise.allSettled([...this.pendingRegistrations]);
+    }
+    for (const entry of this.entriesBySidechainId.values()) {
+      await entry.controller.drainNow();
+    }
+  }
+
+  private observeAssistantToolUses(message: SDKAssistantMessage): void {
+    const content = (message as any)?.message?.content;
+    if (!Array.isArray(content)) return;
+
+    for (const item of content) {
+      if (!item || typeof item !== 'object') continue;
+      if ((item as any).type !== 'tool_use') continue;
+
+      const toolUseId = String((item as any).id ?? '').trim();
+      const toolName = String((item as any).name ?? '').trim();
+      if (!toolUseId || !toolName) continue;
+      if (this.closedSidechainIds.has(toolUseId)) continue;
+      this.toolNameByToolUseId.set(toolUseId, toolName);
+      const genericSubagentTool = isGenericSubAgentToolName(toolName);
+      let agentIdFromInput = '';
+      if (toolName === 'Agent') {
+        const resolvedAgentIdFromInput = this.extractAgentIdFromAgentToolUseInput((item as any).input);
+        if (resolvedAgentIdFromInput) {
+          this.agentIdByToolUseId.set(toolUseId, resolvedAgentIdFromInput);
+          agentIdFromInput = resolvedAgentIdFromInput;
+        }
+      }
+      if (genericSubagentTool && this.resolveJsonlPathForAgentId && !this.entriesBySidechainId.has(toolUseId)) {
+        this.pendingBySidechainId.set(toolUseId, {
+          sidechainId: toolUseId,
+          agentId: agentIdFromInput || toolUseId,
+          markCompletedAfterRegister: false,
+        });
+        this.flushPendingRegistrations();
+      }
+    }
+  }
+
+  private observeUserToolResults(message: SDKUserMessage): void {
+    const content = (message as any)?.message?.content;
+    if (!Array.isArray(content)) return;
+
+    const toolUseResult = (message as any)?.tool_use_result ?? (message as any)?.toolUseResult;
+    for (const item of content) {
+      if (!item || typeof item !== 'object') continue;
+      if ((item as any).type !== 'tool_result') continue;
+
+      const toolUseId = String((item as any).tool_use_id ?? '').trim();
+      if (!toolUseId) continue;
+      if (this.closedSidechainIds.has(toolUseId)) continue;
+
+      const toolName = this.toolNameByToolUseId.get(toolUseId) ?? null;
+      // Execution runs and Claude agent teams both surface sub-agent transcripts as JSONL files.
+      // - `Task` tool results often include `output_file`
+      // - `Agent` (agent-teams) tool results typically do not, so we resolve by agent_id + session_id
+      if (!toolName || !isGenericSubAgentToolName(toolName)) continue;
+
+      const toolResultText = coerceToolResultText(
+        toolUseResult !== undefined ? { content: (item as any).content, tool_use_result: toolUseResult } : (item as any).content,
+      );
+      const ids = extractAgentIdFromTaskResultText(toolResultText);
+      const agentIdFromToolUseResult =
+        typeof toolUseResult?.agent_id === 'string'
+          ? String(toolUseResult.agent_id).trim()
+          : typeof toolUseResult?.agentId === 'string'
+            ? String(toolUseResult.agentId).trim()
+            : typeof toolUseResult?.teammate_id === 'string'
+              ? String(toolUseResult.teammate_id).trim()
+              : '';
+      const agentIdFromToolUseInput = this.agentIdByToolUseId.get(toolUseId) ?? '';
+      const agentId = agentIdFromToolUseResult || (ids.agentId ? String(ids.agentId).trim() : '') || agentIdFromToolUseInput;
+      if (!agentId) continue;
+
+      const outputFilePath =
+        extractOutputFilePathFromTaskResultText(toolResultText) ??
+        (typeof toolUseResult?.outputFile === 'string'
+          ? String(toolUseResult.outputFile).trim()
+          : typeof toolUseResult?.output_file === 'string'
+            ? String(toolUseResult.output_file).trim()
+            : null) ??
+        (() => {
+          if (!this.resolveJsonlPathForAgentId) return null;
+          const claudeSessionId = this.resolveClaudeSessionId(message);
+          return this.resolveJsonlPathForAgentId({ agentId, sidechainId: toolUseId, claudeSessionId });
+        })();
+      const shouldMarkCompleted = shouldMarkSidechainCompletedAfterToolResult({ toolName, toolUseResult });
+
+      if (!outputFilePath) {
+        // Session id/transcript path may not be known yet (init may arrive after Task spawns). Store a pending entry and
+        // retry once we learn session_id (or when syncAll() is called).
+        if (this.resolveJsonlPathForAgentId && !this.entriesBySidechainId.has(toolUseId)) {
+          this.pendingBySidechainId.set(toolUseId, { sidechainId: toolUseId, agentId, markCompletedAfterRegister: shouldMarkCompleted });
+        } else if (shouldMarkCompleted) {
+          this.markEntryCompleted(toolUseId);
+        }
+        continue;
+      }
+
+      const registration = this.registerTaskOutputFile({
+        sidechainId: toolUseId,
+        agentId,
+        outputFilePath,
+        markCompletedAfterRegister: shouldMarkCompleted,
+      });
+      this.pendingRegistrations.add(registration);
+      void registration.finally(() => this.pendingRegistrations.delete(registration));
+    }
+  }
+
+  private extractAgentIdFromAgentToolUseInput(input: unknown): string | null {
+    if (!input || typeof input !== 'object' || Array.isArray(input)) return null;
+    const record = input as Record<string, unknown>;
+    const directAgentId =
+      typeof record.agent_id === 'string'
+        ? String(record.agent_id).trim()
+        : typeof record.agentId === 'string'
+          ? String(record.agentId).trim()
+          : typeof record.teammate_id === 'string'
+            ? String(record.teammate_id).trim()
+            : typeof record.teammateId === 'string'
+              ? String(record.teammateId).trim()
+              : '';
+    if (directAgentId.length > 0) return directAgentId;
+
+    const name = typeof record.name === 'string' ? String(record.name).trim() : '';
+    if (!name) return null;
+
+    const teamName =
+      typeof record.team_name === 'string'
+        ? String(record.team_name).trim()
+        : typeof record.teamName === 'string'
+          ? String(record.teamName).trim()
+          : typeof record.team_id === 'string'
+            ? String(record.team_id).trim()
+            : typeof record.teamId === 'string'
+              ? String(record.teamId).trim()
+              : typeof record.team === 'string'
+                ? String(record.team).trim()
+                : '';
+    if (!teamName) return name.includes('@') ? name : null;
+    return name.includes('@') ? name : `${name}@${teamName}`;
+  }
+
+  private async registerTaskOutputFile(params: {
+    sidechainId: string;
+    agentId: string;
+    outputFilePath: string;
+    markCompletedAfterRegister?: boolean;
+  }): Promise<void> {
+    const existing = this.entriesBySidechainId.get(params.sidechainId);
+    if (existing) {
+      if (params.markCompletedAfterRegister) {
+        existing.controller.markCompleted();
+      }
+      return;
+    }
+    if (this.closedSidechainIds.has(params.sidechainId)) return;
+
+    const resolvedJsonlPath = await (async () => {
+      try {
+        return await realpath(params.outputFilePath);
+      } catch {
+        return params.outputFilePath;
+      }
+    })();
+
+    const sidechainId = params.sidechainId;
+    const agentId = params.agentId;
+
+    const now = Date.now();
+    const entry: Entry = {
+      sidechainId,
+      agentId,
+      outputFilePath: params.outputFilePath,
+      resolvedJsonlPath,
+      createdAtMs: now,
+      lastTouchedAtMs: now,
+      controller: createJsonlFollowController({
+        filePath: resolvedJsonlPath,
+        pollPolicy: this.followPolicy,
+        watchFile: this.watchFile,
+        onClosed: () => this.closeEntry(sidechainId),
+        onJson: (value) => this.ingestJson({ sidechainId, agentId, resolvedJsonlPath }, value),
+      }),
+    };
+
+    this.entriesBySidechainId.set(params.sidechainId, entry);
+
+    await entry.controller.start();
+    this.enforceFollowerCaps();
+    if (params.markCompletedAfterRegister) {
+      entry.controller.markCompleted();
+    }
+  }
+
+  private markEntryCompleted(sidechainId: string): void {
+    const entry = this.entriesBySidechainId.get(sidechainId);
+    entry?.controller.markCompleted();
+  }
+
+  private closeEntry(sidechainId: string): void {
+    this.entriesBySidechainId.delete(sidechainId);
+    this.seenUuidsBySidechainId.delete(sidechainId);
+    this.rememberClosedSidechainId(sidechainId);
+  }
+
+  private rememberClosedSidechainId(sidechainId: string): void {
+    this.closedSidechainIds.delete(sidechainId);
+    this.closedSidechainIds.set(sidechainId, Date.now());
+    while (this.closedSidechainIds.size > this.followPolicy.maxClosedFollowerRecordsPerSession) {
+      const oldest = this.closedSidechainIds.keys().next().value;
+      if (typeof oldest !== 'string') break;
+      this.closedSidechainIds.delete(oldest);
+    }
+  }
+
+  private enforceFollowerCaps(): void {
+    const activeEntries = [...this.entriesBySidechainId.values()]
+      .filter((entry) => entry.controller.getState() === 'active')
+      .sort(compareEntriesForEviction);
+    while (activeEntries.length > this.followPolicy.maxActiveFollowersPerSession) {
+      const entry = activeEntries.shift();
+      entry?.controller.markIdle();
+    }
+
+    const idleEntries = [...this.entriesBySidechainId.values()]
+      .filter((entry) => entry.controller.getState() === 'idle')
+      .sort(compareEntriesForEviction);
+    while (idleEntries.length > this.followPolicy.maxIdleFollowersPerSession) {
+      const entry = idleEntries.shift();
+      if (!entry) break;
+      void entry.controller.stop();
+    }
+  }
+
+  private ingestJson(
+    params: { sidechainId: string; agentId: string; resolvedJsonlPath: string },
+    value: unknown,
+  ): void {
+    const parsed = parseRawJsonLinesObject(value);
+    if (!parsed) return;
+
+    const entry = this.entriesBySidechainId.get(params.sidechainId);
+    if (entry) {
+      entry.lastTouchedAtMs = Date.now();
+    }
+
+    // Skip the prompt root; remote launcher inserts a synthetic prompt root from Task tool_use.
+    if (isPromptRootUserMessage(parsed)) return;
+
+    const uuid = typeof (parsed as any).uuid === 'string' ? String((parsed as any).uuid) : '';
+    if (uuid) {
+      const isDuplicate = markUuidSeenAndReturnIsDuplicate({
+        seenUuidsBySidechainId: this.seenUuidsBySidechainId,
+        sidechainId: params.sidechainId,
+        uuid,
+        maxSeenUuidsPerSidechain: configuration.claudeTaskOutputMaxSeenUuidsPerSidechain,
+        maxSidechains: configuration.claudeTaskOutputMaxAgentMappings,
+      });
+      if (isDuplicate) return;
+    }
+
+    markRecordAsSidechain(parsed, params.sidechainId);
+
+    this.emitImported(parsed, {
+      importedFrom: 'claude-subagent-file',
+      sidechainId: params.sidechainId,
+      claudeAgentId: params.agentId,
+      claudeSubagentJsonlPath: params.resolvedJsonlPath,
+    });
+  }
+
+  private observeClaudeSessionId(message: SDKMessage): void {
+    const raw = (message as any)?.session_id ?? (message as any)?.sessionId;
+    if (typeof raw !== 'string') return;
+    const value = raw.trim();
+    if (!value) return;
+    const prev = this.lastClaudeSessionId;
+    this.lastClaudeSessionId = value;
+    if (prev !== value) {
+      this.flushPendingRegistrations();
+    }
+  }
+
+  private resolveClaudeSessionId(message: SDKMessage): string | null {
+    const raw = (message as any)?.sessionId ?? (message as any)?.session_id;
+    if (typeof raw === 'string' && raw.trim().length > 0) return raw.trim();
+    return this.lastClaudeSessionId;
+  }
+
+  private flushPendingRegistrations(): void {
+    if (!this.resolveJsonlPathForAgentId) return;
+    const claudeSessionId = this.lastClaudeSessionId;
+    if (!claudeSessionId) return;
+
+    for (const pending of this.pendingBySidechainId.values()) {
+      if (this.closedSidechainIds.has(pending.sidechainId)) {
+        this.pendingBySidechainId.delete(pending.sidechainId);
+        continue;
+      }
+      if (this.entriesBySidechainId.has(pending.sidechainId)) {
+        this.pendingBySidechainId.delete(pending.sidechainId);
+        continue;
+      }
+
+      const outputFilePath = this.resolveJsonlPathForAgentId({
+        agentId: pending.agentId,
+        sidechainId: pending.sidechainId,
+        claudeSessionId,
+      });
+      if (!outputFilePath) continue;
+
+      this.pendingBySidechainId.delete(pending.sidechainId);
+      const registration = this.registerTaskOutputFile({
+        sidechainId: pending.sidechainId,
+        agentId: pending.agentId,
+        outputFilePath,
+        markCompletedAfterRegister: pending.markCompletedAfterRegister,
+      });
+      this.pendingRegistrations.add(registration);
+      void registration.finally(() => this.pendingRegistrations.delete(registration));
+    }
+  }
+}
+
+function shouldMarkSidechainCompletedAfterToolResult(params: {
+  toolName: string;
+  toolUseResult: any;
+}): boolean {
+  if (params.toolName === 'Task') return true;
+  const status = typeof params.toolUseResult?.status === 'string' ? String(params.toolUseResult.status).trim().toLowerCase() : '';
+  return status === 'completed' || status === 'failed' || status === 'cancelled' || status === 'canceled';
+}
+
+function compareEntriesForEviction(left: Entry, right: Entry): number {
+  return (left.lastTouchedAtMs - right.lastTouchedAtMs) || (left.createdAtMs - right.createdAtMs);
+}

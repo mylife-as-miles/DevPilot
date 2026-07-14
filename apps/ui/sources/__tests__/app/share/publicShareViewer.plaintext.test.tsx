@@ -1,0 +1,316 @@
+import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
+import { renderScreen } from '@/dev/testkit';
+import { describe, expect, it, vi } from 'vitest';
+import { installPublicShareViewerCommonModuleMocks } from './publicShareViewerTestHelpers';
+
+
+(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+(globalThis as any).expo = { EventEmitter: class { } };
+
+const serverFetchSpy = vi.fn();
+const decryptDataKeyFromPublicShareSpy = vi.fn();
+const transcriptListSpy = vi.fn();
+
+vi.mock('react-native-reanimated', () => ({}));
+
+vi.mock('@expo/vector-icons', () => ({
+    Ionicons: 'Ionicons',
+}));
+
+const routerMock = { back: vi.fn(), push: vi.fn(), replace: vi.fn() };
+installPublicShareViewerCommonModuleMocks({
+    router: async () => {
+        const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+        return createExpoRouterMock({
+            router: routerMock,
+            params: { token: 'tok-1' },
+        }).module;
+    },
+});
+
+vi.mock('@/sync/http/client', () => ({
+    serverFetch: serverFetchSpy,
+}));
+
+vi.mock('@/sync/encryption/publicShareEncryption', () => ({
+    decryptDataKeyFromPublicShare: decryptDataKeyFromPublicShareSpy,
+}));
+
+vi.mock('@/auth/context/AuthContext', () => ({
+    useAuth: () => ({ credentials: { token: 'auth-token' } }),
+}));
+
+vi.mock('@/components/sessions/transcript/ChatHeaderView', () => ({
+    ChatHeaderView: () => null,
+}));
+
+vi.mock('@/components/sessions/transcript/TranscriptList', () => ({
+    TranscriptList: (props: any) => {
+        transcriptListSpy(props);
+        return null;
+    },
+}));
+
+vi.mock('@/utils/platform/responsive', () => ({
+    useHeaderHeight: () => 64,
+}));
+
+vi.mock('react-native-safe-area-context', () => ({
+    useSafeAreaInsets: () => ({ top: 20, bottom: 0, left: 0, right: 0 }),
+}));
+
+describe('PublicShareViewerScreen (plaintext)', () => {
+    it('does not attempt DEK decryption for plaintext sessions', async () => {
+        serverFetchSpy
+            .mockResolvedValueOnce({
+                ok: true,
+                status: 200,
+                json: async () => ({
+                    session: {
+                        id: 's1',
+                        seq: 1,
+                        encryptionMode: 'plain',
+                        createdAt: 1,
+                        updatedAt: 2,
+                        active: true,
+                        activeAt: 2,
+                        metadata: JSON.stringify({ path: '/repo', host: 'devbox', name: 'Plain Session' }),
+                        metadataVersion: 1,
+                        agentState: JSON.stringify({}),
+                        agentStateVersion: 1,
+                    },
+                    owner: { id: 'u1', username: 'alice', firstName: null, lastName: null, avatar: null },
+                    accessLevel: 'view',
+                    encryptedDataKey: null,
+                    isConsentRequired: false,
+                }),
+            })
+            .mockResolvedValueOnce({
+                ok: true,
+                status: 200,
+                json: async () => ({
+                    messages: [
+                        {
+                            id: 'm1',
+                            seq: 1,
+                            localId: null,
+                            content: {
+                                t: 'plain',
+                                v: { role: 'user', content: { type: 'text', text: 'hello' } },
+                            },
+                            createdAt: 3,
+                            updatedAt: 3,
+                        },
+                    ],
+                }),
+            });
+
+        const { default: PublicShareViewerScreen } = await import('@/app/(app)/share/[token]');
+
+        await renderScreen(<PublicShareViewerScreen />);
+
+        // Allow async effect to resolve.
+        await flushHookEffects({ cycles: 1, turns: 1 });
+
+        expect(decryptDataKeyFromPublicShareSpy).not.toHaveBeenCalled();
+        expect(serverFetchSpy).toHaveBeenCalledWith(
+            '/v1/public-share/tok-1',
+            expect.anything(),
+            expect.objectContaining({ includeAuth: false }),
+        );
+        expect(serverFetchSpy).toHaveBeenCalledWith(
+            '/v1/public-share/tok-1/messages',
+            expect.anything(),
+            expect.objectContaining({ includeAuth: false }),
+        );
+        expect(transcriptListSpy).toHaveBeenCalled();
+    });
+
+    it('offsets transcript content below the absolute share header', async () => {
+        transcriptListSpy.mockClear();
+        serverFetchSpy.mockReset();
+
+        serverFetchSpy
+            .mockResolvedValueOnce({
+                ok: true,
+                status: 200,
+                json: async () => ({
+                    session: {
+                        id: 's1',
+                        seq: 1,
+                        encryptionMode: 'plain',
+                        createdAt: 1,
+                        updatedAt: 2,
+                        active: true,
+                        activeAt: 2,
+                        metadata: JSON.stringify({ path: '/repo', host: 'devbox', name: 'Plain Session' }),
+                        metadataVersion: 1,
+                        agentState: JSON.stringify({}),
+                        agentStateVersion: 1,
+                    },
+                    owner: { id: 'u1', username: 'alice', firstName: null, lastName: null, avatar: null },
+                    accessLevel: 'view',
+                    encryptedDataKey: null,
+                    isConsentRequired: false,
+                }),
+            })
+            .mockResolvedValueOnce({
+                ok: true,
+                status: 200,
+                json: async () => ({ messages: [] }),
+            });
+
+        const { default: PublicShareViewerScreen } = await import('@/app/(app)/share/[token]');
+
+        const screen = await renderScreen(<PublicShareViewerScreen />);
+        await flushHookEffects({ cycles: 1, turns: 1 });
+
+        const headerOffset = 84;
+        const transcriptContainers = screen.findAll((node) => {
+            const style = node.props?.style;
+            if (Array.isArray(style)) {
+                return style.some((entry) => entry?.paddingTop === headerOffset);
+            }
+            return style?.paddingTop === headerOffset;
+        });
+        expect(transcriptContainers).toHaveLength(1);
+    });
+
+    it('normalizes and reduces messages in deterministic oldest-first order by seq when available', async () => {
+        transcriptListSpy.mockClear();
+        serverFetchSpy.mockReset();
+
+        serverFetchSpy
+            .mockResolvedValueOnce({
+                ok: true,
+                status: 200,
+                json: async () => ({
+                    session: {
+                        id: 's1',
+                        seq: 1,
+                        encryptionMode: 'plain',
+                        createdAt: 1,
+                        updatedAt: 2,
+                        active: true,
+                        activeAt: 2,
+                        metadata: JSON.stringify({ path: '/repo', host: 'devbox', name: 'Plain Session' }),
+                        metadataVersion: 1,
+                        agentState: JSON.stringify({}),
+                        agentStateVersion: 1,
+                    },
+                    owner: { id: 'u1', username: 'alice', firstName: null, lastName: null, avatar: null },
+                    accessLevel: 'view',
+                    encryptedDataKey: null,
+                    isConsentRequired: false,
+                }),
+            })
+            .mockResolvedValueOnce({
+                ok: true,
+                status: 200,
+                json: async () => ({
+                    messages: [
+                        {
+                            id: 'm2',
+                            seq: 2,
+                            localId: null,
+                            content: {
+                                t: 'plain',
+                                v: { role: 'user', content: { type: 'text', text: 'second' } },
+                            },
+                            createdAt: 1,
+                            updatedAt: 1,
+                        },
+                        {
+                            id: 'm1',
+                            seq: 1,
+                            localId: null,
+                            content: {
+                                t: 'plain',
+                                v: { role: 'user', content: { type: 'text', text: 'first' } },
+                            },
+                            createdAt: 100,
+                            updatedAt: 100,
+                        },
+                    ],
+                }),
+            });
+
+        const { default: PublicShareViewerScreen } = await import('@/app/(app)/share/[token]');
+
+        await renderScreen(<PublicShareViewerScreen />);
+
+        // Allow async effect to resolve.
+        await flushHookEffects({ cycles: 1, turns: 1 });
+
+        const last = transcriptListSpy.mock.calls[transcriptListSpy.mock.calls.length - 1]?.[0];
+        const seqs = Array.isArray(last?.messages) ? last.messages.map((m: any) => (m as any)?.seq ?? null) : [];
+        expect(seqs).toEqual([1, 2]);
+    });
+
+    it('skips malformed plaintext share messages and still renders the remaining messages', async () => {
+        transcriptListSpy.mockClear();
+        serverFetchSpy.mockReset();
+
+        serverFetchSpy
+            .mockResolvedValueOnce({
+                ok: true,
+                status: 200,
+                json: async () => ({
+                    session: {
+                        id: 's1',
+                        seq: 1,
+                        encryptionMode: 'plain',
+                        createdAt: 1,
+                        updatedAt: 2,
+                        active: true,
+                        activeAt: 2,
+                        metadata: JSON.stringify({ path: '/repo', host: 'devbox', name: 'Plain Session' }),
+                        metadataVersion: 1,
+                        agentState: JSON.stringify({}),
+                        agentStateVersion: 1,
+                    },
+                    owner: { id: 'u1', username: 'alice', firstName: null, lastName: null, avatar: null },
+                    accessLevel: 'view',
+                    encryptedDataKey: null,
+                    isConsentRequired: false,
+                }),
+            })
+            .mockResolvedValueOnce({
+                ok: true,
+                status: 200,
+                json: async () => ({
+                    messages: [
+                        {
+                            id: 'bad',
+                            seq: 1,
+                            localId: null,
+                            content: { t: 'encrypted', c: 'unexpected' },
+                            createdAt: 3,
+                            updatedAt: 3,
+                        },
+                        {
+                            id: 'm1',
+                            seq: 2,
+                            localId: null,
+                            content: {
+                                t: 'plain',
+                                v: { role: 'user', content: { type: 'text', text: 'hello' } },
+                            },
+                            createdAt: 4,
+                            updatedAt: 4,
+                        },
+                    ],
+                }),
+            });
+
+        const { default: PublicShareViewerScreen } = await import('@/app/(app)/share/[token]');
+
+        await renderScreen(<PublicShareViewerScreen />);
+        await flushHookEffects({ cycles: 1, turns: 1 });
+
+        expect(transcriptListSpy).toHaveBeenCalled();
+        const last = transcriptListSpy.mock.calls[transcriptListSpy.mock.calls.length - 1]?.[0];
+        const seqs = Array.isArray(last?.messages) ? last.messages.map((m: any) => (m as any)?.seq ?? null) : [];
+        expect(seqs).toEqual([2]);
+    });
+});

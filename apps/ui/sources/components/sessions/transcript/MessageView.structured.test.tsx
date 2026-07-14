@@ -1,0 +1,1197 @@
+import React from 'react';
+import { act } from 'react-test-renderer';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { createPartialStorageModuleMock, renderScreen, standardCleanup } from '@/dev/testkit';
+import { createReducer } from '@/sync/reducer/reducer';
+import { installMessageViewCommonModuleMocks } from './messageViewTestHelpers';
+
+const pathnameState = vi.hoisted(() => ({
+    pathname: '/session/s1',
+}));
+
+installMessageViewCommonModuleMocks({
+    reactNative: async () => {
+        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({
+            Easing: {
+                bezier: () => ({}),
+                linear: () => ({}),
+            },
+            Dimensions: {
+                get: () => ({ width: 1200, height: 800, scale: 1, fontScale: 1 }),
+            },
+            useWindowDimensions: () => ({ width: 1200, height: 800, scale: 1, fontScale: 1 }),
+            Animated: {
+                Value: class AnimatedValue {
+                    constructor(public _value: number) {}
+                    interpolate() {
+                        return this as any;
+                    }
+                },
+                timing: (_value: any, _config: any) => ({
+                    start: (cb?: any) => {
+                        cb?.();
+                    },
+                }),
+                View: ({ children, ...props }: any) => React.createElement('AnimatedView', props, children),
+            },
+            View: 'View',
+            Text: 'Text',
+            ScrollView: 'ScrollView',
+            Image: 'Image',
+            ActivityIndicator: 'ActivityIndicator',
+            Pressable: ({ children, ...props }: any) => React.createElement('Pressable', props, children),
+        });
+    },
+    unistyles: async () => {
+        const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+        return createUnistylesMock();
+    },
+    text: async () => {
+        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+        return createTextModuleMock({
+            translate: (key: string, params?: any) => {
+                if (key === 'session.reviewFindings.findingTitle' && params && typeof params.title === 'string') {
+                    return params.title;
+                }
+                if (typeof key === 'string' && key.startsWith('session.reviewFindings.status.')) {
+                    return key.split('.').pop();
+                }
+                if (key === 'session.reviewFindings.title' && params && typeof params.count === 'number') {
+                    return `Review findings (${params.count})`;
+                }
+                if (key === 'session.reviewFindings.actions.applyAcceptedFindings') return 'Implement selected fixes';
+                if (key === 'session.reviewFindings.actions.applyTriage') return 'Apply review actions';
+                if (key === 'session.reviewFindings.actions.sending') return 'Sending…';
+                if (key === 'session.reviewFindings.actions.applying') return 'Applying…';
+                return key;
+            },
+        });
+    },
+    modal: async () => {
+        const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+        const modalMock = createModalModuleMock();
+        modalMock.spies.show.mockImplementation((config: unknown) => {
+            modalShowSpy(config);
+            return 'modal-id';
+        });
+        return modalMock.module;
+    },
+    router: async () => {
+        const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+        const routerMock = createExpoRouterMock({
+            pathname: () => pathnameState.pathname,
+            router: { push: routerPushSpy },
+        });
+        return {
+            ...routerMock.module,
+            useRouter: () => ({ ...routerMock.state.router }),
+        };
+    },
+    storage: async (importOriginal) =>
+        createPartialStorageModuleMock(importOriginal, {
+            useSession: () => null,
+            useSessionMessages: () => ({ messages: [], isLoaded: true }),
+            useSetting: (key: string) => {
+                if (key === 'sessionThinkingDisplayMode') return thinkingDisplayMode;
+                if (key === 'sessionThinkingInlinePresentation') return thinkingInlinePresentation;
+                if (key === 'filesImagePreviewMaxBytes') return filesImagePreviewMaxBytes;
+                if (key === 'toolViewTimelineChromeMode') return toolViewTimelineChromeMode;
+                return null;
+            },
+            useSessionMessagesById: () => ({}),
+            useSessionMessagesReducerState: () => createReducer(),
+        }),
+});
+
+vi.mock('@/components/markdown/MarkdownView', () => ({
+    MarkdownView: (props: any) => React.createElement('MarkdownView', props),
+}));
+
+vi.mock('@/components/tools/shell/views/ToolView', () => ({
+    ToolView: (props: any) => React.createElement('ToolView', props),
+}));
+
+vi.mock('@/components/tools/shell/views/ToolTimelineRow', () => ({
+    ToolTimelineRow: (props: any) => React.createElement('ToolTimelineRow', props),
+}));
+
+vi.mock('@/components/sessions/transcript/messageCopyVisibility', () => ({
+    shouldShowMessageCopyButton: () => false,
+}));
+
+const modalShowSpy = vi.fn();
+
+const sendMessageSpy = vi.fn<
+    (
+        sessionId: string,
+        text: string,
+        displayText?: string,
+        metaOverrides?: Record<string, unknown>,
+    ) => Promise<void>
+>(async () => undefined);
+const submitMessageSpy = vi.fn<
+    (
+        sessionId: string,
+        text: string,
+        displayText?: string,
+        metaOverrides?: Record<string, unknown>,
+        options?: Readonly<{ callerSurface?: string | null }>,
+    ) => Promise<void>
+>(async () => undefined);
+vi.mock('@/sync/sync', () => ({
+    sync: {
+        sendMessage: (
+            sessionId: string,
+            text: string,
+            displayText?: string,
+            metaOverrides?: Record<string, unknown>,
+        ) => sendMessageSpy(sessionId, text, displayText, metaOverrides),
+        submitMessage: (
+            sessionId: string,
+            text: string,
+            displayText?: string,
+            metaOverrides?: Record<string, unknown>,
+            options?: Readonly<{ callerSurface?: string | null }>,
+        ) => submitMessageSpy(sessionId, text, displayText, metaOverrides, options),
+    },
+}));
+
+const { sessionReadFileSpy } = vi.hoisted(() => ({
+    sessionReadFileSpy: vi.fn(async (_sessionId: string, _path: string) => ({ success: true, content: 'aGVsbG8=' })),
+}));
+
+vi.mock('@/sync/ops', async () => {
+    const actual = await vi.importActual<any>('@/sync/ops');
+    return {
+        ...actual,
+        sessionReadFile: (sessionId: string, path: string) => sessionReadFileSpy(sessionId, path),
+    };
+});
+
+vi.mock('expo-clipboard', () => ({
+    setStringAsync: vi.fn(),
+}));
+
+vi.mock('@expo/vector-icons', () => ({
+    Ionicons: 'Ionicons',
+    Octicons: 'Octicons',
+}));
+
+vi.mock('@/hooks/server/useFeatureEnabled', () => ({
+    useFeatureEnabled: () => true,
+}));
+
+let thinkingDisplayMode: 'inline' | 'tool' | 'hidden' = 'inline';
+let thinkingInlinePresentation: 'full' | 'summary' = 'full';
+let filesImagePreviewMaxBytes: number | null = null;
+let toolViewTimelineChromeMode: 'activity_feed' | 'cards' | null = null;
+
+afterEach(() => {
+    pathnameState.pathname = '/session/s1';
+    thinkingDisplayMode = 'inline';
+    thinkingInlinePresentation = 'full';
+    filesImagePreviewMaxBytes = null;
+    toolViewTimelineChromeMode = null;
+    standardCleanup();
+});
+
+vi.mock('@/utils/sessions/discardedCommittedMessages', () => ({
+    isCommittedMessageDiscarded: () => false,
+}));
+
+const routerPushSpy = vi.fn();
+
+describe('MessageView (structured meta)', { timeout: 60_000 }, () => {
+    it('renders a structured review-comments card when meta.happier.kind is review_comments.v1', async () => {
+        const { MessageView } = await import('./MessageView');
+        const { ReviewCommentsMessageCard } = await import('../reviews/messages/ReviewCommentsMessageCard');
+
+        const message: any = {
+            kind: 'user-text',
+            localId: 'local-1',
+            text: 'review prompt',
+            displayText: 'Review comments (1)',
+            meta: {
+                happier: {
+                    kind: 'review_comments.v1',
+                    payload: {
+                        sessionId: 's1',
+                        comments: [
+                            {
+                                id: 'c1',
+                                filePath: 'src/foo.ts',
+                                source: 'file',
+                                body: 'Please refactor',
+                                createdAt: 1,
+                                anchor: { kind: 'fileLine', startLine: 12 },
+                                snapshot: { selectedLines: ['const x = 1;'], beforeContext: [], afterContext: [] },
+                            },
+                        ],
+                    },
+                },
+            },
+        };
+
+        const screen = await renderScreen(
+            <MessageView
+                message={message}
+                metadata={null}
+                sessionId="s1"
+            />,
+        );
+
+        // This should fail until MessageView wires StructuredMessageBlock into its rendering.
+        expect(screen.findAllByType(ReviewCommentsMessageCard as any)).toHaveLength(1);
+    });
+
+    it('keeps structured review jump handlers stable across equivalent rerenders', async () => {
+        const { MessageView } = await import('./MessageView');
+        const { ReviewCommentsMessageCard } = await import('../reviews/messages/ReviewCommentsMessageCard');
+
+        const message: any = {
+            kind: 'user-text',
+            id: 'm-review-comments',
+            localId: 'local-1',
+            text: 'review prompt',
+            displayText: 'Review comments (1)',
+            meta: {
+                happier: {
+                    kind: 'review_comments.v1',
+                    payload: {
+                        sessionId: 's1',
+                        comments: [
+                            {
+                                id: 'c1',
+                                filePath: 'src/foo.ts',
+                                source: 'file',
+                                body: 'Please refactor',
+                                createdAt: 1,
+                                anchor: { kind: 'fileLine', startLine: 12 },
+                                snapshot: { selectedLines: ['const x = 1;'], beforeContext: [], afterContext: [] },
+                            },
+                        ],
+                    },
+                },
+            },
+        };
+
+        const renderMessage = () => (
+            <MessageView
+                message={message}
+                metadata={null}
+                sessionId="s1"
+            />
+        );
+        const screen = await renderScreen(renderMessage());
+        const firstJumpHandler = screen.tree.root.findByType(ReviewCommentsMessageCard as any).props.onJumpToAnchor;
+
+        await act(async () => {
+            screen.tree.update(renderMessage());
+        });
+
+        const secondJumpHandler = screen.tree.root.findByType(ReviewCommentsMessageCard as any).props.onJumpToAnchor;
+        expect(secondJumpHandler).toBe(firstJumpHandler);
+    });
+
+    it('does not render the MarkdownView for structured user messages', async () => {
+        const { MessageView } = await import('./MessageView');
+
+        const message: any = {
+            kind: 'user-text',
+            localId: 'local-1',
+            text: '@happier/review.comments ...',
+            displayText: 'Review comments (1)',
+            meta: {
+                happier: {
+                    kind: 'review_comments.v1',
+                    payload: {
+                        sessionId: 's1',
+                        comments: [
+                            {
+                                id: 'c1',
+                                filePath: 'src/foo.ts',
+                                source: 'file',
+                                body: 'Please refactor',
+                                createdAt: 1,
+                                anchor: { kind: 'fileLine', startLine: 12 },
+                                snapshot: { selectedLines: ['const x = 1;'], beforeContext: [], afterContext: [] },
+                            },
+                        ],
+                    },
+                },
+            },
+        };
+
+        const screen = await renderScreen(<MessageView message={message} metadata={null} sessionId="s1" />);
+
+        expect(screen.findAllByType('MarkdownView' as any)).toHaveLength(0);
+    });
+
+    it('does not wrap structured user messages in a user bubble background', async () => {
+        const { MessageView } = await import('./MessageView');
+
+        const message: any = {
+            kind: 'user-text',
+            localId: 'local-1',
+            text: '@happier/review.comments ...',
+            displayText: 'Review comments (1)',
+            meta: {
+                happier: {
+                    kind: 'review_comments.v1',
+                    payload: {
+                        sessionId: 's1',
+                        comments: [
+                            {
+                                id: 'c1',
+                                filePath: 'src/foo.ts',
+                                source: 'file',
+                                body: 'Please refactor',
+                                createdAt: 1,
+                                anchor: { kind: 'fileLine', startLine: 12 },
+                                snapshot: { selectedLines: ['const x = 1;'], beforeContext: [], afterContext: [] },
+                            },
+                        ],
+                    },
+                },
+            },
+        };
+
+        const screen = await renderScreen(<MessageView message={message} metadata={null} sessionId="s1" />);
+
+        const bubbleViews = screen.findAll((node) => {
+            if ((node as any).type !== 'View') return false;
+            const styleProp = (node as any).props?.style;
+            const styles = Array.isArray(styleProp) ? styleProp : [styleProp];
+            return styles.some((s: any) => s && typeof s === 'object' && s.backgroundColor === '#eef');
+        });
+        expect(bubbleViews).toHaveLength(0);
+    });
+
+    it('renders an inline attachments row for user messages with happier meta attachments.v1', async () => {
+        const { MessageView } = await import('./MessageView');
+
+        const message: any = {
+            kind: 'user-text',
+            localId: 'local-1',
+            text: [
+                'hello',
+                '',
+                'Attachments: open and analyze these files before answering.',
+                '[attachments]',
+                '- .happier/uploads/messages/m1/file.png (file.png, image/png, 10 bytes)',
+                '[/attachments]',
+            ].join('\n'),
+            displayText: 'hello',
+            meta: {
+                happier: {
+                    kind: 'attachments.v1',
+                    payload: {
+                        attachments: [
+                            { name: 'file.png', path: '.happier/uploads/messages/m1/file.png', mimeType: 'image/png', sizeBytes: 10, sha256: 'h1' },
+                        ],
+                    },
+                },
+            },
+        };
+
+        const screen = await renderScreen(<MessageView message={message} metadata={null} sessionId="s1" />);
+
+        const markdownViews = screen.findAllByType('MarkdownView' as any);
+        expect(markdownViews).toHaveLength(1);
+        expect(markdownViews[0]!.props.markdown).toBe('hello');
+
+        expect(screen.findByTestId('message-session-media-inline-images')).not.toBeNull();
+        expect(screen.findAllByTestId('message-attachments-row')).toHaveLength(0);
+    });
+
+    it('renders inline session media images from primary happier session_media.v1 metadata', async () => {
+        const { MessageView } = await import('./MessageView');
+
+        const path = '.happier/uploads/generated/m1/generated.png';
+        const message: any = {
+            kind: 'agent-text',
+            id: 'agent-media-1',
+            localId: null,
+            createdAt: 1,
+            text: 'Generated image',
+            isThinking: false,
+            meta: {
+                happier: {
+                    kind: 'session_media.v1',
+                    payload: {
+                        media: [
+                            {
+                                id: 'media-1',
+                                role: 'output',
+                                category: 'generated',
+                                mediaKind: 'image',
+                                name: 'generated.png',
+                                path,
+                                mimeType: 'image/png',
+                                sizeBytes: 10,
+                                sha256: 'media-hash-1',
+                                origin: { source: 'provider-generated', agentId: 'codex' },
+                            },
+                        ],
+                    },
+                },
+            },
+        };
+
+        const screen = await renderScreen(<MessageView message={message} metadata={null} sessionId="s1" />);
+
+        expect(screen.findByTestId('message-session-media-inline-images')).not.toBeNull();
+        expect(screen.findByTestId(`message-session-media-inline-image:${path}`)).not.toBeNull();
+    });
+
+    it('renders inline session media images from secondary happierMedia metadata', async () => {
+        const { MessageView } = await import('./MessageView');
+
+        const path = '.happier/uploads/generated/m2/secondary.webp';
+        const message: any = {
+            kind: 'agent-text',
+            id: 'agent-media-2',
+            localId: null,
+            createdAt: 1,
+            text: 'Generated image with structured metadata',
+            isThinking: false,
+            meta: {
+                happier: {
+                    kind: 'provider_status.v1',
+                    payload: { status: 'complete' },
+                },
+                happierMedia: {
+                    kind: 'session_media.v1',
+                    payload: {
+                        media: [
+                            {
+                                id: 'media-2',
+                                role: 'output',
+                                category: 'generated',
+                                mediaKind: 'image',
+                                name: 'secondary.webp',
+                                path,
+                                mimeType: 'image/webp',
+                                sizeBytes: 20,
+                                sha256: 'media-hash-2',
+                                origin: { source: 'provider-generated', generationId: 'generation-2' },
+                            },
+                        ],
+                    },
+                },
+            },
+        };
+
+        const screen = await renderScreen(<MessageView message={message} metadata={null} sessionId="s1" />);
+
+        expect(screen.findByTestId('message-session-media-inline-images')).not.toBeNull();
+        expect(screen.findByTestId(`message-session-media-inline-image:${path}`)).not.toBeNull();
+    });
+
+    it('renders media-only assistant rows with empty text', async () => {
+        const { MessageView } = await import('./MessageView');
+
+        const path = '.happier/uploads/generated/m3/media-only.png';
+        const message: any = {
+            kind: 'agent-text',
+            id: 'agent-media-only',
+            localId: null,
+            createdAt: 1,
+            text: '',
+            isThinking: false,
+            meta: {
+                happier: {
+                    kind: 'session_media.v1',
+                    payload: {
+                        media: [
+                            {
+                                id: 'media-only-1',
+                                role: 'output',
+                                category: 'generated',
+                                mediaKind: 'image',
+                                name: 'media-only.png',
+                                path,
+                                mimeType: 'image/png',
+                                sizeBytes: 10,
+                                origin: { source: 'provider-generated' },
+                            },
+                        ],
+                    },
+                },
+            },
+        };
+
+        const screen = await renderScreen(<MessageView message={message} metadata={null} sessionId="s1" />);
+
+        expect(screen.findByTestId('message-session-media-inline-images')).not.toBeNull();
+        expect(screen.findByTestId(`message-session-media-inline-image:${path}`)).not.toBeNull();
+    });
+
+    it('renders attachments for structured review-comment messages that carry attachment metadata', async () => {
+        const { MessageView } = await import('./MessageView');
+        const { ReviewCommentsMessageCard } = await import('../reviews/messages/ReviewCommentsMessageCard');
+
+        const message: any = {
+            kind: 'user-text',
+            localId: 'local-1',
+            text: 'review prompt\n\n[attachments block]',
+            displayText: 'Review comments (1)\n\n[attachments block]',
+            meta: {
+                happier: {
+                    kind: 'review_comments.v1',
+                    payload: {
+                        sessionId: 's1',
+                        comments: [
+                            {
+                                id: 'c1',
+                                filePath: 'src/foo.ts',
+                                source: 'file',
+                                body: 'Please refactor',
+                                createdAt: 1,
+                                anchor: { kind: 'fileLine', startLine: 12 },
+                                snapshot: { selectedLines: ['const x = 1;'], beforeContext: [], afterContext: [] },
+                            },
+                        ],
+                    },
+                },
+                happierAttachments: {
+                    kind: 'attachments.v1',
+                    payload: {
+                        attachments: [
+                            { name: 'note.txt', path: '.happier/uploads/messages/m1/note.txt', mimeType: 'text/plain', sizeBytes: 10, sha256: 'h1' },
+                        ],
+                    },
+                },
+            },
+        };
+
+        const screen = await renderScreen(<MessageView message={message} metadata={null} sessionId="s1" />);
+
+        expect(screen.findAllByType(ReviewCommentsMessageCard as any)).toHaveLength(1);
+        expect(screen.findByTestId('message-attachments-row')).not.toBeNull();
+    });
+
+    it('normalizes wrapped voice agent turn text before rendering it in the hidden voice transcript', async () => {
+        const { MessageView } = await import('./MessageView');
+
+        const message: any = {
+            kind: 'user-text',
+            localId: 'local-voice-1',
+            text: [
+                'At the start of your reply, include a short friendly greeting (one sentence).',
+                'Then continue with your response.',
+                'Context updates since your last voice turn:',
+                'New messages in session: s1 (1 new message)',
+                '',
+                'User said:',
+                'Create a file named voice_perm_local_active_20260307_d.txt containing exactly HELLO.',
+            ].join('\n'),
+            meta: {
+                happier: {
+                    kind: 'voice_agent_turn.v1',
+                    payload: { v: 1, epoch: 3, role: 'user', voiceAgentId: 'mid', ts: 100 },
+                },
+            },
+        };
+
+        const screen = await renderScreen(<MessageView message={message} metadata={null} sessionId="s1" />);
+
+        const markdownViews = screen.findAllByType('MarkdownView' as any);
+        expect(markdownViews).toHaveLength(1);
+        expect(markdownViews[0]!.props.markdown).toBe(
+            'Create a file named voice_perm_local_active_20260307_d.txt containing exactly HELLO.',
+        );
+    });
+
+    it('hides internal voice tool follow-up payload turns from the hidden voice transcript', async () => {
+        const { MessageView } = await import('./MessageView');
+
+        const message: any = {
+            kind: 'user-text',
+            localId: 'local-voice-2',
+            text: [
+                'VOICE_TOOL_RESULTS_JSON:{"toolResults":[{"t":"sendSessionMessage"}]}',
+                'VOICE_TOOL_RESULT_INSTRUCTIONS: All actions succeeded. Summarize the completed outcome accurately.',
+            ].join('\n'),
+            meta: {
+                happier: {
+                    kind: 'voice_agent_turn.v1',
+                    payload: { v: 1, epoch: 3, role: 'user', voiceAgentId: 'mid', ts: 100 },
+                },
+            },
+        };
+
+        const screen = await renderScreen(<MessageView message={message} metadata={null} sessionId="s1" />);
+
+        expect(screen.tree.toJSON()).toBeNull();
+    });
+
+    it('hides voice transcript turns whose normalized text is empty after trimming', async () => {
+        const { MessageView } = await import('./MessageView');
+
+        const message: any = {
+            kind: 'agent-text',
+            id: 'voice-empty',
+            localId: null,
+            createdAt: 1,
+            text: '   ',
+            isThinking: false,
+            meta: {
+                happier: {
+                    kind: 'voice_agent_turn.v1',
+                    payload: { v: 1, epoch: 4, role: 'assistant', voiceAgentId: 'mid', ts: 101 },
+                },
+            },
+        };
+
+        const screen = await renderScreen(<MessageView message={message} metadata={null} sessionId="s1" />);
+
+        expect(screen.tree.toJSON()).toBeNull();
+    });
+
+    it('renders a placeholder tile for inline image attachments when filesImagePreviewMaxBytes is tiny', async () => {
+        const { MessageView } = await import('./MessageView');
+
+        filesImagePreviewMaxBytes = 1;
+
+        const path = '.happier/uploads/messages/m2/file.png';
+        const message: any = {
+            kind: 'user-text',
+            localId: 'local-1',
+            text: [
+                'hello',
+                '',
+                'Attachments: open and analyze these files before answering.',
+                '[attachments]',
+                `- ${path} (file.png, image/png, 10 bytes)`,
+                '[/attachments]',
+            ].join('\n'),
+            displayText: 'hello',
+            meta: {
+                happier: {
+                    kind: 'attachments.v1',
+                    payload: {
+                        attachments: [
+                            { name: 'file.png', path, mimeType: 'image/png', sizeBytes: 10, sha256: 'h2' },
+                        ],
+                    },
+                },
+            },
+        };
+
+        const screen = await renderScreen(<MessageView message={message} metadata={null} sessionId="s1" />);
+
+        expect(screen.findByTestId('message-session-media-inline-images')).not.toBeNull();
+        expect(screen.findByTestId(`message-session-media-inline-image:${path}`)).not.toBeNull();
+        expect(screen.findAllByTestId(`message-session-media-inline-image-preview:${path}`)).toHaveLength(0);
+    });
+
+    it('opens inline transcript images in the shared attachment preview modal', async () => {
+        const { MessageView } = await import('./MessageView');
+
+        const firstPath = '.happier/uploads/messages/m3/one.png';
+        const secondPath = '.happier/uploads/messages/m3/two.png';
+        const message: any = {
+            kind: 'user-text',
+            localId: 'local-1',
+            text: [
+                'hello',
+                '',
+                'Attachments: open and analyze these files before answering.',
+                '[attachments]',
+                `- ${firstPath} (one.png, image/png, 10 bytes)`,
+                `- ${secondPath} (two.png, image/png, 10 bytes)`,
+                '[/attachments]',
+            ].join('\n'),
+            displayText: 'hello',
+            meta: {
+                happier: {
+                    kind: 'attachments.v1',
+                    payload: {
+                        attachments: [
+                            { name: 'one.png', path: firstPath, mimeType: 'image/png', sizeBytes: 10, sha256: 'h3' },
+                            { name: 'two.png', path: secondPath, mimeType: 'image/png', sizeBytes: 10, sha256: 'h4' },
+                        ],
+                    },
+                },
+            },
+        };
+
+        modalShowSpy.mockClear();
+        routerPushSpy.mockClear();
+
+        const screen = await renderScreen(<MessageView message={message} metadata={null} sessionId="s1" />);
+
+        await screen.pressByTestIdAsync(`message-session-media-inline-image:${firstPath}`);
+
+        expect(routerPushSpy).not.toHaveBeenCalled();
+        expect(modalShowSpy).toHaveBeenCalledTimes(1);
+        const modalConfig = modalShowSpy.mock.calls[0]?.[0] as null | {
+            props?: Readonly<{
+                images?: ReadonlyArray<Readonly<{ kind: string; filePath?: string; title: string }>>;
+                initialIndex?: number;
+            }>;
+        };
+        expect(modalConfig?.props).toEqual(expect.objectContaining({
+            initialIndex: 0,
+            images: expect.arrayContaining([
+                expect.objectContaining({ kind: 'session-image', filePath: firstPath, title: 'one.png' }),
+                expect.objectContaining({ kind: 'session-image', filePath: secondPath, title: 'two.png' }),
+            ]),
+        }));
+    });
+
+    it('navigates to the file screen when clicking Jump in the review-comments card', async () => {
+        const { MessageView } = await import('./MessageView');
+
+        const message: any = {
+            kind: 'user-text',
+            localId: 'local-1',
+            text: 'review prompt',
+            displayText: 'Review comments (1)',
+            meta: {
+                happier: {
+                    kind: 'review_comments.v1',
+                    payload: {
+                        sessionId: 's1',
+                        comments: [
+                            {
+                                id: 'c1',
+                                filePath: 'src/foo.ts',
+                                source: 'file',
+                                body: 'Please refactor',
+                                createdAt: 1,
+                                anchor: { kind: 'fileLine', startLine: 12 },
+                                snapshot: { selectedLines: ['const x = 1;'], beforeContext: [], afterContext: [] },
+                            },
+                        ],
+                    },
+                },
+            },
+        };
+
+        routerPushSpy.mockClear();
+
+        const screen = await renderScreen(<MessageView message={message} metadata={null} sessionId="s1" />);
+
+        expect(screen.findByTestId('review-comments-jump:c1')).not.toBeNull();
+        await screen.pressByTestIdAsync('review-comments-jump:c1');
+
+        expect(routerPushSpy).toHaveBeenCalledWith('/session/s1/file?path=src%2Ffoo.ts&source=file&anchor=fileLine&startLine=12');
+    });
+
+    it('renders a structured review-findings card for tool-call messages when meta.happier.kind is review_findings.v1', async () => {
+        const { MessageView } = await import('./MessageView');
+        const { ReviewFindingsMessageCard } = await import('../reviews/messages/ReviewFindingsMessageCard');
+
+        const message: any = {
+            kind: 'tool-call',
+            id: 'msg-tool-1',
+            localId: null,
+            createdAt: 1,
+            tool: {
+                id: 'call_1',
+                name: 'SubAgentRun',
+                state: 'completed',
+                input: {},
+                createdAt: 1,
+                startedAt: 1,
+                completedAt: 2,
+                description: null,
+                result: { ok: true },
+            },
+            children: [],
+            meta: {
+                happier: {
+                    kind: 'review_findings.v2',
+                    payload: {
+                        runRef: { runId: 'run_1', callId: 'call_1', backendId: 'b1' },
+                        summary: 'All good.',
+                        overviewMarkdown: '## Overview\n\nAll good.',
+                        findings: [
+                            {
+                                id: 'f1',
+                                title: 'Nit',
+                                severity: 'nit',
+                                category: 'style',
+                                filePath: 'src/foo.ts',
+                                startLine: 1,
+                                endLine: 1,
+                                summary: 'Consider renaming.',
+                            },
+                        ],
+                        triage: {
+                            findings: [{ id: 'f1', status: 'accept' }],
+                        },
+                        questions: [],
+                        assumptions: [],
+                        generatedAtMs: 1,
+                    },
+                },
+            },
+        };
+
+        const screen = await renderScreen(
+            <MessageView
+                message={message}
+                metadata={null}
+                sessionId="s1"
+            />,
+        );
+
+        expect(screen.findAllByType(ReviewFindingsMessageCard as any)).toHaveLength(1);
+    });
+
+    it('suppresses the duplicate ToolTimelineRow for structured review tool-calls in activity feed mode', async () => {
+        toolViewTimelineChromeMode = 'activity_feed';
+        const { MessageView } = await import('./MessageView');
+        const { ReviewFindingsMessageCard } = await import('../reviews/messages/ReviewFindingsMessageCard');
+
+        const message: any = {
+            kind: 'tool-call',
+            id: 'msg-tool-1',
+            localId: null,
+            createdAt: 1,
+            tool: {
+                id: 'call_1',
+                name: 'SubAgentRun',
+                state: 'completed',
+                input: {},
+                createdAt: 1,
+                startedAt: 1,
+                completedAt: 2,
+                description: null,
+                result: { ok: true },
+            },
+            children: [],
+            meta: {
+                happier: {
+                    kind: 'review_findings.v2',
+                    payload: {
+                        runRef: { runId: 'run_1', callId: 'call_1', backendId: 'b1' },
+                        summary: 'All good.',
+                        overviewMarkdown: '## Overview\n\nAll good.',
+                        findings: [],
+                        questions: [],
+                        assumptions: [],
+                        generatedAtMs: 1,
+                    },
+                },
+            },
+        };
+
+        const screen = await renderScreen(<MessageView message={message} metadata={null} sessionId="s1" />);
+
+        expect(screen.findAllByType(ReviewFindingsMessageCard as any)).toHaveLength(1);
+        expect(screen.findAllByType('ToolTimelineRow' as any)).toHaveLength(0);
+    });
+
+    it('renders a structured plan-output card for tool-call messages when meta.happier.kind is plan_output.v1', async () => {
+        const { MessageView } = await import('./MessageView');
+        const { PlanOutputMessageCard } = await import('../plans/messages/PlanOutputMessageCard');
+
+        const message: any = {
+            kind: 'tool-call',
+            id: 'msg-tool-1',
+            localId: null,
+            createdAt: 1,
+            tool: {
+                id: 'call_1',
+                name: 'SubAgentRun',
+                state: 'completed',
+                input: {},
+                createdAt: 1,
+                startedAt: 1,
+                completedAt: 2,
+                description: null,
+                result: { ok: true },
+            },
+            children: [],
+            meta: {
+                happier: {
+                    kind: 'plan_output.v1',
+                    payload: {
+                        runRef: { runId: 'run_1', callId: 'call_1', backendId: 'b1' },
+                        summary: 'Plan summary.',
+                        sections: [{ title: 'Approach', items: ['Step 1'] }],
+                        risks: ['Risk 1'],
+                        milestones: [{ title: 'M1' }],
+                        recommendedBackendId: 'b1',
+                        generatedAtMs: 1,
+                    },
+                },
+            },
+        };
+
+        const screen = await renderScreen(<MessageView message={message} metadata={null} sessionId="s1" />);
+
+        expect(screen.findAllByType(PlanOutputMessageCard as any)).toHaveLength(1);
+    });
+
+    it('renders a structured delegate-output card for tool-call messages when meta.happier.kind is delegate_output.v1', async () => {
+        const { MessageView } = await import('./MessageView');
+        const { DelegateOutputMessageCard } = await import('../delegations/messages/DelegateOutputMessageCard');
+
+        const message: any = {
+            kind: 'tool-call',
+            id: 'msg-tool-1',
+            localId: null,
+            createdAt: 1,
+            tool: {
+                id: 'call_1',
+                name: 'SubAgentRun',
+                state: 'completed',
+                input: {},
+                createdAt: 1,
+                startedAt: 1,
+                completedAt: 2,
+                description: null,
+                result: { ok: true },
+            },
+            children: [],
+            meta: {
+                happier: {
+                    kind: 'delegate_output.v1',
+                    payload: {
+                        runRef: { runId: 'run_1', callId: 'call_1', backendId: 'b1' },
+                        summary: 'Delegation summary.',
+                        deliverables: [{ id: 'd1', title: 'Deliverable 1', details: 'Do it' }],
+                        generatedAtMs: 1,
+                    },
+                },
+            },
+        };
+
+        const screen = await renderScreen(<MessageView message={message} metadata={null} sessionId="s1" />);
+
+        expect(screen.findAllByType(DelegateOutputMessageCard as any)).toHaveLength(1);
+    });
+
+    it('can adopt a plan by sending a structured user message to the parent session', async () => {
+        submitMessageSpy.mockClear();
+        const { MessageView } = await import('./MessageView');
+
+        const message: any = {
+            kind: 'tool-call',
+            id: 'msg-tool-1',
+            localId: null,
+            createdAt: 1,
+            tool: {
+                id: 'call_1',
+                name: 'SubAgentRun',
+                state: 'completed',
+                input: {},
+                createdAt: 1,
+                startedAt: 1,
+                completedAt: 2,
+                description: null,
+                result: { ok: true },
+            },
+            children: [],
+            meta: {
+                happier: {
+                    kind: 'plan_output.v1',
+                    payload: {
+                        runRef: { runId: 'run_1', callId: 'call_1', backendId: 'b1' },
+                        summary: 'Plan summary.',
+                        sections: [{ title: 'Approach', items: ['Step 1'] }],
+                        risks: [],
+                        milestones: [],
+                        generatedAtMs: 1,
+                    },
+                },
+            },
+        };
+
+        const screen = await renderScreen(<MessageView message={message} metadata={null} sessionId="s1" />);
+
+        expect(screen.findByTestId('adopt-plan-button')).not.toBeNull();
+        await screen.pressByTestIdAsync('adopt-plan-button');
+
+        expect(submitMessageSpy).toHaveBeenCalledTimes(1);
+        expect(submitMessageSpy.mock.calls[0]?.[0]).toBe('s1');
+        expect(String(submitMessageSpy.mock.calls[0]?.[1] ?? '')).toContain('@happier/plan.adopt');
+    });
+
+    it('can apply accepted findings by sending a structured user message to the parent session', async () => {
+        submitMessageSpy.mockClear();
+        const { MessageView } = await import('./MessageView');
+
+        const message: any = {
+            kind: 'tool-call',
+            id: 'msg-tool-1',
+            localId: null,
+            createdAt: 1,
+            tool: {
+                id: 'call_1',
+                name: 'SubAgentRun',
+                state: 'completed',
+                input: {},
+                createdAt: 1,
+                startedAt: 1,
+                completedAt: 2,
+                description: null,
+                result: { ok: true },
+            },
+            children: [],
+            meta: {
+                happier: {
+                    kind: 'review_findings.v1',
+                    payload: {
+                        runRef: { runId: 'run_1', callId: 'call_1', backendId: 'b1' },
+                        summary: 'All good.',
+                        findings: [
+                            {
+                                id: 'f1',
+                                title: 'Nit',
+                                severity: 'nit',
+                                category: 'style',
+                                filePath: 'src/foo.ts',
+                                startLine: 1,
+                                endLine: 1,
+                                summary: 'Consider renaming.',
+                            },
+                        ],
+                        triage: {
+                            findings: [{ id: 'f1', status: 'accept' }],
+                        },
+                        generatedAtMs: 1,
+                    },
+                },
+            },
+        };
+
+        const screen = await renderScreen(<MessageView message={message} metadata={null} sessionId="s1" />);
+        expect(screen.findByTestId('review-findings-header:f1')).not.toBeNull();
+        await screen.pressByTestIdAsync('review-findings-header:f1');
+
+        expect(screen.findByTestId('review-findings-publish-accepted')).not.toBeNull();
+        await screen.pressByTestIdAsync('review-findings-publish-accepted');
+
+        expect(submitMessageSpy).toHaveBeenCalledTimes(1);
+        const [sessionId, text, _displayText, metaOverrides] = submitMessageSpy.mock.calls[0] as any[];
+        expect(sessionId).toBe('s1');
+        expect(String(text)).toContain('Please implement the accepted review findings below.');
+        expect(metaOverrides).toEqual({
+            happier: {
+                kind: 'review_publish_request.v1',
+                payload: expect.objectContaining({
+                    sourceRunRef: { runId: 'run_1', callId: 'call_1', backendId: 'b1' },
+                    findingIds: ['f1'],
+                }),
+            },
+        });
+    });
+
+    it('renders a thinking label for agent thinking messages and passes markdown through unchanged', async () => {
+        const { MessageView } = await import('./MessageView');
+
+        const message: any = {
+            kind: 'agent-text',
+            localId: null,
+            text: '**Title**\n\n- first\n- second',
+            isThinking: true,
+            meta: {},
+        };
+
+        const screen = await renderScreen(<MessageView message={message} metadata={null} sessionId="s1" />);
+
+        const markdownViews = screen.findAllByType('MarkdownView' as any);
+        expect(markdownViews).toHaveLength(1);
+        expect((markdownViews[0] as any).props.markdown).toBe('**Title**\n\n- first\n- second');
+
+        const thinkingLabels = screen.findAll((node) => {
+            if ((node as any).type !== 'Text') return false;
+            const children = (node as any).props?.children;
+            return children === 'sessionInfo.thinking';
+        });
+        expect(thinkingLabels).toHaveLength(1);
+    });
+
+    it('unwraps legacy "*Thinking...*" markdown wrapper when rendering thinking messages', async () => {
+        const { MessageView } = await import('./MessageView');
+
+        const message: any = {
+            kind: 'agent-text',
+            localId: null,
+            text: '*Thinking...*\n\n*Hello*',
+            isThinking: true,
+            meta: {},
+        };
+
+        const screen = await renderScreen(<MessageView message={message} metadata={null} sessionId="s1" />);
+
+        const markdownViews = screen.findAllByType('MarkdownView' as any);
+        expect(markdownViews).toHaveLength(1);
+        expect((markdownViews[0] as any).props.markdown).toBe('Hello');
+    });
+
+    it('renders inline thinking in summary mode as a collapsible row (no markdown until expanded)', async () => {
+        const { MessageView } = await import('./MessageView');
+        thinkingDisplayMode = 'inline';
+        thinkingInlinePresentation = 'summary';
+
+        const message: any = {
+            kind: 'agent-text',
+            id: 'm1',
+            localId: null,
+            createdAt: 1,
+            text: 'Hello there',
+            isThinking: true,
+            meta: {},
+        };
+
+        const screen = await renderScreen(<MessageView message={message} metadata={null} sessionId="s1" activeThinkingMessageId={null} />);
+
+        expect(screen.findAllByTestId('transcript-thinking-summary-inline').length).toBeGreaterThan(0);
+        expect(screen.findAllByTestId('transcript-thinking-body-markdown')).toHaveLength(0);
+
+        await screen.pressByTestIdAsync('transcript-thinking-header');
+
+        const bodyMarkdownNodes = screen.findAllByTestId('transcript-thinking-body-markdown');
+        expect(bodyMarkdownNodes.length).toBeGreaterThan(0);
+        expect(bodyMarkdownNodes.some((n) => (n.props as any).markdown === 'Hello there')).toBe(true);
+    });
+
+    it('can render thinking messages as a Reasoning tool card when sessionThinkingDisplayMode=tool', async () => {
+        thinkingDisplayMode = 'tool';
+        const { MessageView } = await import('./MessageView');
+
+        const message: any = {
+            kind: 'agent-text',
+            localId: null,
+            text: '**Title**\n\nHello',
+            isThinking: true,
+            meta: {},
+        };
+
+        const screen = await renderScreen(<MessageView message={message} metadata={null} sessionId="s1" />);
+
+        const markdownViews = screen.findAllByType('MarkdownView' as any);
+        expect(markdownViews).toHaveLength(0);
+
+        const toolViews = screen.findAllByType('ToolView' as any);
+        expect(toolViews).toHaveLength(1);
+        expect((toolViews[0] as any).props.tool?.name).toBe('Reasoning');
+        expect((toolViews[0] as any).props.tool?.result?.content).toBe('**Title**\n\nHello');
+    });
+
+    it('can hide thinking messages when sessionThinkingDisplayMode=hidden', async () => {
+        thinkingDisplayMode = 'hidden';
+        const { MessageView } = await import('./MessageView');
+
+        const message: any = {
+            kind: 'agent-text',
+            localId: null,
+            text: 'Hello',
+            isThinking: true,
+            meta: {},
+        };
+
+        const screen = await renderScreen(<MessageView message={message} metadata={null} sessionId="s1" />);
+
+        expect(screen.findAllByType('MarkdownView' as any)).toHaveLength(0);
+        expect(screen.findAllByType('ToolView' as any)).toHaveLength(0);
+    });
+});

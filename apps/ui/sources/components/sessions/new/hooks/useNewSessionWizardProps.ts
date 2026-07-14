@@ -1,0 +1,498 @@
+import * as React from 'react';
+
+import type { AgentId } from '@/agents/catalog/catalog';
+import type { ResolvedBackendCatalogEntry } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
+import { t } from '@/text';
+import { getRequiredSecretEnvVarNames } from '@/sync/domains/profiles/profileSecrets';
+import type { AIBackendProfile } from '@/sync/domains/profiles/profileCompatibility';
+import type { SavedSecret } from '@/sync/domains/settings/savedSecretTypes';
+import type { Machine } from '@/sync/domains/state/storageTypes';
+import type { PermissionMode, ModelMode } from '@/sync/domains/permissions/permissionTypes';
+import type { CLIAvailability } from '@/hooks/auth/useCLIDetection';
+import type { UseMachineEnvPresenceResult } from '@/hooks/machine/useMachineEnvPresence';
+import { prefetchMachineCapabilities } from '@/hooks/server/useMachineCapabilitiesCache';
+import { CAPABILITIES_REQUEST_NEW_SESSION } from '@/capabilities/requests';
+import { buildCliAvailabilityProbeState } from '@/components/sessions/new/modules/buildCliAvailabilityProbeState';
+import { getSecretSatisfaction } from '@/utils/secrets/secretSatisfaction';
+import type { SecretChoiceByProfileIdByEnvVarName } from '@/utils/secrets/secretRequirementApply';
+
+import type { AgentInputExtraActionChip } from '@/components/sessions/agentInput';
+import type { InstallableDepInstallerProps } from '@/components/machines/InstallableDepInstaller';
+import type {
+    NewSessionWizardSectionPresentation,
+    NewSessionWizardSelectionSectionId,
+} from '@/sync/domains/settings/registry/account/accountSessionCreationSettingDefinitions';
+import type { FavoriteModelSelectionV1 } from '@/sync/domains/models/favoriteModelSelections';
+import type {
+    NewSessionWizardAgentProps,
+    NewSessionWizardFooterProps,
+    NewSessionWizardLayoutProps,
+    NewSessionWizardMachineProps,
+    NewSessionWizardProfilesProps,
+} from '../components/NewSessionWizard';
+
+function tNoParams(key: string): string {
+    return (t as any)(key);
+}
+
+export function useNewSessionWizardProps(params: Readonly<{
+    // Layout
+    theme: any;
+    styles: any;
+    safeAreaTop: number;
+    safeAreaBottom: number;
+    headerHeight: number;
+    newSessionTopPadding: number;
+    newSessionSidePadding: number;
+    newSessionBottomPadding: number;
+    shouldBottomAnchor: boolean;
+    sectionPresentation?: Partial<Record<NewSessionWizardSelectionSectionId, NewSessionWizardSectionPresentation>>;
+    useColumnLayout?: boolean;
+
+    // Profiles section
+    useProfiles: boolean;
+    profiles: AIBackendProfile[];
+    favoriteProfileIds: string[];
+    setFavoriteProfileIds: (ids: string[]) => void;
+    selectedProfileId: string | null;
+    onPressDefaultEnvironment: () => void;
+    onPressProfile: (profile: AIBackendProfile) => void;
+    selectedMachineId: string | null;
+    getProfileDisabled: (profile: AIBackendProfile) => boolean;
+    getProfileSubtitleExtra: (profile: AIBackendProfile) => string | null;
+    handleAddProfile: () => void;
+    openProfileEdit: (params: { profileId: string }) => void;
+    handleDuplicateProfile: (profile: AIBackendProfile) => void;
+    handleDeleteProfile: (profile: AIBackendProfile) => void;
+    suppressNextSecretAutoPromptKeyRef: React.MutableRefObject<string | null>;
+    openSecretRequirementModal: (profile: AIBackendProfile, opts: { revertOnCancel: boolean }) => void;
+    profilesGroupTitles: { favorites: string; custom: string; builtIn: string };
+
+    // Secret satisfaction helpers
+    machineEnvPresence: UseMachineEnvPresenceResult;
+    secrets: SavedSecret[];
+    secretBindingsByProfileId: Record<string, Record<string, string>>;
+    selectedSecretIdByProfileIdByEnvVarName: SecretChoiceByProfileIdByEnvVarName;
+    sessionOnlySecretValueByProfileIdByEnvVarName: SecretChoiceByProfileIdByEnvVarName;
+
+    // Installable deps
+    wizardInstallableDeps: Array<{ entry: any; depStatus: any }>;
+    selectedMachineCapabilities: { status: any };
+
+    // Agent section
+    cliAvailability: CLIAvailability;
+    tmuxRequested: boolean;
+    enabledAgentIds: AgentId[];
+    isAgentSelectable: (agentId: AgentId) => boolean;
+    agentType: AgentId;
+    agentLabel?: string;
+    setAgentType: (agent: AgentId) => void;
+    agentPickerTitle?: NewSessionWizardAgentProps['agentPickerTitle'];
+    agentPickerOptions?: NewSessionWizardAgentProps['agentPickerOptions'];
+    agentPickerSelectedOptionId?: NewSessionWizardAgentProps['agentPickerSelectedOptionId'];
+    onAgentPickerSelect?: NewSessionWizardAgentProps['onAgentPickerSelect'];
+    selectedBackendEntry?: ResolvedBackendCatalogEntry | null;
+    modelOptions: ReadonlyArray<{ value: ModelMode; label: string; description: string }>;
+    modelOptionsProbe?: NewSessionWizardAgentProps['modelOptionsProbe'];
+    favoriteModelSelections?: readonly FavoriteModelSelectionV1[];
+    setFavoriteModelSelections?: (favorites: FavoriteModelSelectionV1[]) => void;
+    acpSessionModeOptions?: NewSessionWizardAgentProps['acpSessionModeOptions'];
+    acpSessionModeProbe?: NewSessionWizardAgentProps['acpSessionModeProbe'];
+    acpSessionModeId?: NewSessionWizardAgentProps['acpSessionModeId'];
+    setAcpSessionModeId?: NewSessionWizardAgentProps['setAcpSessionModeId'];
+    acpConfigOptions?: NewSessionWizardAgentProps['acpConfigOptions'];
+    acpConfigOptionsProbe?: NewSessionWizardAgentProps['acpConfigOptionsProbe'];
+    acpConfigOptionOverrides?: NewSessionWizardAgentProps['acpConfigOptionOverrides'];
+    setAcpConfigOptionOverride?: NewSessionWizardAgentProps['setAcpConfigOptionOverride'];
+    modelMode: ModelMode | undefined;
+    setModelMode: (mode: ModelMode) => void;
+    selectedIndicatorColor: string;
+    profileMap: Map<string, AIBackendProfile>;
+    permissionMode: PermissionMode;
+    handlePermissionModeChange: (mode: PermissionMode) => void;
+
+    // Machine section
+    machines: ReadonlyArray<Machine>;
+    targetServerId?: string | null;
+    selectedMachine: Machine | null;
+    recentMachines: ReadonlyArray<Machine>;
+    favoriteMachineItems: ReadonlyArray<Machine>;
+    useMachinePickerSearch: boolean;
+    refreshMachineData: () => void;
+    setSelectedMachineId: (id: string) => void;
+    getBestPathForMachine: (id: string | null) => string;
+    setSelectedPath: (path: string) => void;
+    setDraftSelectedPath?: (path: string) => void;
+    favoriteMachines: ReadonlyArray<string>;
+    setFavoriteMachines: (ids: string[]) => void;
+    selectedPath: string;
+    recentPaths: ReadonlyArray<string>;
+    usePathPickerSearch: boolean;
+    favoriteDirectories: ReadonlyArray<string>;
+    setFavoriteDirectories: (dirs: string[]) => void;
+
+    // Footer section
+    sessionPrompt: string;
+    setSessionPrompt: (v: string) => void;
+    handleCreateSession: NewSessionWizardFooterProps['handleCreateSession'];
+    canCreate: boolean;
+    isCreating: boolean;
+    submitAccessibilityLabel?: NewSessionWizardFooterProps['submitAccessibilityLabel'];
+    emptyAutocompletePrefixes: any;
+    emptyAutocompleteSuggestions: any;
+    onAutocompleteSuggestionSelect?: NewSessionWizardFooterProps['onAutocompleteSuggestionSelect'];
+    connectionStatus?: any;
+    machinePopover?: NewSessionWizardFooterProps['machinePopover'];
+    pathPopover?: NewSessionWizardFooterProps['pathPopover'];
+    resumeSessionId: string;
+    resumePopover?: NewSessionWizardFooterProps['resumePopover'];
+    isResumeSupportChecking: boolean;
+    sessionPromptInputMaxHeight?: number;
+    agentInputExtraActionChips?: ReadonlyArray<AgentInputExtraActionChip>;
+    attachmentFlowId?: string | null;
+}>): Readonly<{
+    layout: NewSessionWizardLayoutProps;
+    profiles: NewSessionWizardProfilesProps;
+    agent: NewSessionWizardAgentProps;
+    machine: NewSessionWizardMachineProps;
+    footer: NewSessionWizardFooterProps;
+    sectionPresentation?: Partial<Record<NewSessionWizardSelectionSectionId, NewSessionWizardSectionPresentation>>;
+    useColumnLayout?: boolean;
+}> {
+    const wizardLayoutProps = React.useMemo((): NewSessionWizardLayoutProps => {
+        return {
+            theme: params.theme,
+            styles: params.styles,
+            safeAreaTop: params.safeAreaTop,
+            safeAreaBottom: params.safeAreaBottom,
+            headerHeight: params.headerHeight,
+            newSessionTopPadding: params.newSessionTopPadding,
+            newSessionSidePadding: params.newSessionSidePadding,
+            newSessionBottomPadding: params.newSessionBottomPadding,
+            shouldBottomAnchor: params.shouldBottomAnchor,
+        };
+    }, [
+        params.headerHeight,
+        params.newSessionBottomPadding,
+        params.newSessionSidePadding,
+        params.newSessionTopPadding,
+        params.safeAreaTop,
+        params.shouldBottomAnchor,
+        params.safeAreaBottom,
+        params.theme,
+        params.styles,
+    ]);
+
+    const getSecretSatisfactionForProfile = React.useCallback((profile: AIBackendProfile) => {
+        const selectedSecretIds = params.selectedSecretIdByProfileIdByEnvVarName[profile.id] ?? null;
+        const sessionOnlyValues = params.sessionOnlySecretValueByProfileIdByEnvVarName[profile.id] ?? null;
+        const machineEnvReadyByName = Object.fromEntries(
+            Object.entries(params.machineEnvPresence.meta ?? {}).map(([k, v]) => [k, Boolean(v?.isSet)]),
+        );
+        return getSecretSatisfaction({
+            profile,
+            secrets: params.secrets,
+            defaultBindings: params.secretBindingsByProfileId[profile.id] ?? null,
+            selectedSecretIds,
+            sessionOnlyValues,
+            machineEnvReadyByName,
+        });
+    }, [
+        params.machineEnvPresence.meta,
+        params.secrets,
+        params.secretBindingsByProfileId,
+        params.selectedSecretIdByProfileIdByEnvVarName,
+        params.sessionOnlySecretValueByProfileIdByEnvVarName,
+    ]);
+
+    const getSecretOverrideReady = React.useCallback((profile: AIBackendProfile): boolean => {
+        const satisfaction = getSecretSatisfactionForProfile(profile);
+        // Override should only represent non-machine satisfaction (defaults / saved / session-only).
+        if (!satisfaction.hasSecretRequirements) return false;
+        const required = satisfaction.items.filter((i) => i.required);
+        if (required.length === 0) return false;
+        if (!required.every((i) => i.isSatisfied)) return false;
+        return required.some((i) => i.satisfiedBy !== 'machineEnv');
+    }, [getSecretSatisfactionForProfile]);
+
+    const getSecretMachineEnvOverride = React.useCallback((profile: AIBackendProfile) => {
+        if (!params.selectedMachineId) return null;
+        if (!params.machineEnvPresence.isPreviewEnvSupported) return null;
+        const requiredNames = getRequiredSecretEnvVarNames(profile);
+        if (requiredNames.length === 0) return null;
+        return {
+            isReady: requiredNames.every((name) => Boolean(params.machineEnvPresence.meta[name]?.isSet)),
+            isLoading: params.machineEnvPresence.isLoading,
+        };
+    }, [
+        params.machineEnvPresence.isLoading,
+        params.machineEnvPresence.isPreviewEnvSupported,
+        params.machineEnvPresence.meta,
+        params.selectedMachineId,
+    ]);
+
+    const wizardProfilesProps = React.useMemo((): NewSessionWizardProfilesProps => {
+        return {
+            useProfiles: params.useProfiles,
+            profiles: params.profiles,
+            favoriteProfileIds: params.favoriteProfileIds,
+            setFavoriteProfileIds: params.setFavoriteProfileIds,
+            selectedProfileId: params.selectedProfileId,
+            onPressDefaultEnvironment: params.onPressDefaultEnvironment,
+            onPressProfile: params.onPressProfile,
+            selectedMachineId: params.selectedMachineId,
+            getProfileDisabled: params.getProfileDisabled,
+            getProfileSubtitleExtra: params.getProfileSubtitleExtra,
+            handleAddProfile: params.handleAddProfile,
+            openProfileEdit: params.openProfileEdit,
+            handleDuplicateProfile: params.handleDuplicateProfile,
+            handleDeleteProfile: params.handleDeleteProfile,
+            suppressNextSecretAutoPromptKeyRef: params.suppressNextSecretAutoPromptKeyRef,
+            openSecretRequirementModal: params.openSecretRequirementModal,
+            profilesGroupTitles: params.profilesGroupTitles,
+            getSecretOverrideReady,
+            getSecretSatisfactionForProfile,
+            getSecretMachineEnvOverride,
+        };
+    }, [
+        params.favoriteProfileIds,
+        params.getProfileDisabled,
+        params.getProfileSubtitleExtra,
+        params.handleAddProfile,
+        params.handleDeleteProfile,
+        params.handleDuplicateProfile,
+        params.onPressDefaultEnvironment,
+        params.onPressProfile,
+        params.openProfileEdit,
+        params.openSecretRequirementModal,
+        params.profiles,
+        params.profilesGroupTitles,
+        params.selectedMachineId,
+        params.selectedProfileId,
+        params.setFavoriteProfileIds,
+        params.suppressNextSecretAutoPromptKeyRef,
+        params.useProfiles,
+        getSecretOverrideReady,
+        getSecretSatisfactionForProfile,
+        getSecretMachineEnvOverride,
+    ]);
+
+    const installableDepInstallers = React.useMemo((): InstallableDepInstallerProps[] => {
+        if (!params.selectedMachineId) return [];
+        if (params.wizardInstallableDeps.length === 0) return [];
+
+        return params.wizardInstallableDeps.map(({ entry, depStatus }) => ({
+            machineId: params.selectedMachineId!,
+            serverId: params.targetServerId,
+            enabled: true,
+            groupTitle: `${tNoParams(entry.groupTitleKey)}${entry.experimental ? ' (experimental)' : ''}`,
+            depId: entry.capabilityId,
+            depTitle: entry.title,
+            depIconName: entry.iconName as any,
+            depStatus,
+            capabilitiesStatus: params.selectedMachineCapabilities.status,
+            installLabels: {
+                install: tNoParams(entry.installLabels.installKey),
+                update: tNoParams(entry.installLabels.updateKey),
+                reinstall: tNoParams(entry.installLabels.reinstallKey),
+            },
+            installModal: {
+                installTitle: tNoParams(entry.installModal.installTitleKey),
+                updateTitle: tNoParams(entry.installModal.updateTitleKey),
+                reinstallTitle: tNoParams(entry.installModal.reinstallTitleKey),
+                description: tNoParams(entry.installModal.descriptionKey),
+            },
+            refreshStatus: () => {
+                void prefetchMachineCapabilities({
+                    machineId: params.selectedMachineId!,
+                    serverId: params.targetServerId,
+                    request: CAPABILITIES_REQUEST_NEW_SESSION,
+                });
+            },
+            refreshLatestVersion: () => {
+                void prefetchMachineCapabilities({
+                    machineId: params.selectedMachineId!,
+                    serverId: params.targetServerId,
+                    request: entry.buildLatestVersionDetectRequest(),
+                    timeoutMs: 12_000,
+                });
+            },
+        }));
+    }, [params.selectedMachineCapabilities.status, params.selectedMachineId, params.targetServerId, params.wizardInstallableDeps]);
+
+    const wizardAgentProps = React.useMemo((): NewSessionWizardAgentProps => {
+        const agentPickerProbe: NewSessionWizardAgentProps['agentPickerProbe'] =
+            buildCliAvailabilityProbeState({
+                selectedMachineId: params.selectedMachineId,
+                cliAvailability: params.cliAvailability,
+                onRefresh: () => {
+                    void params.cliAvailability.refresh({ bypassCache: true });
+                },
+            });
+
+        return {
+            cliAvailability: params.cliAvailability,
+            tmuxRequested: params.tmuxRequested,
+            enabledAgentIds: params.enabledAgentIds,
+            isAgentSelectable: params.isAgentSelectable,
+            agentType: params.agentType,
+            agentLabel: params.agentLabel,
+            setAgentType: params.setAgentType,
+            agentPickerTitle: params.agentPickerTitle,
+            agentPickerOptions: params.agentPickerOptions,
+            agentPickerSelectedOptionId: params.agentPickerSelectedOptionId,
+            onAgentPickerSelect: params.onAgentPickerSelect,
+            selectedBackendEntry: params.selectedBackendEntry,
+            agentPickerProbe,
+            modelOptions: params.modelOptions,
+            modelOptionsProbe: params.modelOptionsProbe,
+            favoriteModelSelections: params.favoriteModelSelections,
+            setFavoriteModelSelections: params.setFavoriteModelSelections,
+            acpSessionModeOptions: params.acpSessionModeOptions,
+            acpSessionModeProbe: params.acpSessionModeProbe,
+            acpSessionModeId: params.acpSessionModeId,
+            setAcpSessionModeId: params.setAcpSessionModeId,
+            acpConfigOptions: params.acpConfigOptions,
+            acpConfigOptionsProbe: params.acpConfigOptionsProbe,
+            acpConfigOptionOverrides: params.acpConfigOptionOverrides,
+            setAcpConfigOptionOverride: params.setAcpConfigOptionOverride,
+            modelMode: params.modelMode,
+            setModelMode: params.setModelMode,
+            selectedIndicatorColor: params.selectedIndicatorColor,
+            profileMap: params.profileMap,
+            permissionMode: params.permissionMode,
+            handlePermissionModeChange: params.handlePermissionModeChange,
+            installableDepInstallers,
+        };
+    }, [
+        params.agentType,
+        params.agentLabel,
+        params.agentPickerOptions,
+        params.agentPickerSelectedOptionId,
+        params.agentPickerTitle,
+        params.favoriteModelSelections,
+        params.cliAvailability,
+        params.selectedMachineId,
+        params.enabledAgentIds,
+        params.isAgentSelectable,
+        params.modelMode,
+        params.modelOptions,
+        params.modelOptionsProbe,
+        params.acpSessionModeId,
+        params.acpSessionModeOptions,
+        params.acpSessionModeProbe,
+        params.acpConfigOptions,
+        params.acpConfigOptionsProbe,
+        params.acpConfigOptionOverrides,
+        params.permissionMode,
+        params.profileMap,
+        params.selectedIndicatorColor,
+        params.onAgentPickerSelect,
+        params.selectedBackendEntry,
+        params.setFavoriteModelSelections,
+        params.setAgentType,
+        params.setAcpConfigOptionOverride,
+        params.setAcpSessionModeId,
+        params.setModelMode,
+        params.handlePermissionModeChange,
+        params.tmuxRequested,
+        installableDepInstallers,
+    ]);
+
+    const wizardMachineProps = React.useMemo((): NewSessionWizardMachineProps => {
+        return {
+            machines: params.machines,
+            serverId: params.targetServerId,
+            selectedMachine: params.selectedMachine || null,
+            recentMachines: params.recentMachines,
+            favoriteMachineItems: params.favoriteMachineItems,
+            useMachinePickerSearch: params.useMachinePickerSearch,
+            onRefreshMachines: params.refreshMachineData,
+            setSelectedMachineId: params.setSelectedMachineId as any,
+            getBestPathForMachine: params.getBestPathForMachine as any,
+            setSelectedPath: params.setSelectedPath,
+            setDraftSelectedPath: params.setDraftSelectedPath,
+            favoriteMachines: params.favoriteMachines,
+            setFavoriteMachines: params.setFavoriteMachines,
+            selectedPath: params.selectedPath,
+            recentPaths: params.recentPaths,
+            usePathPickerSearch: params.usePathPickerSearch,
+            favoriteDirectories: params.favoriteDirectories,
+            setFavoriteDirectories: params.setFavoriteDirectories,
+        };
+    }, [
+        params.favoriteDirectories,
+        params.favoriteMachineItems,
+        params.favoriteMachines,
+        params.getBestPathForMachine,
+        params.machines,
+        params.targetServerId,
+        params.recentMachines,
+        params.recentPaths,
+        params.refreshMachineData,
+        params.selectedMachine,
+        params.selectedPath,
+        params.setFavoriteDirectories,
+        params.setFavoriteMachines,
+        params.setDraftSelectedPath,
+        params.setSelectedMachineId,
+        params.setSelectedPath,
+        params.useMachinePickerSearch,
+        params.usePathPickerSearch,
+    ]);
+
+    const wizardFooterProps = React.useMemo((): NewSessionWizardFooterProps => {
+        return {
+            sessionPrompt: params.sessionPrompt,
+            setSessionPrompt: params.setSessionPrompt,
+            handleCreateSession: params.handleCreateSession,
+            canCreate: params.canCreate,
+            isCreating: params.isCreating,
+            submitAccessibilityLabel: params.submitAccessibilityLabel,
+            emptyAutocompletePrefixes: params.emptyAutocompletePrefixes,
+            emptyAutocompleteSuggestions: params.emptyAutocompleteSuggestions,
+            onAutocompleteSuggestionSelect: params.onAutocompleteSuggestionSelect,
+            connectionStatus: params.connectionStatus,
+            machinePopover: params.machinePopover,
+            pathPopover: params.pathPopover,
+            resumeSessionId: params.resumeSessionId,
+            resumePopover: params.resumePopover,
+            resumeIsChecking: params.isResumeSupportChecking,
+            inputMaxHeight: params.sessionPromptInputMaxHeight,
+            agentInputExtraActionChips: params.agentInputExtraActionChips,
+            attachmentFlowId: params.attachmentFlowId,
+        };
+        // NOTE: Agent selection doesn't affect these props, but keeping dependencies
+        // broad mirrors the previous in-screen memoization behavior and avoids subtle
+        // referential changes during refactors.
+    }, [
+        params.agentType,
+        params.agentInputExtraActionChips,
+        params.attachmentFlowId,
+        params.canCreate,
+        params.connectionStatus,
+        params.emptyAutocompletePrefixes,
+        params.emptyAutocompleteSuggestions,
+        params.onAutocompleteSuggestionSelect,
+        params.handleCreateSession,
+        params.isCreating,
+        params.isResumeSupportChecking,
+        params.machinePopover,
+        params.pathPopover,
+        params.resumePopover,
+        params.resumeSessionId,
+        params.sessionPrompt,
+        params.sessionPromptInputMaxHeight,
+        params.setSessionPrompt,
+    ]);
+
+    return {
+        layout: wizardLayoutProps,
+        sectionPresentation: params.sectionPresentation,
+        useColumnLayout: params.useColumnLayout,
+        profiles: wizardProfilesProps,
+        agent: wizardAgentProps,
+        machine: wizardMachineProps,
+        footer: wizardFooterProps,
+    };
+}

@@ -1,0 +1,143 @@
+import { chmod, mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
+
+import type { Metadata } from '@/api/types';
+
+export type TerminalAttachmentInfo = {
+  version: 1;
+  sessionId: string;
+  terminal: NonNullable<Metadata['terminal']>;
+  updatedAt: number;
+};
+
+function sessionsDir(happyHomeDir: string): string {
+  return join(happyHomeDir, 'terminal', 'sessions');
+}
+
+function sessionIdToFilename(sessionId: string): string {
+  return encodeURIComponent(sessionId);
+}
+
+function sessionFilePath(happyHomeDir: string, sessionId: string): string {
+  return join(sessionsDir(happyHomeDir), `${sessionIdToFilename(sessionId)}.json`);
+}
+
+function legacySessionFilePath(happyHomeDir: string, sessionId: string): string {
+  return join(sessionsDir(happyHomeDir), `${sessionId}.json`);
+}
+
+function parseTerminalAttachmentInfo(raw: string, sessionId: string): TerminalAttachmentInfo | null {
+  const parsed = JSON.parse(raw) as Partial<TerminalAttachmentInfo> | null;
+  if (!parsed || typeof parsed !== 'object') return null;
+  if (parsed.version !== 1) return null;
+  if (parsed.sessionId !== sessionId) return null;
+  if (!parsed.terminal || typeof parsed.terminal !== 'object') return null;
+  if (
+    parsed.terminal.mode !== 'plain'
+    && parsed.terminal.mode !== 'tmux'
+    && parsed.terminal.mode !== 'zellij'
+    && parsed.terminal.mode !== 'windows_terminal'
+    && parsed.terminal.mode !== 'windows_console'
+  ) {
+    return null;
+  }
+  return parsed as TerminalAttachmentInfo;
+}
+
+function terminalMatchesExpected(
+  terminal: NonNullable<Metadata['terminal']>,
+  expectedTerminal: NonNullable<Metadata['terminal']> | undefined,
+): boolean {
+  if (!expectedTerminal) return true;
+  return JSON.stringify(terminal) === JSON.stringify(expectedTerminal);
+}
+
+async function removeTerminalAttachmentInfoPath(params: {
+  path: string;
+  sessionId: string;
+  expectedTerminal?: NonNullable<Metadata['terminal']> | undefined;
+}): Promise<boolean> {
+  try {
+    const raw = await readFile(params.path, 'utf8');
+    const parsed = parseTerminalAttachmentInfo(raw, params.sessionId);
+    if (!parsed || !terminalMatchesExpected(parsed.terminal, params.expectedTerminal)) return false;
+    await unlink(params.path);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export async function writeTerminalAttachmentInfo(params: {
+  happyHomeDir: string;
+  sessionId: string;
+  terminal: NonNullable<Metadata['terminal']>;
+}): Promise<void> {
+  const dir = sessionsDir(params.happyHomeDir);
+  await mkdir(dir, { recursive: true, mode: 0o700 });
+  // Best-effort: mkdir does not update permissions for existing dirs.
+  await chmod(dir, 0o700).catch(() => {});
+
+  const info: TerminalAttachmentInfo = {
+    version: 1,
+    sessionId: params.sessionId,
+    terminal: params.terminal,
+    updatedAt: Date.now(),
+  };
+
+  const path = sessionFilePath(params.happyHomeDir, params.sessionId);
+  const tmpPath = `${path}.tmp`;
+
+  await writeFile(tmpPath, JSON.stringify(info, null, 2), { encoding: 'utf8', mode: 0o600 });
+  await rename(tmpPath, path);
+  await chmod(path, 0o600).catch(() => {});
+}
+
+export async function removeTerminalAttachmentInfo(params: {
+  happyHomeDir: string;
+  sessionId: string;
+  expectedTerminal?: NonNullable<Metadata['terminal']> | undefined;
+}): Promise<boolean> {
+  const encodedPath = sessionFilePath(params.happyHomeDir, params.sessionId);
+  if (await removeTerminalAttachmentInfoPath({
+    path: encodedPath,
+    sessionId: params.sessionId,
+    expectedTerminal: params.expectedTerminal,
+  })) {
+    return true;
+  }
+  if (params.sessionId.includes('/') || params.sessionId.includes('\\')) return false;
+  const legacyPath = legacySessionFilePath(params.happyHomeDir, params.sessionId);
+  if (legacyPath === encodedPath) return false;
+  return removeTerminalAttachmentInfoPath({
+    path: legacyPath,
+    sessionId: params.sessionId,
+    expectedTerminal: params.expectedTerminal,
+  });
+}
+
+export async function readTerminalAttachmentInfo(params: {
+  happyHomeDir: string;
+  sessionId: string;
+}): Promise<TerminalAttachmentInfo | null> {
+  try {
+    const encodedPath = sessionFilePath(params.happyHomeDir, params.sessionId);
+    let raw: string;
+    try {
+      raw = await readFile(encodedPath, 'utf8');
+    } catch (e) {
+      const err = e as NodeJS.ErrnoException;
+      if (err?.code !== 'ENOENT') throw e;
+      // Only allow legacy fallback for filename-safe session ids. The legacy filename
+      // used the raw sessionId, so path separators would allow traversal outside the
+      // intended sessions directory.
+      if (params.sessionId.includes('/') || params.sessionId.includes('\\')) throw e;
+      const legacyPath = legacySessionFilePath(params.happyHomeDir, params.sessionId);
+      if (legacyPath === encodedPath) throw e;
+      raw = await readFile(legacyPath, 'utf8');
+    }
+    return parseTerminalAttachmentInfo(raw, params.sessionId);
+  } catch {
+    return null;
+  }
+}
