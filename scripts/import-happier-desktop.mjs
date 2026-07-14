@@ -246,7 +246,7 @@ async function hashFileAsGitBlob(path) {
     .digest('hex');
 }
 
-async function classifyFiles({ files, targetRoot, priorState }) {
+async function classifyFiles({ files, targetRoot, priorState }, concurrency = 32) {
   const priorByTarget = new Map((priorState?.files ?? []).map((file) => [file.target, file]));
   const currentTargets = new Set(files.map((file) => file.target));
   const safeAdds = [];
@@ -255,45 +255,60 @@ async function classifyFiles({ files, targetRoot, priorState }) {
   const localDifferences = [];
   const conflicts = [];
 
-  for (const file of files) {
-    const targetPath = resolve(targetRoot, file.target);
-    if (!isPathInside(targetPath, targetRoot)) {
-      throw new Error(`Import target escapes the DevPilot repository: ${file.target}`);
-    }
-    let targetStat;
-    try {
-      targetStat = await lstat(targetPath);
-    } catch (error) {
-      if (error && typeof error === 'object' && error.code === 'ENOENT') {
-        safeAdds.push(file);
+  let nextIndex = 0;
+  const workerCount = Math.min(Math.max(1, concurrency), files.length);
+  const workers = Array.from({ length: workerCount }, async () => {
+    for (;;) {
+      const index = nextIndex;
+      nextIndex += 1;
+      if (index >= files.length) {
+        return;
+      }
+      const file = files[index];
+      const targetPath = resolve(targetRoot, file.target);
+      if (!isPathInside(targetPath, targetRoot)) {
+        throw new Error(`Import target escapes the DevPilot repository: ${file.target}`);
+      }
+      let targetStat;
+      try {
+        targetStat = await lstat(targetPath);
+      } catch (error) {
+        if (error && typeof error === 'object' && error.code === 'ENOENT') {
+          safeAdds.push(file);
+          continue;
+        }
+        throw error;
+      }
+      if (!targetStat.isFile()) {
+        const conflict = { ...file, reason: 'target-is-not-a-file' };
+        localDifferences.push(conflict);
+        conflicts.push(conflict);
         continue;
       }
-      throw error;
-    }
-    if (!targetStat.isFile()) {
-      const conflict = { ...file, reason: 'target-is-not-a-file' };
+      const targetObjectId = await hashFileAsGitBlob(targetPath);
+      if (targetObjectId === file.objectId) {
+        unchanged.push(file);
+        continue;
+      }
+      const prior = priorByTarget.get(file.target);
+      if (prior?.objectId && prior.objectId === targetObjectId) {
+        safeChanges.push(file);
+        continue;
+      }
+      const conflict = {
+        ...file,
+        reason: prior ? 'local-file-changed' : 'pre-existing-target',
+        targetObjectId,
+        priorObjectId: prior?.objectId ?? null,
+      };
       localDifferences.push(conflict);
       conflicts.push(conflict);
-      continue;
     }
-    const targetObjectId = await hashFileAsGitBlob(targetPath);
-    if (targetObjectId === file.objectId) {
-      unchanged.push(file);
-      continue;
-    }
-    const prior = priorByTarget.get(file.target);
-    if (prior?.objectId && prior.objectId === targetObjectId) {
-      safeChanges.push(file);
-      continue;
-    }
-    const conflict = {
-      ...file,
-      reason: prior ? 'local-file-changed' : 'pre-existing-target',
-      targetObjectId,
-      priorObjectId: prior?.objectId ?? null,
-    };
-    localDifferences.push(conflict);
-    conflicts.push(conflict);
+  });
+  await Promise.all(workers);
+
+  for (const items of [safeAdds, safeChanges, unchanged, localDifferences, conflicts]) {
+    items.sort((left, right) => left.target.localeCompare(right.target));
   }
 
   const upstreamDeleted = (priorState?.files ?? [])
