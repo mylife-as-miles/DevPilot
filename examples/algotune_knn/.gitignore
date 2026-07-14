@@ -1,8 +1,0 @@
-__pycache__/
-*.pyc
-.devpilot/
-.autoresearch/
-.research_agent/
-.coordinator/
-results/
-cache_old_*/
