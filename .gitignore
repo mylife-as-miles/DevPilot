@@ -1,3 +1,6 @@
+# Local Happier upstream source/reference clone
+/happier/
+
 # Python
 __pycache__/
 *.py[cod]
