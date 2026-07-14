@@ -316,7 +316,25 @@ async function copyImportedFile({ file, sourceRoot, targetRoot }) {
   } else {
     await copyFile(sourcePath, targetPath);
   }
-  await chmod(targetPath, file.executable ? 0o755 : 0o644).catch(() => {});
+  if (process.platform !== 'win32') {
+    await chmod(targetPath, file.executable ? 0o755 : 0o644).catch(() => {});
+  }
+}
+
+async function copyImportedFiles(files, options, concurrency = 32) {
+  let nextIndex = 0;
+  const workerCount = Math.min(Math.max(1, concurrency), files.length);
+  const workers = Array.from({ length: workerCount }, async () => {
+    for (;;) {
+      const index = nextIndex;
+      nextIndex += 1;
+      if (index >= files.length) {
+        return;
+      }
+      await copyImportedFile({ file: files[index], ...options });
+    }
+  });
+  await Promise.all(workers);
 }
 
 function displayList(items, selector = (item) => item.target, limit = 200) {
@@ -459,9 +477,10 @@ export async function runImport({
     throw new ImportConflictError(result.conflicts, resolvedReportPath);
   }
 
-  for (const file of [...result.safeAdds, ...result.safeChanges]) {
-    await copyImportedFile({ file, sourceRoot: resolvedSourceRoot, targetRoot: resolvedTargetRoot });
-  }
+  await copyImportedFiles(
+    [...result.safeAdds, ...result.safeChanges],
+    { sourceRoot: resolvedSourceRoot, targetRoot: resolvedTargetRoot },
+  );
   result.metadata = await writeImportMetadata({
     result,
     targetRoot: resolvedTargetRoot,
