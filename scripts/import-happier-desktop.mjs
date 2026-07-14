@@ -246,6 +246,28 @@ async function hashFileAsGitBlob(path) {
     .digest('hex');
 }
 
+async function addSourceContentObjectIds(files, sourceRoot, concurrency = 32) {
+  const enriched = new Array(files.length);
+  let nextIndex = 0;
+  const workerCount = Math.min(Math.max(1, concurrency), files.length);
+  const workers = Array.from({ length: workerCount }, async () => {
+    for (;;) {
+      const index = nextIndex;
+      nextIndex += 1;
+      if (index >= files.length) {
+        return;
+      }
+      const file = files[index];
+      const contentObjectId = file.mode === '120000'
+        ? file.objectId
+        : await hashFileAsGitBlob(resolve(sourceRoot, file.source));
+      enriched[index] = { ...file, contentObjectId };
+    }
+  });
+  await Promise.all(workers);
+  return enriched;
+}
+
 async function classifyFiles({ files, targetRoot, priorState }, concurrency = 32) {
   const priorByTarget = new Map((priorState?.files ?? []).map((file) => [file.target, file]));
   const currentTargets = new Set(files.map((file) => file.target));
@@ -286,12 +308,15 @@ async function classifyFiles({ files, targetRoot, priorState }, concurrency = 32
         continue;
       }
       const targetObjectId = await hashFileAsGitBlob(targetPath);
-      if (targetObjectId === file.objectId) {
+      if (targetObjectId === file.contentObjectId) {
         unchanged.push(file);
         continue;
       }
       const prior = priorByTarget.get(file.target);
-      if (prior?.objectId && prior.objectId === targetObjectId) {
+      if (
+        (prior?.contentObjectId && prior.contentObjectId === targetObjectId)
+        || (prior?.objectId && prior.objectId === targetObjectId)
+      ) {
         safeChanges.push(file);
         continue;
       }
@@ -470,7 +495,9 @@ export async function runImport({
     source: normalizeImportPath(entry.source, 'source'),
     target: normalizeImportPath(entry.target, 'target'),
   }));
-  const { files, excluded } = parseTrackedFiles(resolvedSourceRoot, normalizedEntries);
+  const tracked = parseTrackedFiles(resolvedSourceRoot, normalizedEntries);
+  const files = await addSourceContentObjectIds(tracked.files, resolvedSourceRoot);
+  const { excluded } = tracked;
   const priorState = await readState(resolvedStatePath);
   const classification = await classifyFiles({ files, targetRoot: resolvedTargetRoot, priorState });
   const result = {

@@ -120,6 +120,21 @@ test('upstream-owned files update safely when the local imported copy is unchang
   );
 });
 
+test('a clean CRLF checkout can be imported repeatedly without false conflicts', async () => {
+  const { targetRoot, sourceRoot } = await createFixture();
+  const entries = [{ source: 'apps/ui', target: 'apps/ui' }];
+  git(sourceRoot, 'config', 'core.autocrlf', 'true');
+  await write(join(sourceRoot, 'apps/ui/sources/main.ts'), 'export const value = 1;\r\n');
+  git(sourceRoot, 'add', 'apps/ui/sources/main.ts');
+  assert.equal(git(sourceRoot, 'status', '--short'), '');
+
+  await runImport({ targetRoot, sourceRoot, entries });
+  const second = await runImport({ targetRoot, sourceRoot, entries });
+
+  assert.equal(second.conflicts.length, 0);
+  assert.deepEqual(second.unchanged.map((item) => item.target), ['apps/ui/sources/main.ts']);
+});
+
 test('upstream deletions are reported and never delete the imported target', async () => {
   const { targetRoot, sourceRoot } = await createFixture();
   const entries = [{ source: 'packages/protocol', target: 'packages/protocol' }];
