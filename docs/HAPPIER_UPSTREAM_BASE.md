@@ -8,9 +8,9 @@
 | Local reference directory | `happier/` (ignored) |
 | Upstream branch | `dev` |
 | Upstream commit | `212776ed66af179d1bb26a1d9a6fe9576441632c` |
-| Import date | Not imported yet; baseline captured 2026-07-14 |
+| Import date | Imported 2026-07-14 through the tracked allowlist |
 
-## Planned imported areas
+## Imported areas
 
 - `apps/ui/` for the shared React/Expo desktop frontend and Tauri shell.
 - `apps/bootstrap/` for the initial `hsetup` sidecar build dependency.

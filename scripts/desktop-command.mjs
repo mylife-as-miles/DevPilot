@@ -12,11 +12,17 @@ export function createDesktopCommand(mode, options = {}) {
   }
 
   const platform = options.platform ?? process.platform;
+  const cwd = options.cwd ?? process.cwd();
   return {
     command: platform === 'win32' ? 'corepack.cmd' : 'corepack',
     args: ['yarn', '--cwd', 'apps/ui', uiScript],
     options: {
-      cwd: options.cwd ?? process.cwd(),
+      cwd,
+      env: {
+        ...process.env,
+        ...options.env,
+        DEVPILOT_DESKTOP_ROOT: options.env?.DEVPILOT_DESKTOP_ROOT ?? cwd,
+      },
       shell: false,
       stdio: 'inherit',
     },

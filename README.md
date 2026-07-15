@@ -89,6 +89,11 @@ Executable paths and arguments are always passed separately without shell
 interpolation. The initial milestone uses an external runtime; bundling Python
 as a sidecar is intentionally deferred.
 
+See [the local runtime guide](docs/LOCAL_DESKTOP_RUNTIME.md) and
+[the architecture boundary](docs/DEVPILOT_DESKTOP_ARCHITECTURE.md). Public web
+and mobile work is recorded separately in
+[the future-surfaces note](docs/FUTURE_WEB_AND_MOBILE.md).
+
 ## Licensing
 
 DevPilot Desktop is licensed under the Apache License 2.0. Imported Happier

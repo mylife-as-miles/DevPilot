@@ -21,7 +21,8 @@
     "import:happier:dry": "node scripts/import-happier-desktop.mjs --dry-run",
     "test:importer": "node --test scripts/import-happier-desktop.test.mjs",
     "test:desktop-command": "node --test scripts/desktop-command.test.mjs",
-    "test:branding": "node --experimental-strip-types --test packages/branding/src/brand.test.ts"
+    "test:branding": "node --experimental-strip-types --test packages/branding/src/brand.test.ts",
+    "test:runtime-discovery": "node --experimental-strip-types --test packages/devpilot-runtime/src/runtimeDiscovery.test.ts packages/devpilot-runtime/src/runtimeProbe.test.ts"
   },
   "workspaces": {
     "packages": [
@@ -30,6 +31,7 @@
       "apps/cli",
       "apps/stack",
       "packages/branding",
+      "packages/devpilot-runtime",
       "packages/agents",
       "packages/audio-stream-native",
       "packages/cli-common",
