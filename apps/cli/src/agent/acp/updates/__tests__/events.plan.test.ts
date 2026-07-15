@@ -44,6 +44,20 @@ describe('handlePlanUpdate (generic ACP plan -> shared TodoWrite checklist)', ()
     expect(new Set(callIds)).toEqual(new Set([ACP_PLAN_TOOL_CALL_ID]));
   });
 
+  it('preserves provider metadata on the normalized checklist', () => {
+    const { ctx, emitted } = makeCtx(new DefaultTransport('test'));
+    const meta = { devpilot: { type: 'hypothesis.updated', hypothesis_id: 'h1' } };
+
+    handlePlanUpdate({
+      sessionUpdate: 'plan',
+      entries: [{ content: '[h1] Investigate', status: 'in_progress' }],
+      _meta: meta,
+    }, ctx);
+
+    expect(emitted[0]).toMatchObject({ args: { _acp: { meta } } });
+    expect(emitted[1]).toMatchObject({ result: { _acp: { meta } } });
+  });
+
   it('suppresses the generic render when the transport opts out (provider delivers plans elsewhere)', () => {
     const transport = { ...new DefaultTransport('cursor-like'), suppressAcpPlanUpdate: () => true } as unknown as TransportHandler;
     const { ctx, emitted } = makeCtx(transport);

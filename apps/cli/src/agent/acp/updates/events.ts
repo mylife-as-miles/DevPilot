@@ -1,4 +1,5 @@
 import type { HandlerContext, HandlerResult, SessionUpdate } from './types';
+import { extractMeta } from './content';
 
 function extractThinkingText(payload: unknown): string | null {
   if (typeof payload === 'string') {
@@ -110,8 +111,10 @@ export function handlePlanUpdate(
   const todos = planEntriesToTodos(entries);
   if (todos.length === 0) return { handled: true };
 
-  ctx.emit({ type: 'tool-call', toolName: 'TodoWrite', args: { todos }, callId: ACP_PLAN_TOOL_CALL_ID });
-  ctx.emit({ type: 'tool-result', toolName: 'TodoWrite', result: { todos }, callId: ACP_PLAN_TOOL_CALL_ID });
+  const meta = extractMeta(update);
+  const payload = meta ? { todos, _acp: { meta } } : { todos };
+  ctx.emit({ type: 'tool-call', toolName: 'TodoWrite', args: payload, callId: ACP_PLAN_TOOL_CALL_ID });
+  ctx.emit({ type: 'tool-result', toolName: 'TodoWrite', result: payload, callId: ACP_PLAN_TOOL_CALL_ID });
   return { handled: true };
 }
 
