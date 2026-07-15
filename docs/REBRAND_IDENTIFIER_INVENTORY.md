@@ -5,13 +5,13 @@
 | Surface | Production value | Development value | Status |
 | --- | --- | --- | --- |
 | Product and window name | `DevPilot` | `DevPilot (dev)` | DevPilot-owned |
-| Tauri identifier | `com.devpilot.desktop` | `com.devpilot.desktop.dev` | DevPilot-owned |
+| Electron application identifier | `com.devpilot.desktop` | `com.devpilot.desktop.dev` | DevPilot-owned |
 | Desktop package | `devpilot-desktop` | same | DevPilot-owned |
 | Desktop companion command | `devpilot-app` | `devpilot-app-dev` | Reserved; runtime command remains `devpilot` |
 | Deep-link scheme | `devpilot://` | `devpilot-dev://` | New installs only; Happier compatibility parsing is retained until migration is designed |
 | Repository | `mylife-as-miles/DevPilot` | same | DevPilot-owned |
 | Runtime repository | `mylife-as-miles/DevPilot-CLI` | sibling checkout | Independent repository |
-| Tauri updates | disabled | disabled | No Happier release endpoints; DevPilot signing/update lane is not configured yet |
+| Electron updates | disabled | disabled | No Happier release endpoints; DevPilot signing/update lane is not configured yet |
 | Expo updates | disabled by default | disabled by default | Internal web export remains available; mobile delivery is deferred |
 | Associated domains | disabled | disabled | Hosted web/mobile links are deferred |
 

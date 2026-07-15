@@ -1,8 +1,9 @@
 import { spawn, spawnSync } from 'node:child_process';
+import { resolveCorepackCommand } from './corepack-command.mjs';
 
 const UI_SCRIPTS = Object.freeze({
-  dev: 'tauri:dev',
-  build: 'tauri:build:production',
+  dev: 'electron:dev',
+  build: 'electron:build',
 });
 
 export function createDesktopCommand(mode, options = {}) {
@@ -11,11 +12,13 @@ export function createDesktopCommand(mode, options = {}) {
     throw new Error(`Unsupported desktop command mode: ${mode}`);
   }
 
-  const platform = options.platform ?? process.platform;
   const cwd = options.cwd ?? process.cwd();
+  const corepack = resolveCorepackCommand(['yarn', uiScript], {
+    platform: options.platform,
+  });
   return {
-    command: platform === 'win32' ? 'corepack.cmd' : 'corepack',
-    args: ['yarn', '--cwd', 'apps/ui', uiScript],
+    command: corepack.command,
+    args: corepack.args,
     options: {
       cwd,
       env: {
@@ -29,27 +32,27 @@ export function createDesktopCommand(mode, options = {}) {
   };
 }
 
-export function formatMissingCargoMessage() {
+export function formatDesktopRuntimeMessage() {
   return [
-    'DevPilot Desktop requires the Rust toolchain (Cargo) to run Tauri.',
-    'Install Rust from https://rustup.rs/, restart this terminal, and retry.',
-    'No Python runtime or DevPilot-CLI installation was changed.',
+    'DevPilot Desktop runs through Electron and does not require Rust or Cargo.',
+    'Install the workspace dependencies with `corepack yarn install`, then retry.',
+    'No Python runtime or DevPilot-CLI installation is changed by desktop startup.',
   ].join('\n');
 }
 
-export function assertCargoAvailable() {
-  const result = spawnSync('cargo', ['--version'], {
+export function assertSupportedNodeRuntime() {
+  const result = spawnSync(process.execPath, ['--version'], {
     shell: false,
     stdio: 'ignore',
     windowsHide: true,
   });
   if (result.error || result.status !== 0) {
-    throw new Error(formatMissingCargoMessage());
+    throw new Error(formatDesktopRuntimeMessage());
   }
 }
 
 export async function runDesktopCommand(mode, options = {}) {
-  assertCargoAvailable();
+  assertSupportedNodeRuntime();
   const invocation = createDesktopCommand(mode, options);
 
   const exitCode = await new Promise((resolve, reject) => {

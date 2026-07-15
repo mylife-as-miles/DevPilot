@@ -1,6 +1,6 @@
 # Future Web and Mobile Surfaces
 
-The present product target is a local Tauri desktop application. Public web deployment and mobile applications are deliberately deferred.
+The present product target is a local Electron desktop application. Public web deployment and mobile applications are deliberately deferred.
 
 ## Deferred work
 

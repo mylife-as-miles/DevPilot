@@ -1,0 +1,15 @@
+{
+  "name": "@devpilot/electron",
+  "version": "0.1.0",
+  "private": true,
+  "main": "main.cjs",
+  "scripts": {
+    "dev": "electron .",
+    "package": "electron-forge package",
+    "make": "electron-forge make",
+    "verify": "node --check main.cjs && node --check preload.cjs && node --test desktop-shell.test.cjs"
+  },
+  "config": {
+    "forge": "./forge.config.cjs"
+  }
+}

@@ -16,7 +16,7 @@ This file records what can be verified in the current Windows development enviro
 
 The complete JavaScript dependency graph is not installed in this checkout. The offline Yarn cache is missing `@shopify/react-native-skia@2.2.12`, while the online install did not complete in the available session. Consequently the full workspace TypeScript and Vitest commands are not claimed as passing.
 
-Rust/Cargo and the Windows Tauri build prerequisites are not installed in this environment. Tauri development startup, production bundling, and installer verification remain unexecuted. The repository's root scripts report those missing prerequisites without modifying DevPilot-CLI.
+The Electron dependency installation did not complete in this environment: the existing large Yarn workspace graph stalled before dependency resolution produced output. Electron development startup, Forge production bundling, and installer verification remain unexecuted until `corepack yarn install` completes. The root scripts now fail quickly with an actionable dependency message and do not require Rust/Cargo or modify DevPilot-CLI.
 
 macOS and Linux packages require their respective CI or host environments. Android, iOS, public web deployment, and mobile end-to-end testing are intentionally outside this desktop milestone.
 

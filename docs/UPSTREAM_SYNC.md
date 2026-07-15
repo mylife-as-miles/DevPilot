@@ -52,7 +52,7 @@ replaced by upstream content:
 - `packages/branding/`
 - DevPilot runtime discovery and readiness diagnostics
 - the built-in DevPilot provider
-- Tauri product identifiers, icons, updater settings, and desktop titles
+- Electron product identifiers, icons, signing/update settings, and desktop titles
 - DevPilot-native Research Run views
 - root build commands and documentation
 - import state and reports

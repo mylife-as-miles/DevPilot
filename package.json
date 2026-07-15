@@ -8,11 +8,14 @@
     "dev": "node scripts/dev-desktop.mjs",
     "desktop:dev": "node scripts/dev-desktop.mjs",
     "desktop:build": "node scripts/build-desktop.mjs",
+    "electron:dev": "node scripts/electron-desktop.mjs dev",
+    "electron:build": "node scripts/electron-desktop.mjs build",
+    "electron:verify": "yarn --cwd apps/electron verify",
     "desktop:test": "yarn test:unit",
     "desktop:typecheck": "yarn typecheck",
     "ui": "yarn workspace @happier-dev/app start",
     "ui:web": "yarn workspace @happier-dev/app web",
-    "ui:tauri": "node apps/stack/scripts/tauri_dev.mjs",
+    "ui:electron": "yarn electron:dev",
     "build:packages": "yarn workspace @happier-dev/protocol build && yarn workspace @happier-dev/transfers build && yarn workspace @happier-dev/agents build && yarn workspace @happier-dev/cli-common build && yarn workspace @happier-dev/connection-supervisor build && yarn workspace @happier-dev/release-runtime build",
     "test": "yarn test:unit",
     "test:unit": "yarn workspace @happier-dev/protocol test && yarn workspace @happier-dev/transfers test && yarn workspace @happier-dev/agents test && yarn workspace @happier-dev/cli-common test && yarn workspace @happier-dev/connection-supervisor test && yarn workspace @happier-dev/bootstrap test && yarn workspace @happier-dev/app test:unit && yarn workspace @happier-dev/cli test:unit",
@@ -31,6 +34,7 @@
       "apps/ui",
       "apps/cli",
       "apps/stack",
+      "apps/electron",
       "packages/branding",
       "packages/devpilot-runtime",
       "packages/devpilot-research",
@@ -66,7 +70,11 @@
     "vite-node/vite": "7.3.2"
   },
   "devDependencies": {
+    "@electron-forge/cli": "7.11.2",
+    "@electron-forge/maker-squirrel": "7.11.2",
+    "@electron-forge/maker-zip": "7.11.2",
     "@sentry/cli": "^3.2.2",
+    "electron": "43.1.1",
     "vite": "7.3.2"
   },
   "packageManager": "yarn@1.22.22"

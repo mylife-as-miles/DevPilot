@@ -2,10 +2,10 @@
 
 DevPilot Desktop is the graphical control plane for the independent
 [DevPilot-CLI](https://github.com/mylife-as-miles/DevPilot-CLI) Python runtime.
-It is a desktop-only Tauri application derived in part from
+It is a desktop-only Electron application derived in part from
 [Happier](https://github.com/happier-dev/happier).
 
-The desktop repository contains the Tauri shell, React/Expo interface, local
+The desktop repository contains the Electron shell, React/Expo interface, local
 process integration, desktop packaging, and synchronization tooling. Autonomous
 reasoning, orchestration, providers, memory, audits, reports, and runtime session
 state remain in DevPilot-CLI.
@@ -33,11 +33,11 @@ the Python runtime.
 
 - Node.js 20 or newer
 - Corepack with Yarn 1.22.22
-- The Rust toolchain and platform prerequisites required by Tauri 2
+- No Rust toolchain is required for the Electron desktop shell
 - An existing DevPilot-CLI checkout or a globally installed `devpilot` command
 
-On Windows, install the Microsoft C++ build tools required by Tauri in addition
-to Rust.
+Electron itself does not require the Rust or Visual C++ toolchain used by the
+retired Tauri launch path.
 
 ## Development
 
@@ -48,8 +48,8 @@ corepack yarn desktop:test
 corepack yarn desktop:dev
 ```
 
-The development command reports missing Rust prerequisites before starting the
-Tauri build. It does not modify DevPilot-CLI or create a Python environment.
+The development command starts Expo Web and Electron. It does not modify
+DevPilot-CLI or create a Python environment.
 
 Build a production desktop bundle with:
 

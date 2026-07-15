@@ -1,12 +1,17 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { dirname, join } from 'node:path';
 
-import { createDesktopCommand, formatMissingCargoMessage } from './desktop-command.mjs';
+import { createDesktopCommand, formatDesktopRuntimeMessage } from './desktop-command.mjs';
 
 test('creates a Windows development command without shell interpolation', () => {
   const invocation = createDesktopCommand('dev', { platform: 'win32' });
-  assert.equal(invocation.command, 'corepack.cmd');
-  assert.deepEqual(invocation.args, ['yarn', '--cwd', 'apps/ui', 'tauri:dev']);
+  assert.equal(invocation.command, process.execPath);
+  assert.deepEqual(invocation.args, [
+    join(dirname(process.execPath), 'node_modules', 'corepack', 'dist', 'corepack.js'),
+    'yarn',
+    'electron:dev',
+  ]);
   assert.deepEqual({
     cwd: invocation.options.cwd,
     shell: invocation.options.shell,
@@ -39,8 +44,12 @@ test('creates a production build command without shell interpolation', () => {
     stdio: invocation.options.stdio,
     desktopRoot: invocation.options.env.DEVPILOT_DESKTOP_ROOT,
   }, {
-    command: 'corepack',
-    args: ['yarn', '--cwd', 'apps/ui', 'tauri:build:production'],
+    command: process.execPath,
+    args: [
+      join(dirname(process.execPath), 'node_modules', 'corepack', 'dist', 'corepack.js'),
+      'yarn',
+      'electron:build',
+    ],
     cwd: '/workspace/DevPilot',
     shell: false,
     stdio: 'inherit',
@@ -52,8 +61,8 @@ test('rejects unsupported desktop command modes', () => {
   assert.throws(() => createDesktopCommand('release'), /Unsupported desktop command mode/);
 });
 
-test('missing Cargo guidance is actionable', () => {
-  assert.match(formatMissingCargoMessage(), /Rust toolchain/);
-  assert.match(formatMissingCargoMessage(), /rustup\.rs/);
-  assert.match(formatMissingCargoMessage(), /restart/i);
+test('Electron desktop guidance does not require Rust', () => {
+  assert.match(formatDesktopRuntimeMessage(), /Electron/);
+  assert.match(formatDesktopRuntimeMessage(), /does not require Rust/i);
+  assert.match(formatDesktopRuntimeMessage(), /yarn install/i);
 });

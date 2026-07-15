@@ -6,7 +6,7 @@ DevPilot Desktop is a local graphical control plane. DevPilot-CLI remains the so
 
 The desktop owns:
 
-- the Tauri process and native desktop lifecycle;
+- the Electron main process, preload boundary, and native desktop lifecycle;
 - React/Expo desktop presentation and local navigation;
 - project selection and runtime readiness presentation;
 - safe child-process startup, cancellation, and reconnect behavior;
