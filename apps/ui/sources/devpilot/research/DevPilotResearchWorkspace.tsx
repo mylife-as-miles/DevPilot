@@ -12,7 +12,7 @@ import * as React from 'react';
 import { Pressable, ScrollView, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
-import { Text } from '@/components/ui/text/Text';
+import { Text, TextInput } from '@/components/ui/text/Text';
 import { useSessionMessages } from '@/sync/store/hooks';
 
 const STATUS_COLORS = {
@@ -28,8 +28,29 @@ const STATUS_COLORS = {
     queued: '#64748B',
 } as const;
 
+const HYPOTHESIS_FILTERS = ['all', 'pending', 'queued', 'running', 'done', 'merged', 'failed', 'pruned', 'awaiting-input', 'cancelled'] as const;
+type HypothesisFilter = (typeof HYPOTHESIS_FILTERS)[number];
+
 function statusColor(status: string): string {
     return STATUS_COLORS[status as keyof typeof STATUS_COLORS] ?? '#64748B';
+}
+
+function formatTimestamp(value: string | null): string {
+    if (!value) return '—';
+    const date = new Date(value);
+    return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
+}
+
+function filterHypothesisTree(
+    tree: readonly HypothesisTreeNode[],
+    filter: HypothesisFilter,
+): readonly HypothesisTreeNode[] {
+    if (filter === 'all') return tree;
+    return tree.flatMap((item) => {
+        const children = filterHypothesisTree(item.children, filter);
+        if (item.node.status !== filter && children.length === 0) return [];
+        return [Object.freeze({ ...item, children })];
+    });
 }
 
 export const DevPilotResearchWorkspace = React.memo((props: Readonly<{ sessionId: string }>) => {
@@ -41,7 +62,23 @@ export const DevPilotResearchWorkspace = React.memo((props: Readonly<{ sessionId
     const activeExecutors = React.useMemo(() => selectActiveExecutors(state), [state]);
     const pendingApprovals = React.useMemo(() => selectPendingApprovals(state), [state]);
     const [selectedHypothesisId, setSelectedHypothesisId] = React.useState<string | null>(null);
+    const [hypothesisFilter, setHypothesisFilter] = React.useState<HypothesisFilter>('all');
+    const [treeZoom, setTreeZoom] = React.useState(1);
+    const [evidenceQuery, setEvidenceQuery] = React.useState('');
     const selectedHypothesis = selectedHypothesisId ? state.hypotheses[selectedHypothesisId] : null;
+    const activeHypothesisId = state.coordinator.currentHypothesisId
+        ?? state.hypothesisOrder.find((id) => state.hypotheses[id]?.status === 'running')
+        ?? null;
+    const filteredTree = React.useMemo(
+        () => filterHypothesisTree(tree, hypothesisFilter),
+        [hypothesisFilter, tree],
+    );
+    const filteredEvidence = React.useMemo(() => {
+        const query = evidenceQuery.trim().toLowerCase();
+        if (!query) return state.evidence;
+        return state.evidence.filter((item) => [item.title, item.url, item.provider, item.channel, item.excerpt, item.hypothesisId]
+            .some((value) => value?.toLowerCase().includes(query)));
+    }, [evidenceQuery, state.evidence]);
 
     if (!isLoaded) {
         return <ResearchEmptyState icon="sync-outline" title="Loading research run" body="Reconstructing the live run from the DevPilot event stream." />;
@@ -94,15 +131,37 @@ export const DevPilotResearchWorkspace = React.memo((props: Readonly<{ sessionId
                         <Fact label="Model" value={state.model ?? 'runtime default'} />
                         <Fact label="LLM turns" value={String(state.coordinator.turns)} />
                         <Fact label="Last event" value={state.coordinator.lastEvent ?? '—'} />
+                        <Fact label="Mode" value={state.mode ?? 'research'} />
+                        <Fact label="Current hypothesis" value={activeHypothesisId ?? '—'} />
                     </View>
                 </View>
             </Section>
 
             <Section title="Hypothesis Tree" icon="share-social-outline" accessory={`${state.hypothesisOrder.length} nodes`}>
-                {tree.length > 0 ? (
+                <View style={styles.treeControls}>
+                    <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterRow}>
+                        {HYPOTHESIS_FILTERS.map((filter) => (
+                            <Pressable key={filter} onPress={() => setHypothesisFilter(filter)} style={[styles.filterChip, hypothesisFilter === filter ? styles.filterChipSelected : null]}>
+                                <Text style={[styles.filterChipText, hypothesisFilter === filter ? styles.filterChipTextSelected : null]}>{filter === 'all' ? 'All' : filter.replace('-', ' ')}</Text>
+                            </Pressable>
+                        ))}
+                    </ScrollView>
+                    <View style={styles.treeActionRow}>
+                        <Pressable disabled={!activeHypothesisId} onPress={() => activeHypothesisId && setSelectedHypothesisId(activeHypothesisId)} style={[styles.treeAction, !activeHypothesisId ? styles.treeActionDisabled : null]}>
+                            <Ionicons name="locate-outline" size={15} style={styles.treeActionIcon} />
+                            <Text style={styles.treeActionText}>Jump to active</Text>
+                        </Pressable>
+                        <View style={styles.zoomControl}>
+                            <Pressable disabled={treeZoom <= 0.75} onPress={() => setTreeZoom((value) => Math.max(0.75, Number((value - 0.1).toFixed(2))))} style={styles.zoomButton}><Ionicons name="remove" size={15} style={styles.treeActionIcon} /></Pressable>
+                            <Text style={styles.zoomLabel}>{Math.round(treeZoom * 100)}%</Text>
+                            <Pressable disabled={treeZoom >= 1.35} onPress={() => setTreeZoom((value) => Math.min(1.35, Number((value + 0.1).toFixed(2))))} style={styles.zoomButton}><Ionicons name="add" size={15} style={styles.treeActionIcon} /></Pressable>
+                        </View>
+                    </View>
+                </View>
+                {filteredTree.length > 0 ? (
                     <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.treeCanvas}>
-                        <View style={styles.treeColumn}>
-                            {tree.map((item) => (
+                        <View style={[styles.treeColumn, { transform: [{ scale: treeZoom }], marginBottom: (treeZoom - 1) * 90 }]}>
+                            {filteredTree.map((item) => (
                                 <HypothesisBranch
                                     key={item.node.id}
                                     item={item}
@@ -113,12 +172,22 @@ export const DevPilotResearchWorkspace = React.memo((props: Readonly<{ sessionId
                             ))}
                         </View>
                     </ScrollView>
-                ) : <Text style={styles.emptyText}>Waiting for the Coordinator to propose a hypothesis.</Text>}
+                ) : <Text style={styles.emptyText}>No hypotheses match this status filter.</Text>}
                 {selectedHypothesis ? (
                     <View style={styles.selectionPanel}>
                         <Text style={styles.label}>SELECTED · {selectedHypothesis.id}</Text>
                         <Text style={styles.body}>{selectedHypothesis.hypothesis}</Text>
+                        <View style={styles.selectionFacts}>
+                            <Fact label="Parent" value={selectedHypothesis.parentId ?? 'root'} />
+                            <Fact label="Depth" value={String(selectedHypothesis.depth)} />
+                            <Fact label="Executor" value={selectedHypothesis.executorId ?? 'unassigned'} />
+                            <Fact label="Evidence" value={String(selectedHypothesis.evidenceCount)} />
+                            <Fact label="Created" value={formatTimestamp(selectedHypothesis.createdAt)} />
+                            <Fact label="Updated" value={formatTimestamp(selectedHypothesis.updatedAt)} />
+                        </View>
                         <Text style={styles.subtitle}>{selectedHypothesis.result ?? selectedHypothesis.insight ?? 'No result recorded yet.'}</Text>
+                        {selectedHypothesis.changedFiles.length > 0 ? <Text style={styles.mono}>Files: {selectedHypothesis.changedFiles.join(', ')}</Text> : null}
+                        {selectedHypothesis.tests.length > 0 ? <Text style={styles.mono}>Tests: {selectedHypothesis.tests.join(', ')}</Text> : null}
                     </View>
                 ) : null}
             </Section>
@@ -135,7 +204,8 @@ export const DevPilotResearchWorkspace = React.memo((props: Readonly<{ sessionId
 
             <View style={styles.twoColumn}>
                 <Section title="Evidence & Sources" icon="book-outline" accessory={String(state.evidence.length)} compact>
-                    {state.evidence.map((item) => (
+                    <TextInput value={evidenceQuery} onChangeText={setEvidenceQuery} placeholder="Search sources, provider, or hypothesis" placeholderTextColor={undefined} style={styles.searchInput} accessibilityLabel="Search DevPilot evidence" />
+                    {filteredEvidence.map((item) => (
                         <View key={item.id} style={styles.listRow}>
                             <Ionicons name={item.url ? 'link-outline' : 'document-text-outline'} size={16} style={styles.listIcon} />
                             <View style={styles.flexCopy}>
@@ -145,7 +215,7 @@ export const DevPilotResearchWorkspace = React.memo((props: Readonly<{ sessionId
                             </View>
                         </View>
                     ))}
-                    {state.evidence.length === 0 ? <Text style={styles.emptyText}>No source references captured yet.</Text> : null}
+                    {state.evidence.length === 0 ? <Text style={styles.emptyText}>No source references captured yet.</Text> : filteredEvidence.length === 0 ? <Text style={styles.emptyText}>No evidence matches this search.</Text> : null}
                 </Section>
                 <Section title="Reports & Memory" icon="archive-outline" accessory={String(state.artifacts.length)} compact>
                     {state.artifacts.map((item) => (
@@ -263,6 +333,15 @@ function ExecutorCard(props: Readonly<{ executor: ResearchRunState['executors'][
                 <Text style={styles.subtitle}>{executor.branch ?? 'isolated worktree'}</Text>
                 <Text style={styles.subtitle}>{executor.changedFiles.length} files · {executor.tests.length} tests</Text>
             </View>
+            <View style={styles.executorDetailList}>
+                {executor.worktree ? <Text style={styles.mono}>Worktree: {executor.worktree}</Text> : null}
+                {executor.testStatus ? <Text style={styles.mono}>Tests: {executor.testStatus}</Text> : null}
+                {executor.changedFiles.length > 0 ? <Text numberOfLines={2} style={styles.mono}>Changed: {executor.changedFiles.join(', ')}</Text> : null}
+                {executor.tests.length > 0 ? <Text numberOfLines={2} style={styles.mono}>Ran: {executor.tests.join(', ')}</Text> : null}
+                {executor.summary ? <Text numberOfLines={2} style={styles.activity}>Summary: {executor.summary}</Text> : null}
+                {executor.failure ? <Text numberOfLines={2} style={styles.failureText}>Failure: {executor.failure}</Text> : null}
+                <Text style={styles.subtitle}>Started {formatTimestamp(executor.startedAt)} · Ended {formatTimestamp(executor.completedAt)}</Text>
+            </View>
         </View>
     );
 }
@@ -296,6 +375,20 @@ const styles = StyleSheet.create((theme) => ({
     coordinatorGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 12 },
     coordinatorActivity: { flex: 2, minWidth: 240, gap: 6, padding: 12, borderRadius: 10, backgroundColor: theme.colors.surface.base },
     coordinatorFacts: { flex: 1, minWidth: 220, flexDirection: 'row', flexWrap: 'wrap', gap: 7 },
+    treeControls: { gap: 8 },
+    filterRow: { gap: 6 },
+    filterChip: { paddingHorizontal: 9, paddingVertical: 5, borderRadius: 999, backgroundColor: theme.colors.surface.base, borderWidth: 1, borderColor: theme.colors.border.default },
+    filterChipSelected: { borderColor: '#5B5BD6', backgroundColor: '#5B5BD618' },
+    filterChipText: { color: theme.colors.text.secondary, fontSize: 11, fontWeight: '600', textTransform: 'capitalize' },
+    filterChipTextSelected: { color: '#5B5BD6' },
+    treeActionRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
+    treeAction: { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 8, paddingVertical: 5, borderRadius: 7, backgroundColor: theme.colors.surface.base, borderWidth: 1, borderColor: theme.colors.border.default },
+    treeActionDisabled: { opacity: 0.45 },
+    treeActionIcon: { color: theme.colors.text.secondary },
+    treeActionText: { color: theme.colors.text.secondary, fontSize: 11, fontWeight: '600' },
+    zoomControl: { flexDirection: 'row', alignItems: 'center', overflow: 'hidden', borderRadius: 7, borderWidth: 1, borderColor: theme.colors.border.default },
+    zoomButton: { width: 26, height: 26, alignItems: 'center', justifyContent: 'center', backgroundColor: theme.colors.surface.base },
+    zoomLabel: { minWidth: 40, color: theme.colors.text.secondary, fontSize: 10, fontWeight: '700', textAlign: 'center' },
     treeCanvas: { minWidth: '100%', paddingVertical: 4 },
     treeColumn: { gap: 10 },
     treeBranch: { alignItems: 'flex-start', gap: 9 },
@@ -307,6 +400,7 @@ const styles = StyleSheet.create((theme) => ({
     nodeId: { color: '#6D6ADF', fontSize: 10, fontWeight: '800' },
     cardTitle: { color: theme.colors.text.primary, fontSize: 12, lineHeight: 17, fontWeight: '700' },
     selectionPanel: { gap: 4, padding: 11, borderRadius: 9, backgroundColor: '#5B5BD60D', borderWidth: 1, borderColor: '#5B5BD633' },
+    selectionFacts: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, paddingVertical: 4 },
     cardGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
     executorCard: { flexGrow: 1, flexBasis: 300, maxWidth: 520, minWidth: 260, gap: 9, padding: 12, borderRadius: 11, backgroundColor: theme.colors.surface.base, borderWidth: 1, borderColor: theme.colors.border.default },
     executorTitle: { flex: 1, minWidth: 0, flexDirection: 'row', alignItems: 'center', gap: 8 },
@@ -314,12 +408,15 @@ const styles = StyleSheet.create((theme) => ({
     avatarText: { color: '#FFFFFF', fontSize: 9, fontWeight: '800' },
     activity: { color: '#6D6ADF', fontSize: 11, lineHeight: 16 },
     executorFacts: { flexDirection: 'row', justifyContent: 'space-between', gap: 10 },
+    executorDetailList: { gap: 3 },
     twoColumn: { flexDirection: 'row', flexWrap: 'wrap', gap: 14 },
     listRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 9, paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: theme.colors.border.default },
     listIcon: { color: theme.colors.text.secondary, marginTop: 1 },
     artifactKind: { color: theme.colors.text.tertiary, fontSize: 9, fontWeight: '800' },
+    searchInput: { minHeight: 34, paddingHorizontal: 9, paddingVertical: 6, borderRadius: 8, borderWidth: 1, borderColor: theme.colors.border.default, backgroundColor: theme.colors.surface.base, color: theme.colors.text.primary, fontSize: 12 },
     fileList: { gap: 6, padding: 10, borderRadius: 9, backgroundColor: theme.colors.surface.base },
     mono: { color: theme.colors.text.primary, fontSize: 11, fontFamily: 'monospace' },
+    failureText: { color: '#DC2626', fontSize: 11, lineHeight: 16 },
     emptyText: { color: theme.colors.text.tertiary, fontSize: 12, fontStyle: 'italic' },
     emptyState: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 10, padding: 32, backgroundColor: theme.colors.surface.base },
     emptyIcon: { width: 56, height: 56, borderRadius: 18, alignItems: 'center', justifyContent: 'center', backgroundColor: theme.colors.surface.inset, borderWidth: 1, borderColor: theme.colors.border.default },
