@@ -48,4 +48,23 @@ DevPilot-owned branding, runtime discovery, provider registration, and product w
 
 ## Current milestone and next slices
 
-The current integration milestone establishes the clean desktop workspace, reproducible Happier source closure, DevPilot identity, sibling runtime detection/readiness, and an official ACP bridge. Product-specific research workspace panels should consume ACP events and existing CLI capabilities incrementally; they should not introduce a second orchestration engine in TypeScript.
+The current integration milestone establishes the clean desktop workspace, reproducible Happier source closure, DevPilot identity, sibling runtime detection/readiness, an official ACP bridge, and a DevPilot-native Research Run workspace.
+
+## Research Run projection
+
+`packages/devpilot-research` is a presentation projection, not an orchestration engine. It normalizes immutable event metadata from ACP transcript records and reduces that stream into a deterministic read-only state:
+
+```text
+DevPilot-CLI events.jsonl
+  -> ACP session updates with _meta.devpilot
+  -> inherited transcript persistence
+  -> DevPilot event adapter
+  -> immutable ResearchRunState
+  -> Research cockpit
+```
+
+The projection keeps Coordinator, hypothesis, Executor, evidence, artifact, approval, file, and usage records separate. Parallel Executors are keyed independently. Reloading a stored transcript rebuilds the same state without a second desktop database. Older ACP plan transcripts can reconstruct hypothesis labels as a compatibility fallback, but provider metadata is authoritative for new sessions.
+
+The Research tab is registered only for sessions whose built-in agent ID is `devpilot`. Existing chat, file, Git, detail, and terminal surfaces remain available and unchanged. The first tree view is deliberately read-only and highlights the best-scoring path; tree mutation remains deferred until runtime synchronization and persistence semantics are stable.
+
+Memory search, skill inspection, audit execution, rich artifact opening, source actions, and approval decisions must continue to call DevPilot-CLI capabilities or standard ACP methods. They must not introduce competing TypeScript storage or bypass runtime permissions.
