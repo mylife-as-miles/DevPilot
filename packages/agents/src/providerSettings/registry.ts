@@ -1,6 +1,7 @@
 import type { AgentId } from '../types.js';
 
 import { CLAUDE_REMOTE_PROVIDER_SETTINGS_DEFINITION } from './definitions/claudeRemote.js';
+import { DEVPILOT_PROVIDER_SETTINGS_DEFINITION } from './definitions/devpilot.js';
 import { CODEX_PROVIDER_SETTINGS_DEFINITION } from './definitions/codex.js';
 import { CURSOR_PROVIDER_SETTINGS_DEFINITION } from './definitions/cursor.js';
 import { KIMI_PROVIDER_SETTINGS_DEFINITION } from './definitions/kimi.js';
@@ -8,6 +9,7 @@ import { OPENCODE_PROVIDER_SETTINGS_DEFINITION } from './definitions/opencode.js
 import type { ProviderSettingsDefinition } from './types.js';
 
 const ALL_DEFINITIONS: readonly ProviderSettingsDefinition[] = Object.freeze([
+  DEVPILOT_PROVIDER_SETTINGS_DEFINITION,
   CODEX_PROVIDER_SETTINGS_DEFINITION,
   OPENCODE_PROVIDER_SETTINGS_DEFINITION,
   CURSOR_PROVIDER_SETTINGS_DEFINITION,

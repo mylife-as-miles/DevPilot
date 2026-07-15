@@ -104,6 +104,8 @@ describe('AGENTS', () => {
   });
 
   it('registers runnable CLI command handlers for built-in generic ACP agents', () => {
+    expect(requireCatalogEntry('devpilot').getCliCommandHandler).toBeTypeOf('function');
+    expect(requireCatalogEntry('devpilot').getCliCapabilityOverride).toBeTypeOf('function');
     expect(requireCatalogEntry('customAcp').getCliCommandHandler).toBeTypeOf('function');
     expect(requireCatalogEntry('kiro').getCliCommandHandler).toBeTypeOf('function');
   });

@@ -14,6 +14,7 @@ import { AsyncTtlCache } from '@happier-dev/protocol';
 import { getProviderCliRuntimeSpec } from '@happier-dev/agents';
 import { isProviderCliPathRunnable, providerCliPathRequiresJavaScriptRuntime } from '@happier-dev/cli-common/providers';
 import { resolveWindowsCommandInvocation, resolveWindowsCommandOnPath } from '@happier-dev/cli-common/process';
+import { resolveDevPilotAcpLaunch } from '@/backends/devpilot/resolveDevPilotAcpLaunch';
 
 const execFileAsync = promisify(execFile);
 type ExecFileBestEffortOptions = ExecOptions & Readonly<{ windowsVerbatimArguments?: boolean }>;
@@ -570,6 +571,19 @@ async function resolveCliPathForName(
     name: DetectCliName,
     pathEnv: string | null,
 ): Promise<Readonly<{ resolvedPath: string; resolutionSource: 'override' | 'system' | 'managed' }> | null> {
+    if (name === 'devpilot') {
+        try {
+            const launch = resolveDevPilotAcpLaunch({ env: process.env });
+            if (!await isCliPathRunnable(launch.command)) return null;
+            return {
+                resolvedPath: launch.command,
+                resolutionSource: launch.runtimeSource === 'configured' ? 'override' : 'system',
+            };
+        } catch {
+            return null;
+        }
+    }
+
     const rawOverride = readCliOverridePath(name);
     if (rawOverride) {
         const override = await resolveCliOverridePath(name);

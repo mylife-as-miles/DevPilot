@@ -3596,7 +3596,22 @@ export const en = {
 	        noOptionsAvailable: 'No options available',
 	        invalidNumber: 'Invalid number',
 	        invalidJson: 'Invalid JSON',
-	        plugins: {
+        plugins: {
+            devpilot: {
+                title: 'DevPilot',
+                sections: {
+                    runtime: {
+                        title: 'Local runtime',
+                        footer: 'DevPilot checks this path first, then the sibling ../DevPilot-CLI checkout, the active virtual environment, and finally PATH.',
+                    },
+                },
+                fields: {
+                    devpilotExecutablePath: {
+                        title: 'Runtime executable',
+                        subtitle: 'Optional absolute path to devpilot or a Python executable with DevPilot installed. Leave empty for automatic discovery.',
+                    },
+                },
+            },
             claude: {
                 title: "Claude Code",
                 sections: {
@@ -5693,6 +5708,7 @@ export const en = {
             badgePlanMode: 'Plan Mode',
         },
         agent: {
+            devpilot: 'DevPilot',
             claude: 'Claude',
             codex: 'Codex',
             opencode: 'OpenCode',
@@ -9343,6 +9359,7 @@ settingsSession: {
             title: 'AI Backend',
             selectAtLeastOneError: 'Select at least one AI backend.',
             claudeSubtitle: 'Claude CLI',
+            devpilotSubtitle: 'DevPilot Autonomous Research',
             codexSubtitle: 'Codex CLI',
             opencodeSubtitle: 'OpenCode CLI',
             geminiSubtitleExperimental: 'Gemini CLI (experimental)',

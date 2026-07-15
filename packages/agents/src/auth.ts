@@ -25,6 +25,13 @@ export type AgentAuthProbeConfig = Readonly<{
 }>;
 
 export const AGENT_AUTH_PROBE_CONFIG: Readonly<Record<AgentId, AgentAuthProbeConfig>> = Object.freeze({
+  devpilot: {
+    agentId: 'devpilot',
+    binaryNames: [getProviderCliRuntimeSpec('devpilot').binaryName],
+    statusCommand: ['--version'],
+    parser: 'unknown',
+    backgroundChecks: 'manual_only',
+  },
   claude: {
     agentId: 'claude',
     binaryNames: [getProviderCliRuntimeSpec('claude').binaryName],

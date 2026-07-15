@@ -40,6 +40,7 @@ type CommonBackendRunOptions = ParsedSessionStartArgs & {
   experimentalCodexAcp?: boolean;
   codexBackendMode?: CodexBackendMode;
   cursorBinaryPath?: string;
+  devpilotExecutablePath?: string;
   cursorAgentFallbackEnabled?: boolean;
   cursorApiEndpoint?: string;
   kimiAcpPythonSelector?: KimiAcpPythonSelector;
@@ -49,6 +50,7 @@ type ProviderRunOptionKeys =
   | 'experimentalCodexAcp'
   | 'codexBackendMode'
   | 'cursorBinaryPath'
+  | 'devpilotExecutablePath'
   | 'cursorAgentFallbackEnabled'
   | 'cursorApiEndpoint'
   | 'kimiAcpPythonSelector';
@@ -72,6 +74,11 @@ function pickProviderRunOptions(extras: Record<string, unknown>): Pick<CommonBac
   if (typeof extras.cursorBinaryPath === 'string') {
     const cursorBinaryPath = extras.cursorBinaryPath.trim();
     if (cursorBinaryPath) out.cursorBinaryPath = cursorBinaryPath;
+  }
+
+  if (typeof extras.devpilotExecutablePath === 'string') {
+    const devpilotExecutablePath = extras.devpilotExecutablePath.trim();
+    if (devpilotExecutablePath) out.devpilotExecutablePath = devpilotExecutablePath;
   }
 
   if (extras.cursorAgentFallbackEnabled === false) {

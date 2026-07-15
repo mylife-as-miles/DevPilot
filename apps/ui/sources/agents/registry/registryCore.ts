@@ -29,6 +29,7 @@ import { CUSTOM_ACP_CORE } from '@/agents/providers/customAcp/core';
 import { PI_CORE } from '@/agents/providers/pi/core';
 import { COPILOT_CORE } from '@/agents/providers/copilot/core';
 import { CURSOR_CORE } from '@/agents/providers/cursor/core';
+import { DEVPILOT_CORE } from '@/agents/providers/devpilot/core';
 
 export type { AgentId };
 
@@ -210,6 +211,7 @@ export type AgentCoreConfig = Readonly<{
 }>;
 
 export const AGENTS_CORE = Object.freeze({
+    devpilot: DEVPILOT_CORE,
     claude: CLAUDE_CORE,
     codex: CODEX_CORE,
     opencode: OPENCODE_CORE,

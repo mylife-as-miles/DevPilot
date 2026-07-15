@@ -7,6 +7,16 @@ import {
 } from './providerSettings';
 
 describe('providerSettings', () => {
+  it('resolves a trimmed DevPilot executable override without mutating process env', () => {
+    expect(
+      resolveProviderSpawnExtrasForRuntime({
+        agentId: 'devpilot',
+        settings: { devpilotExecutablePath: '  C:\\Tools\\devpilot.exe  ' },
+        processEnv: {},
+      }),
+    ).toEqual({ devpilotExecutablePath: 'C:\\Tools\\devpilot.exe' });
+  });
+
   it('resolves Codex ACP spawn extras from account settings without mutating process env', () => {
     const prevAcp = process.env.HAPPIER_EXPERIMENTAL_CODEX_ACP;
     process.env.HAPPIER_EXPERIMENTAL_CODEX_ACP = '0';

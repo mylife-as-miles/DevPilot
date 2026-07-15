@@ -16,6 +16,7 @@ import { CUSTOM_ACP_UI } from '@/agents/providers/customAcp/ui';
 import { PI_UI } from '@/agents/providers/pi/ui';
 import { COPILOT_UI } from '@/agents/providers/copilot/ui';
 import { CURSOR_UI } from '@/agents/providers/cursor/ui';
+import { DEVPILOT_UI } from '@/agents/providers/devpilot/ui';
 
 export type AgentIconSvgXmlResolver = (
     theme: UnistylesThemes[keyof UnistylesThemes],
@@ -48,6 +49,7 @@ export type AgentUiConfig = Readonly<{
 }>;
 
 export const AGENTS_UI: Readonly<Record<AgentId, AgentUiConfig>> = Object.freeze({
+    devpilot: DEVPILOT_UI,
     claude: CLAUDE_UI,
     codex: CODEX_UI,
     opencode: OPENCODE_UI,

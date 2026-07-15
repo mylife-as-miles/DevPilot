@@ -126,6 +126,44 @@ describe('createAcpCliCapability', () => {
     }));
   });
 
+  it('allows a provider to replace the complete ACP probe launch', async () => {
+    const resolveAcpProbeLaunch = vi.fn(() => ({
+      command: 'C:\\DevPilot-CLI\\.venv\\Scripts\\python.exe',
+      args: ['-m', 'devpilot.cli.app', 'acp', '--stdio'],
+    }));
+    const capability = createAcpCliCapability({
+      agentId: 'devpilot',
+      title: 'DevPilot CLI',
+      acpArgs: ['acp', '--stdio'],
+      transport: {
+        agentName: 'devpilot',
+        getInitTimeout: () => 500,
+        getToolPatterns: () => [],
+      },
+      resolveAcpProbeLaunch,
+    });
+
+    await capability.detect?.({
+      request: { id: 'cli.devpilot', params: { includeAcpCapabilities: true } },
+      context: {
+        cliSnapshot: {
+          path: process.env.PATH ?? null,
+          clis: {
+            devpilot: { available: true, resolvedPath: 'C:\\DevPilot-CLI\\.venv\\Scripts\\python.exe' },
+          },
+        },
+      },
+    } as never);
+
+    expect(resolveAcpProbeLaunch).toHaveBeenCalledWith(expect.objectContaining({
+      resolvedPath: 'C:\\DevPilot-CLI\\.venv\\Scripts\\python.exe',
+    }));
+    expect(probeAcpAgentCapabilities).toHaveBeenCalledWith(expect.objectContaining({
+      command: 'C:\\DevPilot-CLI\\.venv\\Scripts\\python.exe',
+      args: ['-m', 'devpilot.cli.app', 'acp', '--stdio'],
+    }));
+  });
+
   it('preserves inherited PYTHONPATH when Kimi ACP capability probing uses poll mode', async () => {
     const originalPlatformDescriptor = Object.getOwnPropertyDescriptor(process, 'platform');
     const originalSelector = process.env.HAPPIER_KIMI_ACP_SELECTOR;

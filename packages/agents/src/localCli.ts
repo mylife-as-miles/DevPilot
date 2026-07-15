@@ -46,6 +46,11 @@ function createAgentLocalCliConfig(agentId: AgentId, input: AgentLocalCliConfigI
 }
 
 export const AGENT_LOCAL_CLI_CONFIG: Readonly<Record<AgentId, AgentLocalCliConfig>> = Object.freeze({
+  devpilot: createAgentLocalCliConfig('devpilot', {
+    machineLoginKey: 'devpilot',
+    authSupport: 'status_only',
+    loginLaunch: null,
+  }),
   claude: createAgentLocalCliConfig('claude', {
     machineLoginKey: 'claude-code',
     authSupport: 'login_terminal',

@@ -34,6 +34,15 @@ export {
 } from './definitions/opencode.js';
 
 export {
+  DEVPILOT_PROVIDER_SETTINGS_DEFINITION,
+  DEVPILOT_PROVIDER_FIELDS,
+  DEVPILOT_PROVIDER_SETTINGS_DEFAULTS,
+  buildDevPilotProviderSettingsShape,
+  normalizeDevPilotExecutablePath,
+  resolveDevPilotSpawnExtrasFromSettings,
+} from './definitions/devpilot.js';
+
+export {
   CURSOR_PROVIDER_SETTINGS_DEFINITION,
   CURSOR_PROVIDER_FIELDS,
   CURSOR_PROVIDER_SETTINGS_DEFAULTS,

@@ -253,6 +253,16 @@ const CODEX_STATIC_MODELS = Object.freeze([
 ] satisfies readonly AgentModelDescriptor[]);
 
 export const AGENT_MODEL_CONFIG: Readonly<Record<AgentId, AgentModelConfig>> = Object.freeze({
+  devpilot: {
+    supportsSelection: true,
+    supportsFreeform: true,
+    nonAcpApplyScope: 'next_prompt',
+    acpApplyBehavior: 'set_model',
+    acpModelConfigOptionId: 'model',
+    dynamicProbe: 'auto',
+    defaultMode: 'default',
+    allowedModes: ['default'],
+  },
   claude: {
     supportsSelection: true,
     supportsFreeform: true,

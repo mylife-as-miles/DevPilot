@@ -16,6 +16,7 @@ import { PI_PROVIDER_SETTINGS_PLUGIN } from '../pi/settings/plugin';
 import { QWEN_PROVIDER_SETTINGS_PLUGIN } from '../qwen/settings/plugin';
 import { COPILOT_PROVIDER_SETTINGS_PLUGIN } from '../copilot/settings/plugin';
 import { CURSOR_PROVIDER_SETTINGS_PLUGIN } from '../cursor/settings/plugin';
+import { DEVPILOT_PROVIDER_SETTINGS_PLUGIN } from '../devpilot/settings/plugin';
 
 function isTranslationRef(value: unknown): value is Readonly<{ key: string }> {
     return Boolean(
@@ -137,6 +138,7 @@ export function assertProviderSettingsPluginsValid(plugins: readonly ProviderSet
 }
 
 export const PROVIDER_SETTINGS_PLUGINS = [
+    DEVPILOT_PROVIDER_SETTINGS_PLUGIN,
     CLAUDE_PROVIDER_SETTINGS_PLUGIN,
     CODEX_PROVIDER_SETTINGS_PLUGIN,
     OPENCODE_PROVIDER_SETTINGS_PLUGIN,

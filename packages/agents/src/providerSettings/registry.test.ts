@@ -37,6 +37,13 @@ describe('provider settings registry', () => {
     expect(codexDefinition?.fields.codexBackendMode?.default).toBe('appServer');
   });
 
+  it('exposes the machine-local DevPilot executable override', () => {
+    const devpilotDefinition = getProviderSettingsDefinition('devpilot');
+    expect(devpilotDefinition).not.toBeNull();
+    expect(devpilotDefinition?.fields.devpilotExecutablePath?.default).toBe('');
+    expect(devpilotDefinition?.fields.devpilotExecutablePath?.storageScope).toBe('local');
+  });
+
   it('exposes Cursor settings from the canonical provider definition', () => {
     const cursorDefinition = getProviderSettingsDefinition('cursor' as any);
     expect(cursorDefinition).not.toBeNull();

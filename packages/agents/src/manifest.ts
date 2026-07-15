@@ -12,6 +12,33 @@ function providerDetectKey(agentId: AgentId): string {
 }
 
 export const AGENTS_CORE = {
+    devpilot: {
+        id: 'devpilot',
+        cliSubcommand: 'devpilot',
+        detectKey: providerDetectKey('devpilot'),
+        flavorAliases: ['dev-pilot'],
+        cloudConnect: null,
+        connectedServices: null,
+        resume: { vendorResume: 'supported' },
+        sessionStorage: { direct: false, persisted: true },
+        sessionCapabilities: {
+            sessionListing: 'supported',
+            sessionFork: { conversation: 'unsupported', fromMessage: 'unsupported' },
+            sessionRollback: { conversation: 'unsupported' },
+        },
+        handoff: { vendorStateTransfer: 'unsupported' },
+        localControl: { supported: true, topology: 'exclusive', attachStrategy: 'unsupported' },
+        runtimeInput: {
+            inFlightSteerSupported: true,
+            terminalPromptInjectionSupported: false,
+        },
+        tools: { delivery: 'native_mcp', support: 'supported' },
+        media: {
+            acceptsImageInput: 'experimental',
+            emitsSessionMedia: GENERIC_SESSION_MEDIA_OUTPUT,
+            nativeImageGeneration: NO_NATIVE_IMAGE_GENERATION,
+        },
+    },
     claude: {
         id: 'claude',
         cliSubcommand: 'claude',

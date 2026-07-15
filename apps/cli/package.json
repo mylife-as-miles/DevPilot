@@ -82,6 +82,7 @@
     "package.json"
   ],
   "bundledDependencies": [
+    "@devpilot/runtime",
     "@happier-dev/agents",
     "@happier-dev/cli-common",
     "@happier-dev/connection-supervisor",
@@ -135,6 +136,7 @@
     "postpack": "node scripts/postpack/patchPackedTarballForBun.mjs"
   },
   "dependencies": {
+    "@devpilot/runtime": "0.1.0",
     "@agentclientprotocol/sdk": "^0.14.1",
     "@anthropic-ai/claude-agent-sdk": "^0.2.123",
     "@fastify/swagger": "9.7.0",

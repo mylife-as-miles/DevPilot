@@ -16,6 +16,11 @@ export function createAcpCliCapability(params: {
     resolvedPath: string;
     defaultArgs: readonly string[];
   }>) => Promise<string[]> | string[];
+  resolveAcpProbeLaunch?: (params: Readonly<{
+    resolvedPath: string;
+    defaultCommand: string;
+    defaultArgs: readonly string[];
+  }>) => Promise<Readonly<{ command: string; args: readonly string[] }>> | Readonly<{ command: string; args: readonly string[] }>;
   resolveAcpProbeEnv?: (params: Readonly<{
     defaultEnv: NodeJS.ProcessEnv;
   }>) => NodeJS.ProcessEnv;
@@ -55,10 +60,19 @@ export function createAcpCliCapability(params: {
       const probeEnv = params.resolveAcpProbeEnv
         ? params.resolveAcpProbeEnv({ defaultEnv })
         : defaultEnv;
+      const defaultCommand = launchSpec?.command ?? base.resolvedPath;
+      const defaultArgs = [...(launchSpec?.args ?? []), ...acpProbeArgs];
+      const probeLaunch = params.resolveAcpProbeLaunch
+        ? await params.resolveAcpProbeLaunch({
+            resolvedPath: base.resolvedPath,
+            defaultCommand,
+            defaultArgs,
+          })
+        : { command: defaultCommand, args: defaultArgs };
 
       const probe = await probeAcpAgentCapabilities({
-        command: launchSpec?.command ?? base.resolvedPath,
-        args: [...(launchSpec?.args ?? []), ...acpProbeArgs],
+        command: probeLaunch.command,
+        args: [...probeLaunch.args],
         cwd: process.cwd(),
         env: probeEnv,
         transport: params.transport,

@@ -5,7 +5,21 @@ import { getProviderCliRuntimeSpec } from './providers/providerCliRuntime.js';
 
 describe('built-in ACP config', () => {
   it('keeps the built-in ACP allowlist explicit and drift-free', () => {
-    expect(Object.keys(BUILT_IN_ACP_CONFIG).sort()).toEqual(['customAcp', 'kiro']);
+    expect(Object.keys(BUILT_IN_ACP_CONFIG).sort()).toEqual(['customAcp', 'devpilot', 'kiro']);
+  });
+
+  it('exposes DevPilot as a built-in ACP stdio provider', () => {
+    expect(hasBuiltInAcpConfig('devpilot')).toBe(true);
+    expect(getBuiltInAcpConfig('devpilot')).toMatchObject({
+      agentId: 'devpilot',
+      launcher: {
+        command: getProviderCliRuntimeSpec('devpilot').binaryName,
+        args: ['acp', '--stdio'],
+      },
+      supportsLoadSession: true,
+      supportsModes: 'yes',
+      supportsModels: 'yes',
+    });
   });
 
   it('exposes Custom ACP as a built-in generic ACP agent family', () => {

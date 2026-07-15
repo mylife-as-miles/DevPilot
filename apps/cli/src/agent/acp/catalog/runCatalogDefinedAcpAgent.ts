@@ -24,6 +24,7 @@ export async function runCatalogDefinedAcpAgent(
   opts: StandardAcpProviderRunOptions & {
     credentials: Credentials;
     permissionMode?: PermissionMode;
+    devpilotExecutablePath?: string;
   },
 ): Promise<void> {
   const displayTitle = normalizeDisplayTitle(agentId);
@@ -69,6 +70,13 @@ export async function runCatalogDefinedAcpAgent(
           machineId,
         },
         pendingQueueDrainMaxPopPerWake,
+        ...(agentId === 'devpilot' && opts.devpilotExecutablePath
+          ? {
+              backendOptions: {
+                env: { DEVPILOT_EXECUTABLE_PATH: opts.devpilotExecutablePath },
+              },
+            }
+          : {}),
       }),
     onAttachMetadataSnapshotMissing: (error) => {
       logger.debug(

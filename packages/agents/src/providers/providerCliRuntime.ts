@@ -82,6 +82,19 @@ function powershellInstall(command: string): ProviderCliInstallCommand {
 }
 
 export const PROVIDER_CLI_RUNTIME_SPECS: Readonly<Record<AgentId, ProviderCliRuntimeSpec>> = {
+  devpilot: {
+    id: 'devpilot',
+    title: 'DevPilot CLI',
+    binaryName: 'devpilot',
+    knownCommandCandidates: null,
+    sourcePreferenceDefault: 'system-first',
+    managedInstall: null,
+    manualInstallKind: 'none',
+    manualInstallRecipes: null,
+    acceptsJavaScriptFileOverride: false,
+    installGuideUrl: 'https://github.com/mylife-as-miles/DevPilot-CLI',
+    docsUrl: 'https://github.com/mylife-as-miles/DevPilot-CLI',
+  },
   claude: {
     id: 'claude',
     title: 'Claude Code CLI',

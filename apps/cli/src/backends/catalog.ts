@@ -46,6 +46,7 @@ import {
 export type { AgentCatalogEntry, AgentChecklistContributions, CatalogAgentId, CliDetectSpec } from './types';
 
 export const AGENTS: Partial<Record<CatalogAgentId, AgentCatalogEntry>> = {
+  devpilot: BUILT_IN_CATALOG_DEFINED_ACP_AGENTS.devpilot,
   claude,
   codex,
   gemini,
@@ -54,7 +55,8 @@ export const AGENTS: Partial<Record<CatalogAgentId, AgentCatalogEntry>> = {
   qwen,
   kimi,
   kilo,
-  ...BUILT_IN_CATALOG_DEFINED_ACP_AGENTS,
+  customAcp: BUILT_IN_CATALOG_DEFINED_ACP_AGENTS.customAcp,
+  kiro: BUILT_IN_CATALOG_DEFINED_ACP_AGENTS.kiro,
   pi,
   copilot,
   cursor,

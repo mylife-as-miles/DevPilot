@@ -24,6 +24,11 @@ export function createCatalogDefinedAcpEntry(agentId: AgentId): AgentCatalogEntr
     },
     getCliDetect: async () => createCatalogDefinedCliDetect(agentId),
     getCliAuthSpec: async () => createCatalogDefinedCliAuthSpec(agentId),
+    ...(agentId === 'devpilot'
+      ? {
+          getCliCapabilityOverride: async () => (await import('@/backends/devpilot/capability')).cliCapability,
+        }
+      : {}),
     vendorResumeSupport: core.resume.vendorResume,
     getAcpBackendFactory: async () => {
       return (opts) => ({ backend: createCatalogDefinedAcpBackend(agentId, opts as never) });
