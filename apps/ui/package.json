@@ -65,6 +65,7 @@
     "preset": "jest-expo"
   },
   "dependencies": {
+    "@devpilot/branding": "0.1.0",
     "@codemirror/autocomplete": "6.20.0",
     "@codemirror/commands": "6.10.2",
     "@codemirror/lang-cpp": "6.0.3",

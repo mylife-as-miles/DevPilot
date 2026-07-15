@@ -1,3 +1,5 @@
+import { brand } from '@devpilot/branding';
+
 const mcpServersUxTranslationExtension = {
   mcpServersConfiguredEmptySubtitle: 'Create a server, import host JSON, or install a recommended preset.',
   mcpServersHeroSubtitle: ({ configuredCount }: { configuredCount: number }) => `${configuredCount} configured in Happier`,
@@ -1035,7 +1037,7 @@ export const en = {
 
     appCrash: {
         title: 'Something went wrong',
-        subtitle: 'Happier hit an unexpected error. You can restart the app UI or copy details for support.',
+        subtitle: `${brand.productName} hit an unexpected error. You can restart the app UI or copy details for support.`,
         detailsTitle: 'Error details',
         restart: 'Restart app',
         restartAndReportIssue: 'Restart and open bug report',
@@ -1874,13 +1876,13 @@ export const en = {
         developerTools: 'Developer Tools',
         about: 'About',
         actionsSettingsAboutSubtitle: 'Enable or disable actions globally, per surface (UI/voice/MCP), and per placement (where they appear in the UI). Disabled actions are fail-closed at runtime.',
-        aboutFooter: 'Happier is a Codex, Claude Code and OpenCode mobile client. It\'s end-to-end encrypted by default, with account restore for your other devices. Not affiliated with Anthropic.',
+        aboutFooter: `${brand.productName} is the desktop control plane for autonomous software research and engineering. The Python runtime remains an independent local process.`,
         whatsNew: 'What\'s New',
         whatsNewSubtitle: 'See the latest updates and improvements',
         reportIssue: 'Report an Issue',
         privacyPolicy: 'Privacy Policy',
         termsOfService: 'Terms of Service',
-        rateUs: 'Rate Happier',
+        rateUs: `Rate ${brand.productName}`,
         rateUsSubtitle: 'If you enjoy the app, a quick rating helps us a lot',
         eula: 'EULA',
         supportUs: 'Support us',
@@ -3143,7 +3145,7 @@ export const en = {
         title: 'Desktop',
         footer: 'Controls Tauri desktop integrations on this computer.',
         startOnLoginTitle: 'Launch at login',
-        startOnLoginSubtitle: 'Start Happier automatically when you sign in to this computer.',
+        startOnLoginSubtitle: `Start ${brand.productName} automatically when you sign in to this computer.`,
     },
 
     settingsPets: {
@@ -8253,11 +8255,11 @@ settingsSession: {
         },
         defaultTitle: "What's new",
         onboardingShowcase: {
-                "title": "Welcome to Happier",
+                "title": "Welcome to DevPilot",
                 "subtitle": "Your AI agents, everywhere you work.",
                 "cards": {
                     "welcome": {
-                        "title": "Welcome to Happier",
+                        "title": "Welcome to DevPilot",
                         "everywhereTitle": "Your AI agents, everywhere you work",
                         "everywhereBody": "Claude Code, Codex, OpenCode, Pi, and much more: on your phone, tablet, browser, or desktop.",
                         "cockpitTitle": "Your mobile cockpit",
@@ -8514,12 +8516,12 @@ settingsSession: {
         // Unified onboarding redesign — welcome decision (right pane)
         welcomeQuestionTitle: 'Welcome.',
         welcomeQuestionSubtitle: 'First time here?',
-        welcomeQuestionBody: 'Happier is the control room for your AI coding agents. No email needed. Your account is a private key, generated on this device.',
+        welcomeQuestionBody: `${brand.productName} is the graphical control plane for your local DevPilot research runtime.`,
 
         welcomePrimaryButton: 'First time here — let\'s start',
         welcomePrimarySubtitle: 'One tap. No form. Your key lives here.',
 
-        welcomeSecondaryButton: 'Login — I already use Happier',
+        welcomeSecondaryButton: `Login — I already use ${brand.productName}`,
         welcomeSecondarySubtitle: 'Scan a QR code, or enter your secret key',
 
         // Unified onboarding redesign — returning-user copy variants.

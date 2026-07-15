@@ -58,10 +58,10 @@ if (appLocalConfigModule && typeof appLocalConfigModule === 'object') {
 }
 
 const DEFAULTS = {
-    owner: "happier-dev",
-    slug: "happier",
-    easProjectId: "2a550bd7-e4d2-4f59-ab47-dcb778775cee",
-    linkHost: "app.happier.dev",
+    owner: "mylife-as-miles",
+    slug: "devpilot",
+    easProjectId: "",
+    linkHost: "localhost",
 };
 
 // Allow opt-in overrides for local dev tooling without changing upstream defaults.
@@ -181,15 +181,17 @@ const updatesNativeDebugEnabled =
     parseOptionalBoolean(process.env.EX_UPDATES_NATIVE_DEBUG) ??
     null;
 
-const updatesUrl = (process.env.EXPO_UPDATES_URL || '').trim() || `https://u.expo.dev/${easProjectId}`;
+const updatesUrl = (process.env.EXPO_UPDATES_URL || '').trim();
 const updatesChannel = (process.env.EXPO_UPDATES_CHANNEL || '').trim() || appEnvironmentConfig.updatesChannel;
-const updatesConfig = {
-    url: updatesUrl,
-    requestHeaders: {
-        "expo-channel-name": updatesChannel
-    },
-    ...(updatesNativeDebugEnabled === true ? { useNativeDebug: true } : {})
-};
+const updatesConfig = updatesUrl
+    ? {
+        url: updatesUrl,
+        requestHeaders: {
+            "expo-channel-name": updatesChannel
+        },
+        ...(updatesNativeDebugEnabled === true ? { useNativeDebug: true } : {})
+    }
+    : { enabled: false };
 
 const normalizeCiFlag = (raw) => {
     const value = String(raw ?? '').trim().toLowerCase();
@@ -435,7 +437,7 @@ const baseExpoConfig = {
             router: {
                 root: "./sources/app"
             },
-            eas: { projectId: easProjectId },
+            ...(easProjectId ? { eas: { projectId: easProjectId } } : {}),
             app: {
                 // `variant` is used by the JS app runtime for environment-specific guidance and lanes.
                 // Keep the native identity (`APP_ENV`) separate so we can ship preview-lane behavior to
