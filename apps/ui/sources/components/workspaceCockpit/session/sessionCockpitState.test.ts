@@ -27,6 +27,7 @@ describe('sessionCockpitState', () => {
     it('lets persisted mobile surface state override the default chat fallback', () => {
         expect(resolveSessionMobileSurfaceIntent({ routeKind: 'index', persistedSurface: 'tabs' })).toBe('tabs');
         expect(resolveSessionMobileSurfaceIntent({ routeKind: 'index', persistedSurface: 'browse' })).toBe('browse');
+        expect(resolveSessionMobileSurfaceIntent({ routeKind: 'index', persistedSurface: 'research' })).toBe('research');
         expect(
             resolveSessionMobileSurfaceIntent({
                 routeKind: 'index',
@@ -60,6 +61,7 @@ describe('sessionCockpitState', () => {
 
     it('builds canonical session cockpit route paths and preserves server scope', () => {
         expect(resolveSessionRoutePathForSurface('session 1', 'chat')).toBe('/session/session%201?mobileSurface=chat');
+        expect(resolveSessionRoutePathForSurface('session 1', 'research')).toBe('/session/session%201?mobileSurface=research');
         expect(resolveSessionRoutePathForSurface('session-1', 'browse', { serverId: 'server-a' })).toBe('/session/session-1/files?serverId=server-a');
         expect(resolveSessionRoutePathForSurface('session-1', 'git', { serverId: 'server-a' })).toBe('/session/session-1/git?serverId=server-a');
         expect(resolveSessionRoutePathForSurface('session-1', 'tabs', { serverId: 'server-a', query: { details: 'file' } })).toBe('/session/session-1/details?serverId=server-a&details=file');

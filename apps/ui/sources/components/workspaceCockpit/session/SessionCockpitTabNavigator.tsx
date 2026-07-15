@@ -7,6 +7,8 @@ import { NavigationContainer, NavigationIndependentTree } from '@react-navigatio
 
 import { usePersistSessionLastMobileSurface } from '@/sync/domains/state/storage';
 import { useDetailsTabCount } from '@/components/appShell/panes/hooks/useDetailsTabCount';
+import { useSessionMetadata } from '@/sync/domains/state/storage';
+import { resolveAgentIdFromSessionMetadata } from '@happier-dev/agents';
 
 import {
     type SessionMobileSurface,
@@ -20,6 +22,7 @@ import {
 
 type SessionCockpitTabParamList = {
     chat: undefined;
+    research: undefined;
     browse: undefined;
     git: undefined;
     tabs: undefined;
@@ -30,6 +33,8 @@ const Tab = createBottomTabNavigator<SessionCockpitTabParamList>();
 
 const SESSION_COCKPIT_SURFACES_WITH_TERMINAL: readonly SessionMobileSurface[] = ['chat', 'browse', 'git', 'tabs', 'terminal'];
 const SESSION_COCKPIT_SURFACES_WITHOUT_TERMINAL: readonly SessionMobileSurface[] = ['chat', 'browse', 'git', 'tabs'];
+const DEVPILOT_SESSION_COCKPIT_SURFACES_WITH_TERMINAL: readonly SessionMobileSurface[] = ['chat', 'research', 'browse', 'git', 'tabs', 'terminal'];
+const DEVPILOT_SESSION_COCKPIT_SURFACES_WITHOUT_TERMINAL: readonly SessionMobileSurface[] = ['chat', 'research', 'browse', 'git', 'tabs'];
 const DISABLED_NAVIGATION_LINKING = { enabled: false, prefixes: [] };
 const SESSION_COCKPIT_TAB_SCREEN_OPTIONS = {
     headerShown: false,
@@ -43,7 +48,12 @@ type SessionCockpitTabNavigatorProps = Omit<SessionCockpitSurfaceScreenProps, 's
     initialSurface: SessionMobileSurface;
 }>;
 
-function resolveAvailableSurfaces(terminalTabAvailable: boolean): readonly SessionMobileSurface[] {
+function resolveAvailableSurfaces(terminalTabAvailable: boolean, devPilotSession: boolean): readonly SessionMobileSurface[] {
+    if (devPilotSession) {
+        return terminalTabAvailable
+            ? DEVPILOT_SESSION_COCKPIT_SURFACES_WITH_TERMINAL
+            : DEVPILOT_SESSION_COCKPIT_SURFACES_WITHOUT_TERMINAL;
+    }
     return terminalTabAvailable
         ? SESSION_COCKPIT_SURFACES_WITH_TERMINAL
         : SESSION_COCKPIT_SURFACES_WITHOUT_TERMINAL;
@@ -52,8 +62,12 @@ function resolveAvailableSurfaces(terminalTabAvailable: boolean): readonly Sessi
 function resolveInitialSurface(
     initialSurface: SessionMobileSurface,
     terminalTabAvailable: boolean,
+    devPilotSession: boolean,
 ): SessionMobileSurface {
     if (initialSurface === 'terminal' && !terminalTabAvailable) {
+        return 'chat';
+    }
+    if (initialSurface === 'research' && !devPilotSession) {
         return 'chat';
     }
     return initialSurface;
@@ -61,8 +75,10 @@ function resolveInitialSurface(
 
 export const SessionCockpitTabNavigator = React.memo((props: SessionCockpitTabNavigatorProps) => {
     const terminalTabAvailable = props.terminalTabAvailable !== false;
-    const initialSurface = resolveInitialSurface(props.initialSurface, terminalTabAvailable);
-    const surfaces = resolveAvailableSurfaces(terminalTabAvailable);
+    const sessionMetadata = useSessionMetadata(props.sessionId);
+    const devPilotSession = resolveAgentIdFromSessionMetadata(sessionMetadata) === 'devpilot';
+    const initialSurface = resolveInitialSurface(props.initialSurface, terminalTabAvailable, devPilotSession);
+    const surfaces = resolveAvailableSurfaces(terminalTabAvailable, devPilotSession);
     const persistSessionLastMobileSurface = usePersistSessionLastMobileSurface();
     const persistSessionSurface = React.useCallback((surface: SessionMobileSurface) => {
         persistSessionLastMobileSurface(props.sessionId, surface);
@@ -106,7 +122,7 @@ export const SessionCockpitTabNavigator = React.memo((props: SessionCockpitTabNa
 });
 
 function normalizeSurface(value: unknown): SessionMobileSurface | null {
-    if (value === 'chat' || value === 'browse' || value === 'git' || value === 'tabs' || value === 'terminal') {
+    if (value === 'chat' || value === 'research' || value === 'browse' || value === 'git' || value === 'tabs' || value === 'terminal') {
         return value;
     }
     return null;

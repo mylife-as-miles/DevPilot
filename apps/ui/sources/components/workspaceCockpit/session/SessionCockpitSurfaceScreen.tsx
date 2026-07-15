@@ -29,6 +29,7 @@ import {
 import { SessionView } from '@/components/sessions/shell/SessionView';
 import type { SessionRouteHydrationState } from '@/sync/domains/session/sessionRouteHydrationState';
 import { deferOnWeb } from '@/utils/platform/deferOnWeb';
+import { DevPilotResearchWorkspace } from '@/devpilot/research/DevPilotResearchWorkspace';
 
 import {
     resolveSessionRightTabIdForSurface,
@@ -82,7 +83,7 @@ export const SessionCockpitSurfaceScreen = React.memo((props: SessionCockpitSurf
 
     React.useEffect(() => {
         if (!isFocused) return;
-        if (props.surface !== 'chat') return;
+        if (props.surface !== 'chat' && props.surface !== 'research') return;
         if (rightIsOpen !== true) return;
 
         closeRight();
@@ -90,7 +91,7 @@ export const SessionCockpitSurfaceScreen = React.memo((props: SessionCockpitSurf
 
     React.useEffect(() => {
         if (!isFocused) return;
-        if (props.surface !== 'chat') return;
+        if (props.surface !== 'chat' && props.surface !== 'research') return;
         if (detailsIsOpen !== true) return;
         if (hasDeepLinkedDetailsTarget) return;
 
@@ -189,6 +190,14 @@ export const SessionCockpitSurfaceScreen = React.memo((props: SessionCockpitSurf
 
     if (props.surface === 'chat') {
         return renderSessionChrome();
+    }
+
+    if (props.surface === 'research') {
+        return renderSessionChrome(
+            <SessionCockpitFullscreenSurface screenTestID="session-research-screen" safeAreaPadding={false}>
+                <DevPilotResearchWorkspace sessionId={props.sessionId} />
+            </SessionCockpitFullscreenSurface>,
+        );
     }
 
     if (props.surface === 'browse') {

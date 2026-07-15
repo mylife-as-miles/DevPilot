@@ -50,6 +50,9 @@ export const SessionCockpitTabBar = React.memo((props: SessionCockpitTabBarProps
                 ),
             },
         },
+        ...(chatAgentId === 'devpilot'
+            ? [{ id: 'research', label: 'Research', icon: 'flask-outline' } satisfies SessionCockpitTabDefinition]
+            : []),
         { id: 'browse', label: t('common.files'), icon: 'folder-outline' },
         {
             id: 'git',

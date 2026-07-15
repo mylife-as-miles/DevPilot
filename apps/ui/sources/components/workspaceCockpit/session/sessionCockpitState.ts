@@ -1,6 +1,6 @@
 import { buildScopedSessionRouteHref } from '@/hooks/session/sessionRouteServerScope';
 
-export type SessionMobileSurface = 'chat' | 'browse' | 'git' | 'tabs' | 'terminal';
+export type SessionMobileSurface = 'chat' | 'research' | 'browse' | 'git' | 'tabs' | 'terminal';
 export type SessionLegacyRouteKind = 'index' | 'files' | 'git' | 'details' | 'terminal';
 
 type SessionRightTabId = 'git' | 'files' | 'terminal';
@@ -8,7 +8,7 @@ type SessionRouteQueryValue = string | number | boolean | null | undefined;
 
 function normalizeSessionMobileSurface(value: string | null | undefined): SessionMobileSurface | null {
     const normalized = typeof value === 'string' ? value.trim() : '';
-    if (normalized === 'chat' || normalized === 'browse' || normalized === 'git' || normalized === 'tabs' || normalized === 'terminal') {
+    if (normalized === 'chat' || normalized === 'research' || normalized === 'browse' || normalized === 'git' || normalized === 'tabs' || normalized === 'terminal') {
         return normalized;
     }
     return null;
@@ -82,7 +82,7 @@ export function resolveSessionRoutePathForSurface(
         query?: Readonly<Record<string, SessionRouteQueryValue>>;
     }> = {},
 ): string {
-    const query = surface === 'chat'
+    const query = surface === 'chat' || surface === 'research'
         ? { ...options.query, mobileSurface: surface }
         : options.query;
     const suffix =
