@@ -1,33 +1,18 @@
 # Third-Party Notices
 
-## Karpathy-Inspired Claude Code Guidelines
+DevPilot Desktop includes source derived from the Happier project:
 
-Source: https://github.com/multica-ai/andrej-karpathy-skills
+- Project: Happier
+- Source: https://github.com/happier-dev/happier
+- Upstream revision: `212776ed66af179d1bb26a1d9a6fe9576441632c`
+- License: MIT
+- Preserved license: `licenses/Happier-LICENSE.txt`
 
-License: MIT
+Happier and the third-party packages recorded in `yarn.lock` remain the work of
+their respective authors and are provided under their respective licenses.
+Copyright notices and license headers present in imported source files are
+preserved.
 
-Used as inspiration/adapted skill content for DevPilot coding discipline guidelines.
-
-## MemPalace
-
-Source: https://github.com/MemPalace/mempalace
-
-License: MIT
-
-Used as an optional vendored long-term memory engine for DevPilot.
-
-## Hermes Agent
-
-Source: https://github.com/NousResearch/hermes-agent
-
-License: MIT
-
-Vendored as upstream source for architectural reference while DevPilot's learning layer remains a native local implementation.
-
-## Headroom
-
-Source: https://github.com/headroomlabs-ai/headroom
-
-License: Apache-2.0
-
-Used as an optional vendored context-compression engine for DevPilot.
+No Happier signing material, hosted-service credentials, analytics keys,
+update keys, OAuth secrets, or mobile-store credentials are included in this
+repository.
