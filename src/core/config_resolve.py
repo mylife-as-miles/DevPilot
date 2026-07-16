@@ -18,6 +18,7 @@ from __future__ import annotations
 import logging
 from difflib import get_close_matches
 from pathlib import Path
+from collections.abc import Mapping
 from typing import Any
 
 log = logging.getLogger(__name__)
@@ -224,6 +225,7 @@ def resolve_config(
     yaml_path: str | Path | None = None,
     cli_overrides: dict[str, Any] | None = None,
     role: str = "coordinator",
+    base_overrides: dict[str, Any] | None = None,
 ):
     """Resolve the full configuration for a run.
 
@@ -282,6 +284,14 @@ def resolve_config(
             log.info("Applying plugin profile: %s", profile_name)
             merged = deep_merge(merged, profile)
 
+    # Runtime setup defaults are an internal layer below the project document.
+    # They use the same flat/nested schema and are never returned to protocol
+    # clients as raw configuration.
+    if base_overrides:
+        merged = deep_merge(merged, {
+            key: value for key, value in base_overrides.items() if value is not None
+        })
+
     # Layer 3: user YAML (shared keys + role section). Drop top-level None so a
     # ``model: null`` "reset to default" never fails non-Optional validation
     # (mirrors the old loader, which stripped None before merging).
@@ -310,3 +320,48 @@ def resolve_config(
     from ..coordinator.config import CoordinatorConfig
 
     return CoordinatorConfig(**merged)
+
+
+_RUNTIME_CONFIG_NAMES = ("research_config.yaml", "devpilot.yaml", "autoresearch.yaml")
+
+
+def resolve_runtime_config(
+    *,
+    cwd: Path,
+    task: str,
+    resume: bool = False,
+    overrides: Mapping[str, Any] | None = None,
+):
+    """Resolve the Coordinator config used by SDK and ACP runtime sessions.
+
+    Precedence is built-ins, ``devpilot setup`` defaults, project YAML,
+    environment fallbacks applied by the typed model, then explicit SDK options.
+    Empty explicit values are ignored so requests cannot erase configured values.
+    """
+    from ..cli.user_config import load_user_defaults
+
+    resolved_cwd = Path(cwd).expanduser().resolve()
+    if not resolved_cwd.is_dir():
+        raise ValueError(f"Research directory is not accessible: {resolved_cwd}")
+    yaml_path = next(
+        (resolved_cwd / name for name in _RUNTIME_CONFIG_NAMES if (resolved_cwd / name).is_file()),
+        None,
+    )
+    raw_user = load_user_defaults()
+    user_defaults: dict[str, Any] = {}
+    if isinstance(raw_user.get("llm"), dict):
+        user_defaults["llm"] = raw_user["llm"]
+    if isinstance(raw_user.get("defaults"), dict):
+        user_defaults.update(raw_user["defaults"])
+
+    provided = {
+        key: value for key, value in dict(overrides or {}).items()
+        if value is not None and value != ""
+    }
+    provided.update({"cwd": str(resolved_cwd), "task": task, "resume": resume})
+    return resolve_config(
+        yaml_path=yaml_path,
+        cli_overrides=provided,
+        role="coordinator",
+        base_overrides=user_defaults,
+    )

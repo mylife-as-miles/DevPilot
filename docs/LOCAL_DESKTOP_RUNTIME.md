@@ -27,3 +27,8 @@ Electron verifies the selected runtime with `devpilot --version`, lets the user 
 ```
 
 The ACP process is scoped to the selected project and is stopped when the Electron application exits. Hosted Relay, account, QR-login, and cross-device-sync flows are disabled by default for the local desktop milestone.
+# Local Desktop Runtime
+
+The desktop launches the repository-local `devpilot acp --stdio` executable.
+ACP resolves the same setup and project configuration layers as the SDK, and
+uses JSON-only stdout with diagnostics on sanitized stderr.

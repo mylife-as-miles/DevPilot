@@ -1,6 +1,7 @@
 import * as React from 'react';
 
 import { devpilotServices, isElectronDesktop } from '@/config/devpilotServices';
+import { getDesktopClient } from '@devpilot/desktop/client';
 
 const LOCAL_SESSION_STORAGE_KEY = 'devpilot.localDesktopSession.v1';
 const LOCAL_SESSION_EVENT = 'devpilot:local-session-changed';
@@ -71,6 +72,24 @@ export function useDevPilotLocalSession(): DevPilotLocalSession | null {
             window.removeEventListener(LOCAL_SESSION_EVENT, update);
             window.removeEventListener('storage', update);
         };
+    }, []);
+
+    React.useEffect(() => {
+        const desktop = getDesktopClient();
+        if (!desktop || !isElectronDesktop()) return;
+        void desktop.restoreAcp().then((restored) => {
+            if (!restored) return;
+            writeDevPilotLocalSession({
+                mode: 'local-acp',
+                projectPath: restored.projectPath,
+                acpPid: restored.pid,
+                acpSessionId: restored.sessionId,
+                connectedAt: Date.now(),
+            });
+        }).catch(() => {
+            // The persisted record is advisory. A missing/moved project simply
+            // returns to local setup instead of surfacing stale process state.
+        });
     }, []);
 
     return session;

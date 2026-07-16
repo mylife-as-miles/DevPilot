@@ -64,6 +64,7 @@ class ResearchSession:
         self._orchestrator_factory = orchestrator_factory
         self._handlers: list[EventHandler] = []
         self._task: asyncio.Task[str] | None = None
+        self._orchestrator: Any | None = None
         from ..events import EventBus
 
         self._bus = EventBus()
@@ -90,30 +91,42 @@ class ResearchSession:
         if self.running:
             raise RuntimeError("This research session is already running.")
 
-        config_values = dict(self.request.options)
-        config_values.update({
-            "cwd": str(self.request.cwd.resolve()),
-            "task": self.request.task,
-            "resume": self.request.resume,
-        })
-        from ..coordinator.config import CoordinatorConfig
+        from ..core.config_resolve import resolve_runtime_config
 
-        config = CoordinatorConfig(**config_values)
+        config = resolve_runtime_config(
+            cwd=self.request.cwd,
+            task=self.request.task,
+            resume=self.request.resume,
+            overrides=self.request.options,
+        )
         provider = self._provider_factory(config)
         orchestrator = self._orchestrator_factory(config, provider, self._bus)
+        self._orchestrator = orchestrator
         self._task = asyncio.create_task(orchestrator.run())
         try:
             return await self._task
         finally:
             self._task = None
+            self._orchestrator = None
 
     async def cancel(self) -> None:
         """Cancel the current run; runtime cleanup remains with the Coordinator."""
         if not self.running or self._task is None:
             return
-        self._task.cancel()
+        task = self._task
+        # Coordinator keeps checkpoints/artifacts as its source of truth. Give
+        # it a chance to persist the live tree before task cancellation tears
+        # down pending provider/executor work.
+        checkpoint = getattr(self._orchestrator, "_write_checkpoint", None)
+        if callable(checkpoint):
+            try:
+                checkpoint(reason="cancelled")
+            except Exception:
+                pass
+        self._bus.emit("session.cancelled", {"cwd": str(self.request.cwd)})
+        task.cancel()
         try:
-            await self._task
+            await task
         except asyncio.CancelledError:
             pass
 

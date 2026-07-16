@@ -1192,6 +1192,14 @@ def _print_banner(config: CoordinatorConfig) -> None:
 
 
 def _print_status(msg: str) -> None:
+    # ACP owns stdout for JSON-RPC framing. Keep coordinator diagnostics out of
+    # that stream while preserving normal terminal rendering elsewhere.
+    try:
+        from ..sdk.stdio import write_protocol_diagnostic
+        if write_protocol_diagnostic(f"devpilot: {msg}"):
+            return
+    except Exception:
+        pass
     from ..cli.style import render_status
     render_status(msg, style="dim", glyph="·")
 

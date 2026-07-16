@@ -1,5 +1,5 @@
 const { app, BrowserWindow, dialog, ipcMain, session, shell } = require('electron');
-const { createReadStream, existsSync, statSync } = require('node:fs');
+const { createReadStream, existsSync, statSync, readFileSync, writeFileSync, mkdirSync } = require('node:fs');
 const { spawn, spawnSync } = require('node:child_process');
 const http = require('node:http');
 const path = require('node:path');
@@ -13,6 +13,43 @@ let acpProcessProjectPath = null;
 let acpSessionId = null;
 let acpRequestSequence = 0;
 const acpPendingRequests = new Map();
+const runtimeLogs = [];
+let runtimeLogBytes = 0;
+const MAX_RUNTIME_LOG_ENTRIES = 1000;
+const MAX_RUNTIME_LOG_BYTES = 1_500_000;
+const MAX_RUNTIME_LOG_ENTRY_BYTES = 16_384;
+
+function localSessionRecordPath() {
+  return path.join(app.getPath('userData'), 'devpilot-local-session.json');
+}
+
+function readPersistedLocalSession() {
+  try {
+    const raw = JSON.parse(readFileSync(localSessionRecordPath(), 'utf8'));
+    if (!raw || raw.version !== 1 || typeof raw.projectPath !== 'string' || !raw.projectPath.trim()) return null;
+    return raw;
+  } catch {
+    return null;
+  }
+}
+
+function persistLocalSession(status = 'idle') {
+  if (!acpProcessProjectPath) return;
+  const now = Date.now();
+  const prior = readPersistedLocalSession();
+  const record = {
+    version: 1,
+    projectPath: acpProcessProjectPath,
+    devpilotSessionPath: prior?.devpilotSessionPath || null,
+    runName: prior?.runName || null,
+    lastAcpSessionId: acpSessionId || null,
+    lastKnownStatus: status,
+    connectedAt: prior?.projectPath === acpProcessProjectPath ? prior.connectedAt || now : now,
+    updatedAt: now,
+  };
+  mkdirSync(path.dirname(localSessionRecordPath()), { recursive: true });
+  writeFileSync(localSessionRecordPath(), JSON.stringify(record), { encoding: 'utf8', mode: 0o600 });
+}
 
 function desktopRoot() {
   return process.env.DEVPILOT_DESKTOP_ROOT || path.resolve(__dirname, '..', '..');
@@ -55,6 +92,31 @@ function parseDevUrl() {
 
 function isTrustedSender(event) {
   return Boolean(mainWindow && event.sender.id === mainWindow.webContents.id);
+}
+
+function redactRuntimeLog(raw) {
+  let message = String(raw || '').slice(0, MAX_RUNTIME_LOG_ENTRY_BYTES);
+  message = message
+    .replace(/(authorization\s*[:=]\s*(?:bearer\s+)?)\S+/gi, '$1[redacted]')
+    .replace(/\b(sk-[A-Za-z0-9_-]{8,}|ghp_[A-Za-z0-9]{8,}|glpat-[A-Za-z0-9_-]{8,})\b/g, '[redacted]')
+    .replace(/([?&](?:api[_-]?key|token|secret|access_token)=)[^&\s]+/gi, '$1[redacted]');
+  return message;
+}
+
+function addRuntimeLog(raw) {
+  const message = redactRuntimeLog(raw);
+  if (!message.trim()) return;
+  const lower = message.toLowerCase();
+  const level = /\b(error|traceback|exception|failed)\b/.test(lower)
+    ? 'error' : /\b(warn|warning)\b/.test(lower) ? 'warning' : 'info';
+  const entry = { timestamp: Date.now(), stream: 'stderr', level, message };
+  runtimeLogs.push(entry);
+  runtimeLogBytes += Buffer.byteLength(message, 'utf8');
+  while (runtimeLogs.length > MAX_RUNTIME_LOG_ENTRIES || runtimeLogBytes > MAX_RUNTIME_LOG_BYTES) {
+    const removed = runtimeLogs.shift();
+    runtimeLogBytes -= Buffer.byteLength(removed.message, 'utf8');
+  }
+  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('devpilot:runtime-log', entry);
 }
 
 function rejectPendingAcpRequests(error) {
@@ -103,6 +165,8 @@ function attachAcpProcess(child) {
       newlineIndex = stdoutBuffer.indexOf('\n');
     }
   });
+  child.stderr.setEncoding('utf8');
+  child.stderr.on('data', (chunk) => addRuntimeLog(chunk));
   child.on('error', (error) => {
     if (acpProcess !== child) return;
     rejectPendingAcpRequests(error instanceof Error ? error : new Error(String(error)));
@@ -188,6 +252,7 @@ async function launchAcpSession(projectPath) {
   const sessionId = String(created.sessionId || '').trim();
   if (!sessionId) throw new Error('DevPilot ACP did not return a session id.');
   acpSessionId = sessionId;
+  persistLocalSession('idle');
   return { pid: child.pid, sessionId };
 }
 
@@ -253,6 +318,14 @@ ipcMain.handle('devpilot:launch-acp', async (event, projectPath) => {
   if (!projectPath || !existsSync(projectPath) || !statSync(projectPath).isDirectory()) throw new Error('Select an accessible local project directory.');
   return launchAcpSession(projectPath);
 });
+ipcMain.handle('devpilot:restore-acp', async (event) => {
+  if (!isTrustedSender(event)) throw new Error('Untrusted Electron renderer.');
+  const persisted = readPersistedLocalSession();
+  if (!persisted || !existsSync(persisted.projectPath) || !statSync(persisted.projectPath).isDirectory()) return null;
+  const launched = await launchAcpSession(persisted.projectPath);
+  persistLocalSession('resumed');
+  return { ...launched, projectPath: persisted.projectPath, historicalAcpSessionId: persisted.lastAcpSessionId || null };
+});
 ipcMain.handle('devpilot:start-acp-prompt', async (event, sessionId, prompt) => {
   if (!isTrustedSender(event)) throw new Error('Untrusted Electron renderer.');
   if (!acpProcess || acpProcess.exitCode !== null || String(sessionId || '') !== acpSessionId) {
@@ -260,7 +333,39 @@ ipcMain.handle('devpilot:start-acp-prompt', async (event, sessionId, prompt) => 
   }
   const text = String(prompt || '').trim();
   if (!text) throw new Error('Describe a research goal before starting a run.');
-  return requestAcp('session/prompt', { sessionId: acpSessionId, prompt: { text } }, 0);
+  persistLocalSession('running');
+  try {
+    return await requestAcp('session/prompt', { sessionId: acpSessionId, prompt: { text } }, 0);
+  } finally {
+    persistLocalSession('idle');
+  }
+});
+ipcMain.handle('devpilot:cancel-acp-run', async (event, sessionId) => {
+  if (!isTrustedSender(event)) throw new Error('Untrusted Electron renderer.');
+  if (!acpProcess || acpProcess.exitCode !== null || String(sessionId || '') !== acpSessionId) {
+    throw new Error('The local ACP session is no longer active. Reconnect the project and try again.');
+  }
+  persistLocalSession('cancelling');
+  const result = await requestAcp('session/cancel', { sessionId: acpSessionId });
+  persistLocalSession('cancelled');
+  return result;
+});
+ipcMain.handle('devpilot:preflight', async (event, projectPath, options) => {
+  if (!isTrustedSender(event)) throw new Error('Untrusted Electron renderer.');
+  if (!projectPath || !existsSync(projectPath) || !statSync(projectPath).isDirectory()) {
+    throw new Error('Select an accessible local project directory.');
+  }
+  await launchAcpSession(projectPath);
+  return requestAcp('devpilot/preflight', { cwd: acpProcessProjectPath, options: options && typeof options === 'object' ? options : {} });
+});
+ipcMain.handle('devpilot:get-runtime-logs', (event) => {
+  if (!isTrustedSender(event)) throw new Error('Untrusted Electron renderer.');
+  return runtimeLogs.slice();
+});
+ipcMain.handle('devpilot:clear-runtime-logs', (event) => {
+  if (!isTrustedSender(event)) throw new Error('Untrusted Electron renderer.');
+  runtimeLogs.length = 0;
+  runtimeLogBytes = 0;
 });
 
 app.whenReady().then(async () => {

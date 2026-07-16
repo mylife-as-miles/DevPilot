@@ -3962,7 +3962,9 @@ function SessionViewLoaded({
     const handleAgentInputFileViewerPress = useStableAgentInputFileViewerPress(openFileViewer);
     const handleAgentInputAbort = React.useCallback(() => {
         if (isDevPilotLocalAcpSession(session)) {
-            abortDevPilotLocalAcpSession(sessionId);
+            void abortDevPilotLocalAcpSession(sessionId).catch((error) => {
+                Modal.alert(t('common.error'), error instanceof Error ? error.message : 'DevPilot cancellation failed.');
+            });
             return;
         }
         void sessionAbort(sessionId);

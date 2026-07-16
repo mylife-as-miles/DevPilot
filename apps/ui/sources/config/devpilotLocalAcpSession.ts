@@ -254,6 +254,22 @@ export function handleDevPilotLocalAcpUpdate(update: AcpUpdate, localSession: De
     const acpSessionId = ensureDevPilotLocalAcpSessionSeeded(localSession);
     if (!acpSessionId) return;
     if (update.sessionId && update.sessionId !== acpSessionId) return;
+    const meta = isRecord(update.update?._meta) && isRecord(update.update?._meta?.devpilot)
+        ? update.update?._meta?.devpilot
+        : null;
+    const runtimeState = normalizeId(meta?.state);
+    if (runtimeState) {
+        const now = Date.now();
+        updateLocalAcpSession(acpSessionId, {
+            updatedAt: now,
+            activeAt: now,
+            thinking: runtimeState === 'starting' || runtimeState === 'running' || runtimeState === 'cancelling',
+            thinkingAt: runtimeState === 'starting' || runtimeState === 'running' || runtimeState === 'cancelling' ? now : 0,
+            latestTurnStatus: runtimeState === 'cancelling' ? 'in_progress' : runtimeState,
+            latestTurnStatusObservedAt: now,
+        });
+        return;
+    }
     const payload = textFromAcpUpdate(update);
     if (!payload) return;
 
@@ -372,13 +388,48 @@ export async function submitDevPilotLocalAcpPrompt(sessionId: string, text: stri
     }
 }
 
-export function abortDevPilotLocalAcpSession(sessionId: string): void {
+export async function abortDevPilotLocalAcpSession(sessionId: string): Promise<void> {
     const now = Date.now();
     updateLocalAcpSession(sessionId, {
         updatedAt: now,
-        thinking: false,
-        thinkingAt: 0,
-        latestTurnStatus: 'cancelled',
+        thinking: true,
+        thinkingAt: now,
+        latestTurnStatus: 'in_progress',
         latestTurnStatusObservedAt: now,
     });
+    const desktop = getDesktopClient();
+    const session = storage.getState().sessions[sessionId] ?? null;
+    const marker = readDevPilotLocalAcpMarker(session?.metadata);
+    if (!desktop || !marker) throw new Error('This local DevPilot session is no longer connected.');
+    try {
+        await desktop.cancelAcpRun(marker.acpSessionId);
+        const completedAt = Date.now();
+        updateLocalAcpSession(sessionId, {
+            updatedAt: completedAt,
+            thinking: false,
+            thinkingAt: 0,
+            latestTurnStatus: 'cancelled',
+            latestTurnStatusObservedAt: completedAt,
+        });
+    } catch (caught) {
+        const failedAt = Date.now();
+        const message = caught instanceof Error ? caught.message : 'DevPilot cancellation failed.';
+        updateLocalAcpSession(sessionId, {
+            updatedAt: failedAt,
+            thinking: true,
+            thinkingAt: failedAt,
+            latestTurnStatus: 'in_progress',
+            latestTurnStatusObservedAt: failedAt,
+            lastRuntimeIssue: {
+                v: 1,
+                scope: 'primary_session',
+                status: 'failed',
+                code: 'devpilot_local_acp_cancel_failed',
+                source: 'devpilot-desktop',
+                occurredAt: failedAt,
+                sanitizedPreview: message,
+            } as Session['lastRuntimeIssue'],
+        });
+        throw caught;
+    }
 }
