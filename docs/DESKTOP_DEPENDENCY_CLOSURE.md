@@ -83,4 +83,4 @@ apps/ui/scripts/prepareTauriSidecar.mjs
 
 ## Closure acceptance check
 
-The closure is sufficient only when a fresh clone of DevPilot, with neither `happier/` nor `../DevPilot-CLI` present, can install dependencies, build workspace packages, typecheck, run unit tests, and produce the internal Tauri frontend assets. Runtime discovery may then report that DevPilot-CLI is unavailable; it must not make the desktop build fail.
+The closure is sufficient only when a fresh clone of DevPilot, with no `happier/` checkout present, can install dependencies, build workspace packages, typecheck, run unit tests, and produce the desktop frontend assets. Runtime discovery uses the repository-local `.venv` and must not make the desktop build fail when an override is unavailable.

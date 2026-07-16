@@ -14,6 +14,6 @@ These capabilities must not be re-enabled merely because related Happier code ex
 
 ## Compatibility principle
 
-Future clients should consume a versioned protocol exposed by DevPilot-CLI rather than importing its Python implementation. ACP is the local desktop integration baseline. Any remote transport should preserve the same separation of concerns: the client presents state and intent; the runtime owns autonomous execution and durable research semantics.
+Future clients should consume a versioned protocol exposed by the DevPilot runtime rather than importing its implementation. ACP is the local desktop integration baseline. Any remote transport should preserve the same separation of concerns: the client presents state and intent; the runtime owns autonomous execution and durable research semantics.
 
 Desktop-only identifiers and configuration must remain isolated so later web or mobile packages can choose their own application IDs, deep-link schemes, update channels, and release lifecycle without renaming the desktop product again.

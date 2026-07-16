@@ -10,7 +10,7 @@
 | Desktop companion command | `devpilot-app` | `devpilot-app-dev` | Reserved; runtime command remains `devpilot` |
 | Deep-link scheme | `devpilot://` | `devpilot-dev://` | New installs only; Happier compatibility parsing is retained until migration is designed |
 | Repository | `mylife-as-miles/DevPilot` | same | DevPilot-owned |
-| Runtime repository | `mylife-as-miles/DevPilot-CLI` | sibling checkout | Independent repository |
+| Runtime repository | `mylife-as-miles/DevPilot` | root `src/` package | Repository-local runtime |
 | Electron updates | disabled | disabled | No Happier release endpoints; DevPilot signing/update lane is not configured yet |
 | Expo updates | disabled by default | disabled by default | Internal web export remains available; mobile delivery is deferred |
 | Associated domains | disabled | disabled | Hosted web/mobile links are deferred |

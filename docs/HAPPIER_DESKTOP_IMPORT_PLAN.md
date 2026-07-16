@@ -115,12 +115,12 @@ The implementation phase will add tests covering ignored-source verification, dr
 ## Post-import sequence
 
 1. Replace the imported root workspace manifest with the DevPilot desktop-only workspace closure and clear root commands.
-2. Remove the legacy Python runtime copy, Python packaging files, and `vendor/` Git links from this desktop repository after confirming the sibling `../DevPilot-CLI` repository remains clean and authoritative. Do not modify or stage the sibling repository as part of that cleanup.
+2. Keep the root Python runtime and packaging files in this repository. Do not import Python or React source into the wrong application boundary.
 3. Remove `.gitmodules` once no parent-repository Git links remain.
 4. Remove or relocate the legacy standalone project website because a public web product is deferred; retain only assets intentionally reused by the desktop application.
 5. Add attribution in `NOTICE.md` and merge required third-party notices without losing existing DevPilot notices.
 6. Add central DevPilot branding and rebrand only user-visible desktop surfaces and safe development identifiers.
-7. Add sibling `../DevPilot-CLI` runtime discovery and readiness diagnostics.
+7. Add repository-local `.venv` runtime discovery and readiness diagnostics.
 8. Add the built-in `devpilot` ACP provider through Happier's canonical provider catalogs.
 9. Replace hosted assumptions with local ACP-backed Research Run, Coordinator, Executor, evidence, report, memory, audit, Git, and approval views.
 10. Run package tests and typechecks before attempting Tauri development and production builds.

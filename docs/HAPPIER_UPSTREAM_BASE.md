@@ -33,8 +33,8 @@ The final allowlist is maintained by `scripts/import-happier-desktop.mjs` after 
 ## Known DevPilot-specific changes
 
 - The upstream clone lives at `happier/` and is ignored by the DevPilot repository.
-- DevPilot-CLI is an independent sibling repository at `../DevPilot-CLI`.
-- The desktop runtime provider will resolve `../DevPilot-CLI` before falling back to an active environment or global `devpilot` executable.
+- The DevPilot runtime is the root Python package in this repository.
+- The desktop runtime provider resolves this repository's `.venv` before falling back to `venv` or a global `devpilot` executable.
 - User-facing product identity, Tauri identifiers, update endpoints, and runtime wiring will be DevPilot-owned.
 - Happier hosted-service assumptions will be disabled, deferred, or replaced by local DevPilot ACP integration.
 
