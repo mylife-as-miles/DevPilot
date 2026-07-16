@@ -6,7 +6,7 @@ module.exports = {
     name: 'DevPilot',
     executableName: 'DevPilot',
     appBundleId: 'com.devpilot.desktop',
-    icon: path.resolve(__dirname, '../ui/src-tauri/icons/icon'),
+    icon: path.resolve(__dirname, 'assets/devpilot-bot'),
     extraResource: [path.resolve(__dirname, '../ui/dist')],
   },
   makers: [

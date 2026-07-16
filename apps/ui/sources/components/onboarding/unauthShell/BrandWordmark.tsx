@@ -1,42 +1,52 @@
 import * as React from 'react';
 import { Image } from 'expo-image';
+import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
+import { Text } from '@/components/ui/text/Text';
+import { Typography } from '@/constants/Typography';
+
 export type BrandWordmarkProps = Readonly<{
-    /** Height in px; width scales 5x like the existing wizard logotype. Default 32. */
+    /** Height in px for the DevPilot mark. Default 32. */
     height?: number;
     testID?: string;
 }>;
 
 /**
- * The Happier wordmark for the unauth brand pane. Theme-aware: in dark mode
- * we render the light (white) logotype against the dark canvas + dark planet;
- * in light mode we render the dark (black) logotype against the cream canvas
- * + warm planet. Mirrors `WizardLogotype`'s asset-swap pattern so the brand
- * pane reads clearly in both themes.
+ * The DevPilot wordmark for the unauthenticated brand pane.
  */
 export const BrandWordmark = React.memo(function BrandWordmark(props: BrandWordmarkProps) {
     const { theme } = useUnistyles();
     const height = props.height ?? 32;
-    const width = Math.round(height * 5);
     const styles = stylesheet;
     return (
-        <Image
-            testID={props.testID ?? 'brand-wordmark'}
-            // eslint-disable-next-line @typescript-eslint/no-require-imports
-            source={theme.dark
+        <View testID={props.testID ?? 'brand-wordmark'} style={styles.root}>
+            <Image
                 // eslint-disable-next-line @typescript-eslint/no-require-imports
-                ? require('@/assets/images/logotype-light.png')
-                // eslint-disable-next-line @typescript-eslint/no-require-imports
-                : require('@/assets/images/logotype-dark.png')}
-            contentFit="contain"
-            style={[styles.image, { height, width }]}
-        />
+                source={require('@/assets/images/devpilot-bot.png')}
+                contentFit="contain"
+                style={{ height, width: height }}
+            />
+            <Text
+                style={[
+                    Typography.default('semiBold'),
+                    styles.label,
+                    { color: theme.dark ? '#F8FAFC' : '#0F172A', fontSize: Math.round(height * 0.86) },
+                ]}
+            >
+                DevPilot
+            </Text>
+        </View>
     );
 });
 
 const stylesheet = StyleSheet.create(() => ({
-    image: {
-        // intentionally empty; size is driven by height/width props.
+    root: {
+        alignItems: 'center',
+        flexDirection: 'row',
+        gap: 8,
+    },
+    label: {
+        letterSpacing: -1.1,
     },
 }));

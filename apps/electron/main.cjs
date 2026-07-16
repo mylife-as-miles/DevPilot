@@ -72,6 +72,7 @@ async function createMainWindow() {
 
   mainWindow = new BrowserWindow({
     title: 'DevPilot',
+    icon: path.join(__dirname, 'assets', 'devpilot-bot.png'),
     width: 1280,
     height: 840,
     minWidth: 960,
