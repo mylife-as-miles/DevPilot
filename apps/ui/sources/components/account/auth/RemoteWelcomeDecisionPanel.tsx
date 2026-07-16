@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { Platform, Pressable, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { getDesktopClient, type RuntimeStatus } from '@devpilot/desktop/client';
 import Animated, {
     Easing,
     interpolate,
@@ -17,6 +18,8 @@ import { Typography } from '@/constants/Typography';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
 import { useLocalSetting } from '@/sync/store/hooks';
 import { t } from '@/text';
+import { devpilotServices, isElectronDesktop } from '@/config/devpilotServices';
+import { writeDevPilotLocalSession } from '@/config/devpilotLocalSession';
 
 import type { RemoteAuthEntryOptions } from './useRemoteAuthEntryOptions';
 import { useReturningGreeting } from './useReturningGreeting';
@@ -265,7 +268,207 @@ function DecisionActionRow(props: DecisionActionRowProps): React.ReactElement {
     );
 }
 
+function formatShortProjectPath(projectPath: string | null): string {
+    if (!projectPath) return 'No project selected';
+    const parts = projectPath.split(/[\\/]/).filter(Boolean);
+    if (parts.length <= 2) return projectPath;
+    return `...\\${parts.slice(-2).join('\\')}`;
+}
+
+function runtimePathForCopy(runtime: RuntimeStatus | null): string {
+    return runtime?.command ? runtime.command : 'C:\\Users\\MILES\\Documents\\DevPilot\\.venv\\Scripts\\devpilot.exe';
+}
+
+function LocalDevPilotSessionPanel(): React.ReactElement {
+    const styles = stylesheet;
+    const desktop = React.useMemo(() => getDesktopClient(), []);
+    const [runtime, setRuntime] = React.useState<RuntimeStatus | null>(null);
+    const [projectPath, setProjectPath] = React.useState<string | null>(null);
+    const [acpPid, setAcpPid] = React.useState<number | null>(null);
+    const [acpSessionId, setAcpSessionId] = React.useState<string | null>(null);
+    const [busy, setBusy] = React.useState<'runtime' | 'project' | 'launch' | null>('runtime');
+    const [error, setError] = React.useState<string | null>(null);
+
+    const refreshRuntime = React.useCallback(async () => {
+        setBusy('runtime');
+        setError(null);
+        try {
+            if (!desktop) {
+                setRuntime({
+                    ready: false,
+                    command: null,
+                    source: null,
+                    version: null,
+                    issue: 'Open DevPilot in the desktop shell to start a local ACP session.',
+                });
+                return;
+            }
+            setRuntime(await desktop.getRuntimeStatus());
+        } catch (caught) {
+            setRuntime(null);
+            setError(caught instanceof Error ? caught.message : 'DevPilot runtime detection failed.');
+        } finally {
+            setBusy(null);
+        }
+    }, [desktop]);
+
+    React.useEffect(() => {
+        void refreshRuntime();
+    }, [refreshRuntime]);
+
+    React.useEffect(() => {
+        if (!projectPath || acpPid === null) return;
+        writeDevPilotLocalSession({
+            mode: 'local-acp',
+            projectPath,
+            acpPid,
+            acpSessionId,
+            connectedAt: Date.now(),
+        });
+    }, [acpPid, acpSessionId, projectPath]);
+
+    const chooseProject = React.useCallback(async () => {
+        if (!desktop) return;
+        setBusy('project');
+        setError(null);
+        try {
+            const selected = await desktop.selectProject();
+            if (selected) {
+                setProjectPath(selected);
+                setAcpPid(null);
+                setAcpSessionId(null);
+            }
+        } catch (caught) {
+            setError(caught instanceof Error ? caught.message : 'Project selection failed.');
+        } finally {
+            setBusy(null);
+        }
+    }, [desktop]);
+
+    const launchAcp = React.useCallback(async () => {
+        if (!desktop) return;
+        if (!projectPath) {
+            await chooseProject();
+            return;
+        }
+        setBusy('launch');
+        setError(null);
+        try {
+            const result = await desktop.launchAcp(projectPath);
+            setAcpPid(result.pid);
+            setAcpSessionId(result.sessionId);
+            writeDevPilotLocalSession({
+                mode: 'local-acp',
+                projectPath,
+                acpPid: result.pid,
+                acpSessionId: result.sessionId,
+                connectedAt: Date.now(),
+            });
+        } catch (caught) {
+            setAcpPid(null);
+            setAcpSessionId(null);
+            setError(caught instanceof Error ? caught.message : 'ACP launch failed.');
+        } finally {
+            setBusy(null);
+        }
+    }, [chooseProject, desktop, projectPath]);
+
+    const runtimeReady = runtime?.ready === true;
+    const isRunning = acpPid !== null;
+    const statusTitle = error
+        ? 'Session needs attention'
+        : isRunning
+            ? 'ACP session running'
+            : projectPath
+                ? 'Project selected'
+                : runtimeReady
+                    ? 'Runtime detected'
+                    : busy === 'runtime'
+                        ? 'Checking DevPilot'
+                        : 'Runtime unavailable';
+    const statusBody = error
+        ? error
+        : isRunning
+            ? `devpilot acp --stdio is running for ${formatShortProjectPath(projectPath)}.`
+            : projectPath
+                ? 'Launch the local ACP bridge and start a DevPilot session from this workspace.'
+                : runtimeReady
+                    ? 'Choose a local project and DevPilot will launch ACP through the bundled Python runtime.'
+                    : runtime?.issue ?? 'DevPilot is not ready on this computer yet.';
+    const primaryTitle = busy === 'launch'
+        ? 'Launching ACP...'
+        : isRunning
+            ? 'ACP session running'
+            : projectPath
+                ? 'Launch ACP session'
+                : 'Select a project to continue';
+    const primarySubtitle = projectPath
+        ? formatShortProjectPath(projectPath)
+        : 'Pick the local codebase DevPilot should work in';
+
+    return (
+        <View testID="welcome-decision-panel" style={styles.decisionPanel}>
+            <View style={styles.headingBlock}>
+                <Text testID="devpilot-session-title" accessibilityRole="header" style={styles.questionTitle}>
+                    DevPilot session
+                </Text>
+                <Text testID="devpilot-session-subtitle" accessibilityRole="header" style={styles.questionSubtitleTitle}>
+                    Local ACP
+                </Text>
+                <Text testID="devpilot-session-body" style={styles.questionBody}>
+                    Start the desktop runtime through the repository Python executable and keep the work tied to your local project.
+                </Text>
+            </View>
+            <View testID="devpilot-local-session-status" style={styles.localSessionBlock}>
+                <View style={styles.localSessionTitleRow}>
+                    <View style={[styles.localSessionDot, isRunning ? styles.localSessionDotLive : null]} />
+                    <Text style={styles.localSessionTitle}>{statusTitle}</Text>
+                </View>
+                <Text style={styles.localSessionBody}>{statusBody}</Text>
+                <Text numberOfLines={1} style={styles.localSessionMeta}>
+                    {runtimePathForCopy(runtime)}
+                </Text>
+            </View>
+            <View style={styles.actionStack}>
+                <DecisionActionRow
+                    testID="devpilot-retry-runtime"
+                    title={busy === 'runtime' ? 'Checking runtime...' : 'Retry runtime detection'}
+                    iconName="refresh"
+                    onPress={refreshRuntime}
+                />
+                {runtimeReady ? (
+                    <DecisionActionRow
+                        testID="devpilot-select-project"
+                        title={projectPath ? 'Change local project' : 'Select local project'}
+                        subtitle={projectPath ? formatShortProjectPath(projectPath) : undefined}
+                        iconName="folder-open-outline"
+                        onPress={chooseProject}
+                    />
+                ) : null}
+                {runtimeReady ? (
+                    <DecisionActionRow
+                        testID="devpilot-launch-acp"
+                        primary
+                        title={primaryTitle}
+                        subtitle={primarySubtitle}
+                        iconName={isRunning ? 'checkmark-circle-outline' : 'terminal-outline'}
+                        onPress={isRunning ? () => undefined : launchAcp}
+                    />
+                ) : null}
+            </View>
+        </View>
+    );
+}
+
 export function RemoteWelcomeDecisionPanel(props: RemoteWelcomeDecisionPanelProps): React.ReactElement {
+    if ((isElectronDesktop() || devpilotServices.localDesktopEnabled) && !devpilotServices.hostedServicesEnabled) {
+        return <LocalDevPilotSessionPanel />;
+    }
+
+    return <RemoteRelayWelcomeDecisionPanel {...props} />;
+}
+
+function RemoteRelayWelcomeDecisionPanel(props: RemoteWelcomeDecisionPanelProps): React.ReactElement {
     const { options } = props;
     const styles = stylesheet;
     const primarySignupAction = resolvePrimaryAction(options, props);
@@ -557,6 +760,51 @@ const stylesheet = StyleSheet.create((theme) => ({
         fontSize: 14,
         color: theme.colors.text.secondary,
         textAlign: 'center',
+        marginTop: 10,
+    },
+    localSessionBlock: {
+        width: '100%',
+        maxWidth: 560,
+        borderRadius: 12,
+        borderWidth: 1,
+        borderColor: theme.colors.border.default,
+        backgroundColor: theme.colors.surface.base,
+        paddingHorizontal: 14,
+        paddingVertical: 12,
+        marginBottom: 4,
+    },
+    localSessionTitleRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 8,
+        marginBottom: 8,
+    },
+    localSessionDot: {
+        width: 8,
+        height: 8,
+        borderRadius: 4,
+        backgroundColor: theme.colors.text.tertiary,
+    },
+    localSessionDotLive: {
+        backgroundColor: '#17B26A',
+    },
+    localSessionTitle: {
+        ...Typography.default('semiBold'),
+        fontSize: 16,
+        lineHeight: 22,
+        color: theme.colors.text.primary,
+    },
+    localSessionBody: {
+        ...Typography.default(),
+        fontSize: 14,
+        color: theme.colors.text.secondary,
+        lineHeight: 20,
+    },
+    localSessionMeta: {
+        ...Typography.default(),
+        fontSize: 12,
+        color: theme.colors.text.tertiary,
+        lineHeight: 17,
         marginTop: 10,
     },
     actionStack: {

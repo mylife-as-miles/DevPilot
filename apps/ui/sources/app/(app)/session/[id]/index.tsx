@@ -16,6 +16,14 @@ import { resolveSessionRouteAuthRecoveryState } from '@/hooks/session/sessionRou
 import { useSessionRouteServerScope } from '@/hooks/session/sessionRouteServerScope';
 import { useHydrateSessionForRoute } from '@/hooks/session/useHydrateSessionForRoute';
 import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
+import {
+    DEVPILOT_LOCAL_SERVER_ID,
+    ensureDevPilotLocalAcpSessionSeeded,
+    isDevPilotLocalAcpRoute,
+    useDevPilotLocalAcpSessionBridge,
+} from '@/config/devpilotLocalAcpSession';
+import { isElectronDesktop } from '@/config/devpilotServices';
+import { isLocalDevPilotDesktopMode, readDevPilotLocalSession, useDevPilotLocalSession } from '@/config/devpilotLocalSession';
 import { markSessionRouteEnteredForSessionUiTelemetry } from '@/sync/runtime/performance/sessionUiTelemetry';
 import {
     isSessionRouteHydrationAvailable,
@@ -28,6 +36,19 @@ import {
     useSyncError,
 } from '@/sync/domains/state/storage';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
+
+type SessionRouteParams = Readonly<{
+    id?: string | string[];
+    serverId?: string | string[];
+    mobileSurface?: string | string[];
+    jumpSeq?: string | string[];
+    right?: string | string[];
+    bottom?: string | string[];
+    details?: string | string[];
+    path?: string | string[];
+    sha?: string | string[];
+    recoveryDataId?: string | string[];
+}>;
 
 type InitialMobileSurfaceHintCache = Readonly<{
     sessionId: string;
@@ -73,32 +94,37 @@ function useInitialMobileSurfaceHint(
     return cacheRef.current?.persistedSurface ?? null;
 }
 
-export default React.memo(() => {
-    const params = useLocalSearchParams<{
-        id?: string | string[];
-        serverId?: string | string[];
-        mobileSurface?: string | string[];
-        jumpSeq?: string | string[];
-        right?: string | string[];
-        bottom?: string | string[];
-        details?: string | string[];
-        path?: string | string[];
-        sha?: string | string[];
-        recoveryDataId?: string | string[];
-    }>();
-    const routeScope = useSessionRouteServerScope(params as Record<string, unknown>);
-    const {
-        id: sessionIdParam,
-        mobileSurface: mobileSurfaceParam,
-        jumpSeq: jumpSeqParam,
-        recoveryDataId: recoveryDataIdParam,
-    } = params;
+const SessionRoute = React.memo(function SessionRoute() {
+    const params = useLocalSearchParams<SessionRouteParams>() as SessionRouteParams;
+    const { id: sessionIdParam } = params;
     const sessionId =
         (typeof sessionIdParam === 'string'
             ? sessionIdParam
             : Array.isArray(sessionIdParam)
                 ? (sessionIdParam[0] ?? '')
                 : '').trim();
+    const localDevPilotSession = useDevPilotLocalSession() ?? readDevPilotLocalSession();
+
+    if ((isElectronDesktop() || isLocalDevPilotDesktopMode()) && isDevPilotLocalAcpRoute(sessionId, localDevPilotSession)) {
+        return <LocalDevPilotSessionRoute sessionId={sessionId} />;
+    }
+
+    return <RemoteSessionRoute params={params} sessionId={sessionId} />;
+});
+
+function RemoteSessionRoute({
+    params,
+    sessionId,
+}: Readonly<{
+    params: SessionRouteParams;
+    sessionId: string;
+}>) {
+    const routeScope = useSessionRouteServerScope(params as Record<string, unknown>);
+    const {
+        mobileSurface: mobileSurfaceParam,
+        jumpSeq: jumpSeqParam,
+        recoveryDataId: recoveryDataIdParam,
+    } = params;
     const jumpSeqRaw = typeof jumpSeqParam === 'string'
         ? jumpSeqParam
         : Array.isArray(jumpSeqParam)
@@ -223,4 +249,38 @@ export default React.memo(() => {
             routeHydrationState={routeHydrationState}
         />
     );
-});
+}
+
+function LocalDevPilotSessionRoute({ sessionId }: Readonly<{ sessionId: string }>) {
+    const localSession = useDevPilotLocalSession() ?? readDevPilotLocalSession();
+    useDevPilotLocalAcpSessionBridge(localSession);
+
+    React.useEffect(() => {
+        ensureDevPilotLocalAcpSessionSeeded(localSession);
+    }, [
+        localSession?.acpPid,
+        localSession?.acpSessionId,
+        localSession?.connectedAt,
+        localSession?.projectPath,
+    ]);
+
+    if (!sessionId) {
+        return <SessionInvalidLinkFallback />;
+    }
+
+    return (
+        <SessionCockpitShell
+            sessionId={sessionId}
+            scopeId={`session:${sessionId}`}
+            surface="chat"
+            routeServerId={DEVPILOT_LOCAL_SERVER_ID}
+            routeHydrationState={{
+                kind: 'available',
+                sessionId,
+                serverId: DEVPILOT_LOCAL_SERVER_ID,
+            }}
+        />
+    );
+}
+
+export default SessionRoute;

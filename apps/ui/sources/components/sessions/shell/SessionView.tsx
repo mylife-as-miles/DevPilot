@@ -203,6 +203,11 @@ import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
 import { useAutomationsSupport } from '@/hooks/server/useAutomationsSupport';
 import { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExecutor';
 import { executeSessionComposerResolution } from '@/sync/domains/input/slashCommands/executeSessionComposerResolution';
+import {
+    abortDevPilotLocalAcpSession,
+    isDevPilotLocalAcpSession,
+    submitDevPilotLocalAcpPrompt,
+} from '@/config/devpilotLocalAcpSession';
 import { sessionGoalClear, sessionGoalSet } from '@/sync/ops/sessionGoals';
 import {
     readSessionWorkStateFromMetadata,
@@ -3956,8 +3961,12 @@ function SessionViewLoaded({
     }, [buildCurrentSessionHref, multiPaneDeviceType, multiPaneEnabled, pane.openRight, pane.setRightTab, router, windowWidth]);
     const handleAgentInputFileViewerPress = useStableAgentInputFileViewerPress(openFileViewer);
     const handleAgentInputAbort = React.useCallback(() => {
+        if (isDevPilotLocalAcpSession(session)) {
+            abortDevPilotLocalAcpSession(sessionId);
+            return;
+        }
         void sessionAbort(sessionId);
-    }, [sessionId]);
+    }, [session, sessionId]);
     const handleAutocompleteSuggestions = React.useCallback((query: string) => getSuggestions(sessionId, query), [sessionId]);
     const handleAutocompleteSuggestionSelect = React.useCallback<AgentInputAutocompleteSelectionHandler>(
         async (args) => {
@@ -4093,6 +4102,15 @@ function SessionViewLoaded({
             const shouldSendReviewComments = hasIncludedReviewCommentDrafts;
             const hasAttachments = attachmentsUploadsEnabled && attachmentDrafts.length > 0;
             const participantRecipient = recipientState.recipient;
+            const isLocalDevPilotAcpSession = isDevPilotLocalAcpSession(session);
+
+            if (isLocalDevPilotAcpSession && (participantRecipient || shouldSendReviewComments || hasAttachments)) {
+                Modal.alert(
+                    t('common.error'),
+                    'Local DevPilot ACP sessions support text prompts only right now.',
+                );
+                return;
+            }
 
             if (participantRecipient && (shouldSendReviewComments || hasAttachments)) {
                 Modal.alert(t('common.error'), t('session.participants.unsupportedAttachmentsOrReviewComments'));
@@ -4365,6 +4383,23 @@ function SessionViewLoaded({
                     : null);
 
             if (!outbound) return;
+
+            if (isLocalDevPilotAcpSession) {
+                setIsComposerSendPending(true);
+                fireAndForget((async () => {
+                    try {
+                        await submitDevPilotLocalAcpPrompt(sessionId, outbound.text);
+                        clearAfterOutboundHandoff();
+                        recordOutboundAccepted();
+                    } catch (e) {
+                        restoreAfterFailedOutboundHandoff();
+                        Modal.alert(t('common.error'), e instanceof Error ? e.message : t('errors.failedToSendMessage'));
+                    } finally {
+                        setIsComposerSendPending(false);
+                    }
+                })(), { tag: 'SessionView.sendMessage.devpilotLocalAcp' });
+                return;
+            }
 
             const voiceComposerRouting =
                 outboundBase.kind === 'plain' && !participantRecipient

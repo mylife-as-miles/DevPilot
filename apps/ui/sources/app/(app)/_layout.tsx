@@ -37,6 +37,8 @@ import { PetAppShellCompanionMount } from '@/components/pets/runtime/PetAppShell
 import { isDesktopPetOverlayWindowContext } from '@/components/pets/desktop/runtime/isDesktopPetOverlayWindowContext';
 import { SessionCockpitChromeRegistryProvider } from '@/components/workspaceCockpit/session/SessionCockpitChromeRegistry';
 import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
+import { isElectronDesktop } from '@/config/devpilotServices';
+import { isLocalDevPilotDesktopMode, readDevPilotLocalSession, useDevPilotLocalSession } from '@/config/devpilotLocalSession';
 
 const bootstrappedWebServerOverride = bootstrapActiveServerFromWebLocation({ scope: 'device' });
 const DESKTOP_PET_OVERLAY_SCREEN_OPTIONS = { headerShown: false } as const;
@@ -127,6 +129,7 @@ export default function RootLayout() {
     const segments = useSegments();
     const pathname = usePathname();
     const globalSearchParams = useGlobalSearchParams<{
+        id?: string | string[];
         server?: string | string[];
         serverId?: string | string[];
         url?: string | string[];
@@ -137,6 +140,8 @@ export default function RootLayout() {
     const friendsIdentityReady = friendsIdentityReadiness.isReady;
     const debugRouterEnabled = process.env.EXPO_PUBLIC_DEBUG === '1';
     const happierVoiceSupported = useHappierVoiceSupport();
+    const localDevPilotSession = useDevPilotLocalSession();
+    const effectiveLocalDevPilotSession = localDevPilotSession ?? readDevPilotLocalSession();
 
     useWebInitialRouteReconcile({ routerPathname: pathname });
 
@@ -226,7 +231,25 @@ export default function RootLayout() {
         }));
     }, [auth.isAuthenticated]);
 
-    const shouldRedirect = !auth.isAuthenticated && !isPublicRouteForUnauthenticated(segments);
+    const localDevPilotAcpSessionId = String(effectiveLocalDevPilotSession?.acpSessionId ?? '').trim();
+    const routeSessionId = String(
+        Array.isArray(segments) && segments[0] === 'session' && typeof segments[1] === 'string'
+            ? segments[1]
+            : pickFirstRouteParamString(globalSearchParams.id),
+    ).trim();
+    const isLocalDevPilotSessionPath = pathname === `/session/${encodeURIComponent(localDevPilotAcpSessionId)}`
+        || (pathname.startsWith('/session/') && routeSessionId === localDevPilotAcpSessionId);
+    const isLocalDevPilotRouteAllowed = Boolean(
+        (isElectronDesktop() || isLocalDevPilotDesktopMode())
+        && localDevPilotAcpSessionId
+        && (
+            pathname === '/'
+            || isLocalDevPilotSessionPath
+        ),
+    );
+    const shouldRedirect = !auth.isAuthenticated
+        && !isLocalDevPilotRouteAllowed
+        && !isPublicRouteForUnauthenticated(segments);
     const pendingTerminalHandledRef = React.useRef(false);
     useNotificationResponseRouting({
         enabled: auth.isAuthenticated,

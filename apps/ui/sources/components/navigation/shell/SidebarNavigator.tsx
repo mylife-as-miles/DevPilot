@@ -16,6 +16,8 @@ import { resolvePaneFocusModeRouteScopeId } from '@/components/appShell/panes/fo
 import { isTauriDesktop } from '@/utils/platform/tauri';
 import { DesktopMainContentDragSurface } from '@/components/navigation/desktopWindowChrome/DesktopMainContentDragSurface';
 import { isDesktopPetOverlayWindowContext } from '@/components/pets/desktop/runtime/isDesktopPetOverlayWindowContext';
+import { isElectronDesktop } from '@/config/devpilotServices';
+import { isLocalDevPilotDesktopMode, readDevPilotLocalSession, useDevPilotLocalSession } from '@/config/devpilotLocalSession';
 
 const TERMINAL_CONNECT_ROUTE = '/terminal/connect';
 const EXPANDED_SIDEBAR_MIN_WINDOW_WIDTH_PX = SIDEBAR_DOCK_MIN_WIDTH_PX + PANE_SIZING_DEFAULTS.mainMinPx;
@@ -39,11 +41,16 @@ export type SidebarNavigatorProps = Readonly<{
 export const SidebarNavigator = React.memo((props: SidebarNavigatorProps) => {
     const styles = stylesheet;
     const auth = useAuth();
+    const localDevPilotSession = useDevPilotLocalSession() ?? readDevPilotLocalSession();
+    const localDevPilotShellActive = Boolean(
+        (isElectronDesktop() || isLocalDevPilotDesktopMode())
+        && localDevPilotSession?.acpSessionId,
+    );
     const isTablet = useIsTablet();
     const pathname = usePathname();
     const isDesktopPetOverlayWindow = isDesktopPetOverlayWindowContext();
     const bypassDesktopDrawerShell = Platform.OS === 'web' && isTerminalConnectWebPathname(pathname);
-    const desktopDrawerEnabled = auth.isAuthenticated && isTablet && !isDesktopPetOverlayWindow;
+    const desktopDrawerEnabled = (auth.isAuthenticated || localDevPilotShellActive) && isTablet && !isDesktopPetOverlayWindow;
     const showPermanentDrawer = desktopDrawerEnabled;
     const routeScopeId = React.useMemo(() => resolvePaneFocusModeRouteScopeId(pathname), [pathname]);
     const { state: paneState, dispatch: dispatchPaneAction } = useAppPaneContext();

@@ -39,8 +39,12 @@ import {
 } from "@/components/account/auth/useRemoteAuthEntryOptions";
 
 import { shouldAutoRedirectToSetupOnFirstLaunch } from "@/utils/navigation/firstLaunchSetupRedirectPolicy";
-import { LocalDevPilotWelcome } from '@/components/onboarding/localDesktop/LocalDevPilotWelcome';
-import { devpilotServices, isElectronDesktop } from '@/config/devpilotServices';
+import { isElectronDesktop } from '@/config/devpilotServices';
+import { isLocalDevPilotDesktopMode, readDevPilotLocalSession, useDevPilotLocalSession } from '@/config/devpilotLocalSession';
+import {
+    ensureDevPilotLocalAcpSessionSeeded,
+    useDevPilotLocalAcpSessionBridge,
+} from '@/config/devpilotLocalAcpSession';
 
 const DEFAULT_WELCOME_SERVER_CHECK_TIMEOUT_MS = 6_000;
 const DEFAULT_WELCOME_SERVER_CHECK_RETRY_DELAY_MS = 1_000;
@@ -63,6 +67,10 @@ function readWelcomeServerCheckRetryDelayMs(): number {
 
 export default function Home() {
     const auth = useAuth();
+    const localDevPilotSession = useDevPilotLocalSession() ?? readDevPilotLocalSession();
+    if (!auth.isAuthenticated && (isElectronDesktop() || isLocalDevPilotDesktopMode()) && localDevPilotSession) {
+        return <Authenticated />
+    }
     if (!auth.isAuthenticated) {
         return <NotAuthenticated />;
     }
@@ -72,6 +80,31 @@ export default function Home() {
 }
 
 function Authenticated() {
+    const localDevPilotSession = useDevPilotLocalSession() ?? readDevPilotLocalSession();
+    if ((isElectronDesktop() || isLocalDevPilotDesktopMode()) && localDevPilotSession) {
+        return <AuthenticatedLocalDevPilot localSession={localDevPilotSession} />;
+    }
+    return <AuthenticatedRemote />;
+}
+
+function AuthenticatedLocalDevPilot({ localSession }: Readonly<{ localSession: NonNullable<ReturnType<typeof useDevPilotLocalSession>> }>) {
+    useDevPilotLocalAcpSessionBridge(localSession);
+
+    React.useEffect(() => {
+        const sessionId = ensureDevPilotLocalAcpSessionSeeded(localSession);
+        if (!sessionId) return;
+        router.replace(`/session/${encodeURIComponent(sessionId)}` as never);
+    }, [
+        localSession.acpPid,
+        localSession.acpSessionId,
+        localSession.connectedAt,
+        localSession.projectPath,
+    ]);
+
+    return <View style={{ flex: 1 }} />;
+}
+
+function AuthenticatedRemote() {
     const params = useLocalSearchParams<{
         id?: string | string[];
         serverId?: string | string[];
@@ -129,10 +162,8 @@ function resolveAuthReturnToRoute(): string {
 function NotAuthenticated() {
     const auth = useAuth();
     const router = useRouter();
-    if (isElectronDesktop() && !devpilotServices.hostedServicesEnabled) {
-        return <LocalDevPilotWelcome />;
-    }
-    const isDesktopShell = React.useMemo(() => isTauriDesktop(), []);
+    const isLocalDevPilotDesktop = isLocalDevPilotDesktopMode();
+    const isDesktopShell = React.useMemo(() => isTauriDesktop() || isElectronDesktop(), []);
     const applyBrandHeroSeen = useApplyBrandHeroSeen();
 
     const [serverAvailability, setServerAvailability] = React.useState<RemoteServerAvailability>('loading');
@@ -152,6 +183,9 @@ function NotAuthenticated() {
     const firstLaunchSetupRedirectedRef = React.useRef(false);
 
     React.useEffect(() => {
+        if (isLocalDevPilotDesktop) {
+            return;
+        }
         if (firstLaunchSetupRedirectedRef.current) {
             return;
         }
@@ -172,9 +206,13 @@ function NotAuthenticated() {
             relayUrl: relayUrl || null,
         });
         router.replace('/setup');
-    }, [router]);
+    }, [isLocalDevPilotDesktop, router]);
 
     React.useEffect(() => {
+        if (isLocalDevPilotDesktop) {
+            setServerAvailability('ready');
+            return;
+        }
         let mounted = true;
         let retryTimer: ReturnType<typeof setTimeout> | null = null;
         const scheduleInitialServerCheckRetry = (): boolean => {
@@ -246,7 +284,7 @@ function NotAuthenticated() {
                 clearTimeout(retryTimer);
             }
         };
-    }, [serverCheckNonce]);
+    }, [isLocalDevPilotDesktop, serverCheckNonce]);
 
     const createAccount = async () => {
         try {

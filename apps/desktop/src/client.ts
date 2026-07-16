@@ -8,10 +8,26 @@ export type RuntimeStatus = Readonly<{
   issue: string | null;
 }>;
 
+export type AcpSession = Readonly<{
+  pid: number;
+  sessionId: string;
+}>;
+
+export type AcpUpdate = Readonly<{
+  sessionId?: string;
+  update?: Readonly<{
+    sessionUpdate?: string;
+    content?: Readonly<{ type?: string; text?: string }>;
+    _meta?: Readonly<{ devpilot?: Readonly<{ type?: string; [key: string]: unknown }> }>;
+  }>;
+}>;
+
 export type DesktopClient = Readonly<{
   getRuntimeStatus: () => Promise<RuntimeStatus>;
   selectProject: () => Promise<string | null>;
-  launchAcp: (projectPath: string) => Promise<{ pid: number }>;
+  launchAcp: (projectPath: string) => Promise<AcpSession>;
+  startAcpPrompt: (sessionId: string, prompt: string) => Promise<unknown>;
+  onAcpUpdate: (listener: (update: AcpUpdate) => void) => () => void;
 }>;
 
 type DesktopGlobal = typeof globalThis & {
@@ -24,6 +40,8 @@ export function getDesktopClient(target: DesktopGlobal = globalThis): DesktopCli
     && typeof candidate.getRuntimeStatus === 'function'
     && typeof candidate.selectProject === 'function'
     && typeof candidate.launchAcp === 'function'
+    && typeof candidate.startAcpPrompt === 'function'
+    && typeof candidate.onAcpUpdate === 'function'
     ? candidate as DesktopClient
     : null;
 }

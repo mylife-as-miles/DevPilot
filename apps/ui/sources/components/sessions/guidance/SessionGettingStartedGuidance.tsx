@@ -4,6 +4,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Typography } from '@/constants/Typography';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { CenteredInfoTile } from '@/components/ui/lists/CenteredInfoTile';
+import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import { t } from '@/text';
 import { router } from 'expo-router';
 import { Modal } from '@/modal';
@@ -33,6 +34,7 @@ import { listSessionGettingStartedCliCommands } from './listSessionGettingStarte
 import { normalizeNodeForView } from '@/components/ui/rendering/normalizeNodeForView';
 import { runAfterInteractionsWithFallback } from '@/utils/timing/runAfterInteractionsWithFallback';
 import { setClipboardStringSafe } from '@/utils/ui/clipboard';
+import { useDevPilotLocalSession } from '@/config/devpilotLocalSession';
 
 export type SessionGettingStartedGuidanceVariant = 'phone' | 'sidebar' | 'primaryPane' | 'newSessionBlocking';
 
@@ -77,6 +79,88 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     contentContainerCentered: {
         justifyContent: 'center',
+    },
+    loadingContentContainer: {
+        justifyContent: 'center',
+        paddingHorizontal: 32,
+        paddingTop: 56,
+        paddingBottom: 56,
+    },
+    localLoadingPanel: {
+        width: '100%',
+        maxWidth: 620,
+        borderRadius: 18,
+        borderWidth: 1,
+        borderColor: theme.colors.border.default,
+        backgroundColor: theme.colors.surface.base,
+        paddingHorizontal: 22,
+        paddingVertical: 22,
+        shadowColor: '#000',
+        shadowOpacity: theme.dark ? 0.28 : 0.08,
+        shadowRadius: 24,
+        shadowOffset: { width: 0, height: 16 },
+    },
+    localLoadingTopRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 14,
+        marginBottom: 22,
+    },
+    localLoadingMark: {
+        width: 44,
+        height: 44,
+        borderRadius: 13,
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: '#1583F714',
+    },
+    localLoadingEyebrow: {
+        ...Typography.mono(),
+        fontSize: 11,
+        lineHeight: 15,
+        color: theme.colors.text.tertiary,
+        textTransform: 'uppercase',
+    },
+    localLoadingTitle: {
+        ...Typography.default('semiBold'),
+        fontSize: 24,
+        lineHeight: 30,
+        color: theme.colors.text.primary,
+    },
+    localLoadingSubtitle: {
+        ...Typography.default(),
+        fontSize: 14,
+        lineHeight: 21,
+        color: theme.colors.text.secondary,
+        marginBottom: 18,
+    },
+    localLoadingStatusCard: {
+        borderRadius: 12,
+        borderWidth: 1,
+        borderColor: theme.colors.border.default,
+        backgroundColor: theme.colors.surface.elevated,
+        paddingHorizontal: 14,
+        paddingVertical: 13,
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 12,
+    },
+    localLoadingStatusText: {
+        flex: 1,
+        flexBasis: 0,
+    },
+    localLoadingStatusTitle: {
+        ...Typography.default('semiBold'),
+        fontSize: 14,
+        lineHeight: 19,
+        color: theme.colors.text.primary,
+    },
+    localLoadingStatusBody: {
+        ...Typography.default(),
+        fontSize: 12,
+        lineHeight: 17,
+        color: theme.colors.text.secondary,
+        marginTop: 2,
     },
     logo: {
         height: 44,
@@ -361,6 +445,7 @@ function SessionGettingStartedGuidanceViewImpl(props: SessionGettingStartedGuida
     const { theme } = useUnistyles();
     const styles = stylesheet;
     const { model } = props;
+    const localDevPilotSession = useDevPilotLocalSession();
     const copyFeedback = useTemporaryCopyFeedback();
 
     const title = titleForKind(model.kind);
@@ -423,6 +508,45 @@ function SessionGettingStartedGuidanceViewImpl(props: SessionGettingStartedGuida
         }
         Modal.alert(t('common.error'), t('textSelection.failedToCopy'));
     }, [copyFeedback]);
+
+    if (model.kind === 'loading') {
+        const projectLabel = localDevPilotSession?.projectPath
+            ? localDevPilotSession.projectPath
+            : subtitle;
+        return (
+            <ScrollView
+                testID="session-getting-started-scroll"
+                style={styles.scrollContainer}
+                contentContainerStyle={[styles.contentContainer, styles.loadingContentContainer]}
+                keyboardShouldPersistTaps="handled"
+            >
+                <View testID="session-getting-started-kind-loading" style={{ width: 0, height: 0, overflow: 'hidden' }} />
+                <View testID="session-getting-started-local-loading" style={styles.localLoadingPanel}>
+                    <View style={styles.localLoadingTopRow}>
+                        <View style={styles.localLoadingMark}>
+                            <Ionicons name="terminal-outline" size={22} color="#1583F7" />
+                        </View>
+                        <View>
+                            <Text style={styles.localLoadingEyebrow}>Local ACP</Text>
+                            <Text style={styles.localLoadingTitle}>{title}</Text>
+                        </View>
+                    </View>
+                    <Text style={styles.localLoadingSubtitle}>
+                        Preparing your DevPilot workspace from the connected local project.
+                    </Text>
+                    <View style={styles.localLoadingStatusCard}>
+                        <ActivitySpinner size="small" color={theme.colors.text.secondary} />
+                        <View style={styles.localLoadingStatusText}>
+                            <Text style={styles.localLoadingStatusTitle}>Syncing local context</Text>
+                            <Text numberOfLines={1} style={styles.localLoadingStatusBody}>
+                                {projectLabel}
+                            </Text>
+                        </View>
+                    </View>
+                </View>
+            </ScrollView>
+        );
+    }
 
     return (
         <ScrollView

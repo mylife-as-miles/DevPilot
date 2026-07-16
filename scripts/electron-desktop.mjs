@@ -11,6 +11,10 @@ function electronExpoEnvironment() {
   const relayUrl = String(process.env.DEVPILOT_RELAY_URL ?? '').trim();
   const hostedServicesEnabled = ['1', 'true', 'yes', 'on'].includes(String(process.env.DEVPILOT_HOSTED_SERVICES ?? '').trim().toLowerCase());
   return {
+    // This repository is large enough that Watchman's cache initialization can
+    // fail on Windows. Metro's filesystem crawler is slower initially but
+    // consistently serves the desktop web client.
+    HAPPIER_UI_METRO_DISABLE_WATCHMAN: '1',
     EXPO_UNSTABLE_WEB_MODAL: '1',
     EXPO_PUBLIC_DEVPILOT_DESKTOP: '1',
     EXPO_PUBLIC_DEVPILOT_HOSTED_SERVICES: hostedServicesEnabled ? '1' : '0',

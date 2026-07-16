@@ -59,11 +59,19 @@ app.command("acp")(acp_command)
 @app.command("version")
 def version_command() -> None:
     """Print the installed version."""
-    try:
-        from importlib.metadata import version as _v
-        ver = _v(APP_NAME)
-    except Exception:
-        ver = "unknown"
+    from importlib.metadata import PackageNotFoundError, version as _v
+
+    ver = "unknown"
+    # The import package is named ``devpilot``, while the distributable CLI
+    # package retains its historical project name. Prefer the branded name for
+    # future packages, then resolve the current distribution name for local
+    # editable installs such as the desktop runtime.
+    for distribution_name in (APP_NAME, f"miles-{APP_NAME}-cli"):
+        try:
+            ver = _v(distribution_name)
+            break
+        except PackageNotFoundError:
+            continue
     typer.echo(f"{APP_NAME} {ver}")
 
 

@@ -16,6 +16,7 @@ export const devpilotServices = Object.freeze({
     apiUrl: readOptionalUrl(process.env.EXPO_PUBLIC_DEVPILOT_API_URL),
     relayUrl: readOptionalUrl(process.env.EXPO_PUBLIC_DEVPILOT_RELAY_URL),
     hostedServicesEnabled: readBoolean(process.env.EXPO_PUBLIC_DEVPILOT_HOSTED_SERVICES),
+    localDesktopEnabled: readBoolean(process.env.EXPO_PUBLIC_DEVPILOT_DESKTOP),
 });
 
 export function isElectronDesktop(): boolean {
