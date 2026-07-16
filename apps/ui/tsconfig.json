@@ -9,6 +9,9 @@
       ],
       "hello-world": [
         "../hello-world"
+      ],
+      "@devpilot/desktop/client": [
+        "../desktop/src/client.ts"
       ]
     },
     "jsx": "react-jsx",

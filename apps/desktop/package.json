@@ -1,0 +1,19 @@
+{
+  "name": "@devpilot/desktop",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "main.cjs",
+  "exports": {
+    "./client": "./src/client.ts"
+  },
+  "scripts": {
+    "dev": "electron .",
+    "package": "electron-forge package",
+    "make": "electron-forge make",
+    "verify": "node --check main.cjs && node --check preload.cjs && node --test desktop-shell.test.cjs"
+  },
+  "config": {
+    "forge": "./forge.config.cjs"
+  }
+}
