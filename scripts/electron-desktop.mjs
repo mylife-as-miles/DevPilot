@@ -40,7 +40,7 @@ function waitForChild(child, label) {
   });
 }
 
-async function waitForDevServer(url, timeoutMs = 45_000) {
+async function waitForDevServer(url, timeoutMs = 120_000) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     try {
@@ -56,9 +56,12 @@ async function waitForDevServer(url, timeoutMs = 45_000) {
 
 async function runDevelopmentDesktop() {
   const url = `http://127.0.0.1:${DEV_PORT}`;
+  await waitForChild(spawnCorepack(['yarn', 'build:packages']), 'DevPilot workspace packages');
   const expo = spawnCorepack([
-    'yarn', '--cwd', 'apps/ui', 'web', '--', '--port', String(DEV_PORT), '--localhost',
-  ]);
+    'yarn', '--cwd', 'apps/ui', 'expo', 'start', '--web', '--port', String(DEV_PORT), '--localhost',
+  ], {
+    env: { EXPO_UNSTABLE_WEB_MODAL: '1' },
+  });
   let electron = null;
   const cleanup = () => {
     if (electron && electron.exitCode == null) electron.kill();
@@ -78,7 +81,15 @@ async function runDevelopmentDesktop() {
 }
 
 async function runProductionBuild() {
-  await waitForChild(spawnCorepack(['yarn', '--cwd', 'apps/ui', 'electron:export']), 'Expo export');
+  await waitForChild(spawnCorepack(['yarn', 'build:packages']), 'DevPilot workspace packages');
+  await waitForChild(
+    spawnCorepack([
+      'yarn', '--cwd', 'apps/ui', 'expo', 'export', '--platform', 'web', '--output-dir', 'dist',
+    ], {
+      env: { EXPO_UNSTABLE_WEB_MODAL: '1' },
+    }),
+    'Expo export',
+  );
   await waitForChild(spawnCorepack(['yarn', '--cwd', 'apps/electron', 'make']), 'Electron Forge');
 }
 
