@@ -50,6 +50,7 @@ const RELAY_SETTINGS_ROUTE = '/settings/server';
 const RELAY_DROPDOWN_TARGET_THRESHOLD = 2;
 const POPOVER_MAX_WIDTH = 420;
 const POPOVER_MIN_WIDTH = 220;
+const LEGACY_CLOUD_PROFILE_NAMES = new Set(['Happier Cloud', 'api.happier.dev']);
 
 function resolveConnectionHealthStatusPillVariant(tone: ConnectionHealthPresentation['tone']): StatusPillVariant {
     switch (tone) {
@@ -249,7 +250,8 @@ export const ConnectionStatusControl = React.memo(function ConnectionStatusContr
     const activeServerLabel = React.useMemo(() => {
         const active = getServerProfileById(activeServerId) ?? servers.find((server) => server.id === activeServerId);
         const name = String(active?.name ?? '').trim();
-        if (name) return name;
+        if (name && !LEGACY_CLOUD_PROFILE_NAMES.has(name)) return name;
+        if (getServerUrl() === 'https://api.happier.dev') return 'DevPilot Relay';
         return toServerUrlDisplay(getServerUrl()) || t('status.connected');
     }, [activeServerId, servers]);
 

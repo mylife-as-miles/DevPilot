@@ -343,14 +343,16 @@ export const SettingsView = React.memo(function SettingsView() {
                             )}
                         </>
                     ) : (
-                        // Logo view: Original logo + version
-                        <>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 14, minHeight: 90 }}>
                             <Image
-                                source={theme.dark ? require('@/assets/images/logotype-light.png') : require('@/assets/images/logotype-dark.png')}
+                                source={require('@/assets/images/devpilot-bot.png')}
                                 contentFit="contain"
-                                style={{ width: 300, height: 90 }}
+                                style={{ width: 68, height: 68 }}
                             />
-                        </>
+                            <Text style={{ ...Typography.logo(), fontSize: 48, lineHeight: 56, color: theme.colors.text.primary }}>
+                                DevPilot
+                            </Text>
+                        </View>
                     )}
                 </View>
             </View>

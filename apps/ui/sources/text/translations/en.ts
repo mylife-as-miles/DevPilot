@@ -3602,7 +3602,7 @@ export const en = {
                 sections: {
                     runtime: {
                         title: 'Local runtime',
-                        footer: 'DevPilot checks this path first, then the sibling ../DevPilot-CLI checkout, the active virtual environment, and finally PATH.',
+                        footer: 'DevPilot checks this path first, then this repository\'s .venv and venv, and finally PATH.',
                     },
                 },
                 fields: {
@@ -5331,7 +5331,7 @@ export const en = {
 
     sessionsList: {
         serverHeader: ({ server }: { server: string }) => `Server: ${server}`,
-        storagePersistedTab: 'Happier',
+        storagePersistedTab: 'DevPilot',
         storageDirectTab: 'Direct',
         renameWorkspace: 'Rename workspace',
         renameWorkspacePromptTitle: 'Rename workspace',
@@ -5842,7 +5842,7 @@ export const en = {
     },
 
     sidebar: {
-        sessionsTitle: 'Happier',
+        sessionsTitle: 'DevPilot',
     },
 
     toolView: {
@@ -8523,10 +8523,10 @@ settingsSession: {
             `The Relay at ${serverUrl} returned an unexpected response. Update that Relay or choose a different Relay to continue.`,
 
         // Unified onboarding redesign — BrandPanel (left pane / mobile hero)
-        brandTaglineLine1: 'Start anywhere.',
-        brandTaglineLine2: 'Continue everywhere.',
-        brandSubTagline: 'One control room for every coding agent — on every device you own.',
-        brandTrustStrip: 'END-TO-END ENCRYPTED · OPEN SOURCE · SELF-HOSTABLE',
+        brandTaglineLine1: 'Start locally.',
+        brandTaglineLine2: 'Build autonomously.',
+        brandSubTagline: 'Launch research runs, monitor Executors, inspect hypotheses, and review every change from one desktop workspace.',
+        brandTrustStrip: 'LOCAL-FIRST · OPEN SOURCE · SELF-HOSTABLE',
         providerMarkRowAccessibilityLabel: 'Supported AI coding agents',
 
         // Unified onboarding redesign — welcome decision (right pane)

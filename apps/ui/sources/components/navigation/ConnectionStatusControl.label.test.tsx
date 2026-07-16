@@ -106,9 +106,9 @@ vi.mock('@/sync/domains/server/serverProfiles', () => ({
     getActiveServerId: () => 'srv-1',
     getServerProfileById: (id: string) =>
         id === 'srv-1'
-            ? { id: 'srv-1', name: 'Happier Cloud', serverUrl: 'https://cloud.example.test' }
+            ? { id: 'srv-1', name: 'DevPilot Relay', serverUrl: 'https://cloud.example.test' }
             : null,
-    listServerProfiles: () => [{ id: 'srv-1', name: 'Happier Cloud', serverUrl: 'https://cloud.example.test' }],
+    listServerProfiles: () => [{ id: 'srv-1', name: 'DevPilot Relay', serverUrl: 'https://cloud.example.test' }],
     resolveServerProfileScopeId: (profile: { id: string; serverIdentityId?: string | null }) =>
         profile.serverIdentityId ?? profile.id,
     setActiveServerId: vi.fn(),
@@ -167,7 +167,7 @@ describe('ConnectionStatusControl (label)', () => {
 
         const screen = await renderScreen(React.createElement(ConnectionStatusControl, { variant: 'header' }));
         const joined = screen.getTextContent();
-        expect(joined).toContain('Happier Cloud');
+        expect(joined).toContain('DevPilot Relay');
         expect(joined).not.toContain('status.connected');
     });
 

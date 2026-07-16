@@ -11,7 +11,7 @@ import { BrandSubTagline } from './BrandSubTagline';
 import { BrandTagline } from './BrandTagline';
 import { BrandTrustStrip } from './BrandTrustStrip';
 import { BrandWordmark } from './BrandWordmark';
-import { ProviderMarkRow } from '@/components/onboarding/preAuth/ProviderMarkRow';
+import { DevPilotCapabilityRow } from './DevPilotCapabilityRow';
 import { PlanetBackground } from './PlanetBackground';
 import { useBrandPaneTokens } from './brandPaneTokens';
 
@@ -79,7 +79,7 @@ export const BrandPanel = React.memo(function BrandPanel(props: BrandPanelProps)
                         <View style={styles.gap22} />
                         <BrandSubTagline />
                         <View style={styles.gap26} />
-                        <ProviderMarkRow tone={markTone} justify="flex-start" />
+                        <DevPilotCapabilityRow tone={markTone} justify="flex-start" />
                         <View style={styles.gap16} />
                         <BrandTrustStrip />
                     </View>
@@ -120,7 +120,7 @@ export const BrandPanel = React.memo(function BrandPanel(props: BrandPanelProps)
                     <View style={styles.gap18} />
                     <BrandSubTagline mobile />
                     <View style={styles.gap22} />
-                    <ProviderMarkRow tone={markTone} justify="center" />
+                    <DevPilotCapabilityRow tone={markTone} justify="center" />
                     <View style={styles.gap22} />
                     <BrandTrustStrip mobile />
                 </View>
