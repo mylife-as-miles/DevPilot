@@ -10,12 +10,12 @@ const runtime: DevPilotRuntime = Object.freeze({
   command: 'C:\\repo\\.venv\\Scripts\\devpilot.exe',
   argsPrefix: Object.freeze([]),
   kind: 'executable',
-  source: 'sibling-repository',
+  source: 'repository-virtual-environment',
   repositoryPath: 'C:\\repo',
   virtualEnvironmentPath: 'C:\\repo\\.venv',
 });
 
-test('reports a ready sibling runtime without starting ACP', async () => {
+test('reports a ready repository-local runtime without starting ACP', async () => {
   const projectPath = mkdtempSync(path.join(tmpdir(), 'devpilot-runtime-probe-'));
   const calls: readonly string[][] = [];
   const mutableCalls = calls as string[][];

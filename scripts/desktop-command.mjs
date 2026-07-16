@@ -36,7 +36,7 @@ export function formatDesktopRuntimeMessage() {
   return [
     'DevPilot Desktop runs through Electron and does not require Rust or Cargo.',
     'Install the workspace dependencies with `corepack yarn install`, then retry.',
-    'No Python runtime or DevPilot-CLI installation is changed by desktop startup.',
+    'Desktop startup uses the repository-local Python runtime without changing its environment.',
   ].join('\n');
 }
 

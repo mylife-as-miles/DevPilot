@@ -128,7 +128,7 @@ describe('createAcpCliCapability', () => {
 
   it('allows a provider to replace the complete ACP probe launch', async () => {
     const resolveAcpProbeLaunch = vi.fn(() => ({
-      command: 'C:\\DevPilot-CLI\\.venv\\Scripts\\python.exe',
+      command: 'C:\\DevPilot\\.venv\\Scripts\\python.exe',
       args: ['-m', 'devpilot.cli.app', 'acp', '--stdio'],
     }));
     const capability = createAcpCliCapability({
@@ -149,17 +149,17 @@ describe('createAcpCliCapability', () => {
         cliSnapshot: {
           path: process.env.PATH ?? null,
           clis: {
-            devpilot: { available: true, resolvedPath: 'C:\\DevPilot-CLI\\.venv\\Scripts\\python.exe' },
+            devpilot: { available: true, resolvedPath: 'C:\\DevPilot\\.venv\\Scripts\\python.exe' },
           },
         },
       },
     } as never);
 
     expect(resolveAcpProbeLaunch).toHaveBeenCalledWith(expect.objectContaining({
-      resolvedPath: 'C:\\DevPilot-CLI\\.venv\\Scripts\\python.exe',
+      resolvedPath: 'C:\\DevPilot\\.venv\\Scripts\\python.exe',
     }));
     expect(probeAcpAgentCapabilities).toHaveBeenCalledWith(expect.objectContaining({
-      command: 'C:\\DevPilot-CLI\\.venv\\Scripts\\python.exe',
+      command: 'C:\\DevPilot\\.venv\\Scripts\\python.exe',
       args: ['-m', 'devpilot.cli.app', 'acp', '--stdio'],
     }));
   });

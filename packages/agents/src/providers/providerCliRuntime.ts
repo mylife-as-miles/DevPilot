@@ -92,8 +92,8 @@ export const PROVIDER_CLI_RUNTIME_SPECS: Readonly<Record<AgentId, ProviderCliRun
     manualInstallKind: 'none',
     manualInstallRecipes: null,
     acceptsJavaScriptFileOverride: false,
-    installGuideUrl: 'https://github.com/mylife-as-miles/DevPilot-CLI',
-    docsUrl: 'https://github.com/mylife-as-miles/DevPilot-CLI',
+    installGuideUrl: 'https://github.com/mylife-as-miles/DevPilot',
+    docsUrl: 'https://github.com/mylife-as-miles/DevPilot',
   },
   claude: {
     id: 'claude',

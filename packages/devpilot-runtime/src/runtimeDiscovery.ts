@@ -4,8 +4,7 @@ import path from 'node:path';
 
 export type DevPilotRuntimeSource =
   | 'configured'
-  | 'sibling-repository'
-  | 'active-virtual-environment'
+  | 'repository-virtual-environment'
   | 'path';
 
 export type DevPilotRuntime = Readonly<{
@@ -22,7 +21,7 @@ export type DevPilotDiscoveryResult = Readonly<{
   searchedPaths: readonly string[];
   detectedPythonInstallations: readonly string[];
   detectedVirtualEnvironments: readonly string[];
-  siblingRepositoryPath: string;
+  repositoryPath: string;
 }>;
 
 type DiscoveryOptions = Readonly<{
@@ -142,14 +141,14 @@ export function discoverDevPilotRuntime(options: DiscoveryOptions = {}): DevPilo
   const searchedPaths: string[] = [];
   const detectedPythonInstallations: string[] = [];
   const detectedVirtualEnvironments: string[] = [];
-  const siblingRepositoryPath = pathApi.resolve(desktopRoot, '..', 'DevPilot-CLI');
+  const repositoryPath = desktopRoot;
 
   const finish = (runtime: DevPilotRuntime | null): DevPilotDiscoveryResult => Object.freeze({
     runtime,
     searchedPaths: Object.freeze([...searchedPaths]),
     detectedPythonInstallations: Object.freeze([...new Set(detectedPythonInstallations)]),
     detectedVirtualEnvironments: Object.freeze([...new Set(detectedVirtualEnvironments)]),
-    siblingRepositoryPath,
+    repositoryPath,
   });
 
   const configured = options.configuredExecutablePath?.trim();
@@ -161,29 +160,15 @@ export function discoverDevPilotRuntime(options: DiscoveryOptions = {}): DevPilo
     }
   }
 
-  const siblingCandidates = virtualEnvironmentCandidates(siblingRepositoryPath, platform, true);
-  searchedPaths.push(...siblingCandidates.map((candidate) => candidate.path));
-  for (const candidate of siblingCandidates) {
+  const repositoryCandidates = virtualEnvironmentCandidates(repositoryPath, platform, true);
+  searchedPaths.push(...repositoryCandidates.map((candidate) => candidate.path));
+  for (const candidate of repositoryCandidates) {
     if (!fileExists(candidate.path)) continue;
     detectedVirtualEnvironments.push(candidate.environmentPath);
-    if (createRuntime(candidate.path, 'sibling-repository', siblingRepositoryPath, candidate.environmentPath).kind === 'python-module') {
+    if (createRuntime(candidate.path, 'repository-virtual-environment', repositoryPath, candidate.environmentPath).kind === 'python-module') {
       detectedPythonInstallations.push(candidate.path);
     }
-    return finish(createRuntime(candidate.path, 'sibling-repository', siblingRepositoryPath, candidate.environmentPath));
-  }
-
-  const activeEnvironment = env.VIRTUAL_ENV?.trim();
-  if (activeEnvironment) {
-    const normalizedEnvironment = pathApi.resolve(activeEnvironment);
-    detectedVirtualEnvironments.push(normalizedEnvironment);
-    const activeCandidates = virtualEnvironmentCandidates(normalizedEnvironment, platform, false);
-    searchedPaths.push(...activeCandidates.map((candidate) => candidate.path));
-    for (const candidate of activeCandidates) {
-      if (!fileExists(candidate.path)) continue;
-      const runtime = createRuntime(candidate.path, 'active-virtual-environment', null, normalizedEnvironment);
-      if (runtime.kind === 'python-module') detectedPythonInstallations.push(candidate.path);
-      return finish(runtime);
-    }
+    return finish(createRuntime(candidate.path, 'repository-virtual-environment', repositoryPath, candidate.environmentPath));
   }
 
   const globalCommandName = platform === 'win32' ? 'devpilot.exe' : 'devpilot';
@@ -215,8 +200,8 @@ export function buildDevPilotAcpInvocation(runtime: DevPilotRuntime) {
 export function formatRuntimeNotFoundGuidance(result: DevPilotDiscoveryResult): string {
   return [
     'DevPilot runtime was not found.',
-    `Expected the sibling repository at ${result.siblingRepositoryPath} (normally ../DevPilot-CLI).`,
-    'Install DevPilot-CLI in editable mode inside its own virtual environment, or choose a manual executable path in Settings.',
+    `Expected a virtual environment in ${result.repositoryPath} (normally .venv or venv).`,
+    'Install DevPilot in this repository virtual environment, or choose a manual executable path in Settings.',
     'No Python installation or virtual environment was created automatically.',
     'After correcting the runtime, use Retry detection.',
   ].join('\n');

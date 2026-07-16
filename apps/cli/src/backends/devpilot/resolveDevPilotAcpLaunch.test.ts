@@ -9,14 +9,14 @@ describe('resolveDevPilotAcpLaunch', () => {
         command: 'C:\\runtime\\devpilot.exe',
         argsPrefix: [],
         kind: 'executable' as const,
-        source: 'sibling-repository' as const,
+        source: 'repository-virtual-environment' as const,
         repositoryPath: 'C:\\runtime',
         virtualEnvironmentPath: 'C:\\runtime\\.venv',
       },
       searchedPaths: [],
       detectedPythonInstallations: [],
       detectedVirtualEnvironments: [],
-      siblingRepositoryPath: 'C:\\runtime',
+      repositoryPath: 'C:\\runtime',
     }));
 
     expect(resolveDevPilotAcpLaunch({
@@ -25,7 +25,7 @@ describe('resolveDevPilotAcpLaunch', () => {
     })).toEqual({
       command: 'C:\\runtime\\devpilot.exe',
       args: ['acp', '--stdio'],
-      runtimeSource: 'sibling-repository',
+      runtimeSource: 'repository-virtual-environment',
     });
     expect(discover).toHaveBeenCalledWith(expect.objectContaining({
       desktopRoot: 'C:\\desktop',
@@ -45,7 +45,7 @@ describe('resolveDevPilotAcpLaunch', () => {
       searchedPaths: [],
       detectedPythonInstallations: [],
       detectedVirtualEnvironments: [],
-      siblingRepositoryPath: '/work/DevPilot-CLI',
+      repositoryPath: '/work/DevPilot',
     }));
 
     resolveDevPilotAcpLaunch({
@@ -62,10 +62,10 @@ describe('resolveDevPilotAcpLaunch', () => {
   it('surfaces actionable discovery guidance instead of installing a runtime', () => {
     const discover = vi.fn(() => ({
       runtime: null,
-      searchedPaths: ['/work/DevPilot-CLI/.venv/bin/devpilot'],
+      searchedPaths: ['/work/DevPilot/.venv/bin/devpilot'],
       detectedPythonInstallations: [],
       detectedVirtualEnvironments: [],
-      siblingRepositoryPath: '/work/DevPilot-CLI',
+      repositoryPath: '/work/DevPilot',
     }));
 
     expect(() => resolveDevPilotAcpLaunch({
