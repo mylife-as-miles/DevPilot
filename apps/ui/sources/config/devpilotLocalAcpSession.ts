@@ -317,6 +317,15 @@ export async function submitDevPilotLocalAcpPrompt(sessionId: string, text: stri
     const marker = readDevPilotLocalAcpMarker(session?.metadata);
     if (!marker) throw new Error('This session is not connected to local DevPilot ACP.');
 
+    const preflight = await desktop.preflight(marker.projectPath);
+    const failures = preflight.checks.filter((check) => check.status === 'fail');
+    if (failures.length > 0) {
+        throw new Error(failures.map((check) => {
+            const remediation = check.remediation ? ` ${check.remediation}` : '';
+            return `${check.message}${remediation}`;
+        }).join('\n'));
+    }
+
     const now = Date.now();
     const baseSeq = getCurrentTranscriptSeq(sessionId) + 1;
     appendMessages(sessionId, [
