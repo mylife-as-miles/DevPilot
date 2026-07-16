@@ -1,9 +1,7 @@
 # DevPilot Desktop
 
-DevPilot Desktop is the graphical control plane for the independent
+DevPilot Desktop is the graphical control  desktop-only Electron application for the independent
 [DevPilot-CLI](https://github.com/mylife-as-miles/DevPilot-CLI) Python runtime.
-It is a desktop-only Electron application derived in part from
-[Happier](https://github.com/happier-dev/happier).
 
 The desktop repository contains the Electron shell, React/Expo interface, local
 process integration, desktop packaging, and synchronization tooling. Autonomous
