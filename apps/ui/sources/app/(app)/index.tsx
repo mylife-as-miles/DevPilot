@@ -39,6 +39,8 @@ import {
 } from "@/components/account/auth/useRemoteAuthEntryOptions";
 
 import { shouldAutoRedirectToSetupOnFirstLaunch } from "@/utils/navigation/firstLaunchSetupRedirectPolicy";
+import { LocalDevPilotWelcome } from '@/components/onboarding/localDesktop/LocalDevPilotWelcome';
+import { devpilotServices, isElectronDesktop } from '@/config/devpilotServices';
 
 const DEFAULT_WELCOME_SERVER_CHECK_TIMEOUT_MS = 6_000;
 const DEFAULT_WELCOME_SERVER_CHECK_RETRY_DELAY_MS = 1_000;
@@ -127,6 +129,9 @@ function resolveAuthReturnToRoute(): string {
 function NotAuthenticated() {
     const auth = useAuth();
     const router = useRouter();
+    if (isElectronDesktop() && !devpilotServices.hostedServicesEnabled) {
+        return <LocalDevPilotWelcome />;
+    }
     const isDesktopShell = React.useMemo(() => isTauriDesktop(), []);
     const applyBrandHeroSeen = useApplyBrandHeroSeen();
 

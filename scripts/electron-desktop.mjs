@@ -7,15 +7,14 @@ import { resolveCorepackCommand } from './corepack-command.mjs';
 
 const ROOT = process.cwd();
 const DEV_PORT = Number(process.env.DEVPILOT_ELECTRON_PORT ?? '8081');
-const DEFAULT_RELAY_URL = 'https://api.happier.dev';
-
 function electronExpoEnvironment() {
-  const relayUrl = String(process.env.DEVPILOT_RELAY_URL ?? DEFAULT_RELAY_URL).trim() || DEFAULT_RELAY_URL;
+  const relayUrl = String(process.env.DEVPILOT_RELAY_URL ?? '').trim();
+  const hostedServicesEnabled = ['1', 'true', 'yes', 'on'].includes(String(process.env.DEVPILOT_HOSTED_SERVICES ?? '').trim().toLowerCase());
   return {
     EXPO_UNSTABLE_WEB_MODAL: '1',
-    // Expo serves the renderer on localhost during development. Keep that origin
-    // separate from the Relay API profile that the Happier-derived UI uses.
-    EXPO_PUBLIC_HAPPIER_SERVER_URL: relayUrl,
+    EXPO_PUBLIC_DEVPILOT_DESKTOP: '1',
+    EXPO_PUBLIC_DEVPILOT_HOSTED_SERVICES: hostedServicesEnabled ? '1' : '0',
+    ...(relayUrl ? { EXPO_PUBLIC_DEVPILOT_RELAY_URL: relayUrl } : {}),
     EXPO_PUBLIC_HAPPY_STORAGE_SCOPE: 'devpilot-electron',
   };
 }
@@ -84,7 +83,7 @@ async function runDevelopmentDesktop() {
   try {
     await waitForDevServer(url);
     electron = spawnCorepack([
-      'yarn', '--cwd', 'apps/electron', 'dev', '--', '--url', url,
+      'yarn', '--cwd', 'apps/desktop', 'dev', '--', '--url', url,
     ]);
     await waitForChild(electron, 'Electron');
   } finally {
@@ -102,7 +101,7 @@ async function runProductionBuild() {
     }),
     'Expo export',
   );
-  await waitForChild(spawnCorepack(['yarn', '--cwd', 'apps/electron', 'make']), 'Electron Forge');
+  await waitForChild(spawnCorepack(['yarn', '--cwd', 'apps/desktop', 'make']), 'Electron Forge');
 }
 
 const mode = process.argv[2] ?? 'dev';

@@ -1,5 +1,6 @@
-const { app, BrowserWindow, ipcMain, session, shell } = require('electron');
+const { app, BrowserWindow, dialog, ipcMain, session, shell } = require('electron');
 const { createReadStream, existsSync, statSync } = require('node:fs');
+const { spawn, spawnSync } = require('node:child_process');
 const http = require('node:http');
 const path = require('node:path');
 
@@ -7,6 +8,39 @@ const { isAllowedExternalUrl, mimeTypeForPath, resolveStaticCandidate } = requir
 
 let mainWindow = null;
 let staticServer = null;
+let acpProcess = null;
+
+function desktopRoot() {
+  return process.env.DEVPILOT_DESKTOP_ROOT || path.resolve(__dirname, '..', '..');
+}
+
+function resolveDevPilotRuntime() {
+  const configured = String(process.env.DEVPILOT_EXECUTABLE_PATH || '').trim();
+  const repository = desktopRoot();
+  const candidates = configured ? [configured] : [
+    path.join(repository, '.venv', 'Scripts', 'devpilot.exe'),
+    path.join(repository, 'venv', 'Scripts', 'devpilot.exe'),
+    path.join(repository, '.venv', 'Scripts', 'python.exe'),
+    path.join(repository, 'venv', 'Scripts', 'python.exe'),
+  ];
+  for (const command of candidates) {
+    if (!existsSync(command)) continue;
+    const python = path.basename(command).toLowerCase() === 'python.exe';
+    return { command, argsPrefix: python ? ['-m', 'devpilot.cli.app'] : [], source: configured ? 'configured' : 'repository-virtual-environment' };
+  }
+  const found = spawnSync(process.platform === 'win32' ? 'where.exe' : 'which', [process.platform === 'win32' ? 'devpilot.exe' : 'devpilot'], { encoding: 'utf8', windowsHide: true });
+  const command = String(found.stdout || '').split(/\r?\n/).map((value) => value.trim()).find(Boolean);
+  return command ? { command, argsPrefix: [], source: 'path' } : null;
+}
+
+function getRuntimeStatus() {
+  const runtime = resolveDevPilotRuntime();
+  if (!runtime) return { ready: false, command: null, source: null, version: null, issue: 'DevPilot was not found. Install it in this repository’s .venv or choose an executable in Settings.' };
+  const result = spawnSync(runtime.command, [...runtime.argsPrefix, '--version'], { encoding: 'utf8', timeout: 5000, windowsHide: true });
+  const output = `${result.stdout || ''}\n${result.stderr || ''}`.trim();
+  if (result.status !== 0) return { ready: false, command: runtime.command, source: runtime.source, version: null, issue: output || 'DevPilot version check failed.' };
+  return { ready: true, command: runtime.command, source: runtime.source, version: output || null, issue: null };
+}
 
 function parseDevUrl() {
   const index = process.argv.indexOf('--url');
@@ -60,6 +94,18 @@ function startStaticServer(rootDir) {
 function configureSessionPolicy() {
   session.defaultSession.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false));
   session.defaultSession.setPermissionCheckHandler(() => false);
+  const hostedServicesEnabled = ['1', 'true', 'yes', 'on'].includes(String(process.env.DEVPILOT_HOSTED_SERVICES || '').trim().toLowerCase());
+  if (!hostedServicesEnabled) {
+    session.defaultSession.webRequest.onBeforeRequest((details, callback) => {
+      try {
+        const host = new URL(details.url).hostname.toLowerCase();
+        if (host === 'happier.dev' || host.endsWith('.happier.dev')) return callback({ cancel: true });
+      } catch {
+        // The navigation policy below remains the authority for malformed URLs.
+      }
+      callback({ cancel: false });
+    });
+  }
 }
 
 async function createMainWindow() {
@@ -112,6 +158,28 @@ ipcMain.handle('devpilot:open-external', async (event, rawUrl) => {
   await shell.openExternal(rawUrl);
 });
 
+ipcMain.handle('devpilot:get-runtime-status', (event) => {
+  if (!isTrustedSender(event)) throw new Error('Untrusted Electron renderer.');
+  return getRuntimeStatus();
+});
+
+ipcMain.handle('devpilot:select-project', async (event) => {
+  if (!isTrustedSender(event)) throw new Error('Untrusted Electron renderer.');
+  const result = await dialog.showOpenDialog(mainWindow, { properties: ['openDirectory', 'createDirectory'] });
+  return result.canceled ? null : result.filePaths[0] || null;
+});
+
+ipcMain.handle('devpilot:launch-acp', (event, projectPath) => {
+  if (!isTrustedSender(event)) throw new Error('Untrusted Electron renderer.');
+  if (!projectPath || !existsSync(projectPath) || !statSync(projectPath).isDirectory()) throw new Error('Select an accessible local project directory.');
+  const runtime = resolveDevPilotRuntime();
+  if (!runtime) throw new Error('DevPilot was not found in this repository.');
+  if (acpProcess && acpProcess.exitCode === null) acpProcess.kill();
+  acpProcess = spawn(runtime.command, [...runtime.argsPrefix, 'acp', '--stdio'], { cwd: projectPath, shell: false, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
+  acpProcess.on('exit', () => { acpProcess = null; });
+  return { pid: acpProcess.pid };
+});
+
 app.whenReady().then(async () => {
   configureSessionPolicy();
   await createMainWindow();
@@ -128,5 +196,6 @@ app.on('window-all-closed', () => {
 });
 
 app.on('before-quit', () => {
+  if (acpProcess && acpProcess.exitCode === null) acpProcess.kill();
   if (staticServer) staticServer.close();
 });
