@@ -213,13 +213,12 @@ config.resolver.blockList = Array.isArray(existingBlockList)
     ? [existingBlockList, testRouteBlockList, projectArtifactsBlockList, nextBuildArtifactsBlockList, workspaceNodeModulesBlockList]
     : [testRouteBlockList, projectArtifactsBlockList, nextBuildArtifactsBlockList, workspaceNodeModulesBlockList];
 
+const rootNodeModules = path.resolve(__dirname, "../../node_modules");
+const appNodeModules = path.resolve(__dirname, "node_modules");
 const existingWatchFolders = Array.isArray(config.watchFolders) ? config.watchFolders : [];
 config.watchFolders = existingWatchFolders.filter(
   (folder, index, all) => typeof folder === 'string' && folder.length > 0 && all.indexOf(folder) === index,
 );
-
-const rootNodeModules = path.resolve(__dirname, "../../node_modules");
-const appNodeModules = path.resolve(__dirname, "node_modules");
 const generatedWorkletsWatchFolders = resolveGeneratedWorkletsWatchFolders() || [];
 for (const generatedWorkletsWatchFolder of generatedWorkletsWatchFolders) {
   if (!config.watchFolders.includes(generatedWorkletsWatchFolder)) {
@@ -291,6 +290,17 @@ function isExpoModuleOrigin(originModulePath, suffixes) {
 
 const defaultResolveRequest = config.resolver.resolveRequest;
 config.resolver.resolveRequest = (context, moduleName, platform) => {
+  // Metro occasionally passes its configured empty-module file back through a
+  // custom resolver as an absolute module name. Resolve that file directly;
+  // treating it as a package request makes the web bundle fail near completion.
+  if (
+    typeof moduleName === "string"
+    && typeof config.resolver.emptyModulePath === "string"
+    && path.normalize(moduleName) === path.normalize(config.resolver.emptyModulePath)
+  ) {
+    return { type: "sourceFile", filePath: config.resolver.emptyModulePath };
+  }
+
   const generatedWorkletResolution = resolveGeneratedWorkletModule(moduleName);
   if (generatedWorkletResolution) return generatedWorkletResolution;
 
