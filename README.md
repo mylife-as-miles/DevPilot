@@ -15,7 +15,6 @@ Keep the repositories as siblings:
 ```text
 Documents/
 ├── DevPilot/
-│   ├── happier/       # ignored upstream reference clone
 │   ├── apps/
 │   ├── packages/
 │   ├── scripts/
