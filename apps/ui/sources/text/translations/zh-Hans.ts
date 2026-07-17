@@ -3716,6 +3716,11 @@ export const zhHans: TranslationStructure = {
     invalidNumber: "无效数字",
     invalidJson: "无效 JSON",
     plugins: {
+            devpilot: {
+                title: 'DevPilot',
+                sections: { runtime: { title: 'Local runtime', footer: 'DevPilot checks this path first, then this repository\'s .venv and venv, and finally PATH.' } },
+                fields: { devpilotExecutablePath: { title: 'Runtime executable', subtitle: 'Optional absolute path to devpilot or a Python executable with DevPilot installed. Leave empty for automatic discovery.' } },
+            },
             claude: {
                 title: "Claude Code",
                 sections: {
@@ -5836,6 +5841,7 @@ export const zhHans: TranslationStructure = {
       badgePlanMode: "计划模式",
     },
     agent: {
+      devpilot: 'DevPilot',
       claude: "Claude",
       codex: "Codex",
       opencode: "OpenCode",
@@ -9592,6 +9598,7 @@ settingsSession: {
       title: "AI 后端",
       selectAtLeastOneError: "至少选择一个 AI 后端。",
       claudeSubtitle: "Claude 命令行",
+      devpilotSubtitle: 'DevPilot Autonomous Research',
       codexSubtitle: "Codex 命令行",
       opencodeSubtitle: "OpenCode 命令行",
       geminiSubtitleExperimental: "Gemini 命令行（实验）",

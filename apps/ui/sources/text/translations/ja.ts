@@ -1450,6 +1450,7 @@ export const ja: TranslationStructure = {
       selectAtLeastOneError:
         "少なくとも1つのAIバックエンドを選択してください。",
       claudeSubtitle: "Claude コマンドライン",
+      devpilotSubtitle: 'DevPilot Autonomous Research',
       codexSubtitle: "Codex コマンドライン",
       opencodeSubtitle: "OpenCode コマンドライン",
       geminiSubtitleExperimental: "Gemini コマンドライン（実験）",
@@ -4112,6 +4113,11 @@ localTailscale: {
     invalidNumber: "無効な数値です",
     invalidJson: "無効なJSONです",
     plugins: {
+            devpilot: {
+                title: 'DevPilot',
+                sections: { runtime: { title: 'Local runtime', footer: 'DevPilot checks this path first, then this repository\'s .venv and venv, and finally PATH.' } },
+                fields: { devpilotExecutablePath: { title: 'Runtime executable', subtitle: 'Optional absolute path to devpilot or a Python executable with DevPilot installed. Leave empty for automatic discovery.' } },
+            },
             claude: {
                 title: "Claude Code",
                 sections: {
@@ -6307,6 +6313,7 @@ localTailscale: {
       badgePlanMode: "プランモード",
     },
     agent: {
+      devpilot: 'DevPilot',
       claude: "Claude",
       codex: "Codex",
       opencode: "OpenCode",

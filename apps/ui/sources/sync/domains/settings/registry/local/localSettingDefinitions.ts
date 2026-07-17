@@ -480,7 +480,7 @@ export const LOCAL_SETTING_DEFINITIONS = defineSettingDefinitions({
         analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'enum', privacy: 'safe', identityScope: 'device_user' },
     },
     sessionLastMobileSurfaceBySessionId: {
-        schema: z.record(z.string(), z.enum(['chat', 'browse', 'git', 'tabs', 'terminal'])).default({}),
+        schema: z.record(z.string(), z.enum(['chat', 'research', 'browse', 'git', 'tabs', 'terminal'])).default({}),
         default: {},
         description: 'Last active mobile session surface by server-scoped session key, with legacy bare session ids accepted for compatibility',
         storageScope: 'local',

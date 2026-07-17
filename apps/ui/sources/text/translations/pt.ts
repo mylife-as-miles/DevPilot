@@ -3950,6 +3950,11 @@ export const pt: TranslationStructure = {
       invalidNumber: "Número inválido",
     invalidJson: "JSON inválido",
       plugins: {
+            devpilot: {
+                title: 'DevPilot',
+                sections: { runtime: { title: 'Local runtime', footer: 'DevPilot checks this path first, then this repository\'s .venv and venv, and finally PATH.' } },
+                fields: { devpilotExecutablePath: { title: 'Runtime executable', subtitle: 'Optional absolute path to devpilot or a Python executable with DevPilot installed. Leave empty for automatic discovery.' } },
+            },
             claude: {
                 title: "Claude Code",
                 sections: {
@@ -6174,6 +6179,7 @@ export const pt: TranslationStructure = {
       badgePlanMode: "Modo de planejamento",
     },
     agent: {
+      devpilot: 'DevPilot',
       claude: "Claude",
       codex: "Codex",
       opencode: "OpenCode",
@@ -10105,6 +10111,7 @@ settingsSession: {
       title: "Backend de IA",
       selectAtLeastOneError: "Selecione pelo menos um backend de IA.",
       claudeSubtitle: "CLI do Claude",
+      devpilotSubtitle: 'DevPilot Autonomous Research',
       codexSubtitle: "CLI do Codex",
       opencodeSubtitle: "CLI do OpenCode",
       geminiSubtitleExperimental: "CLI do Gemini (experimental)",

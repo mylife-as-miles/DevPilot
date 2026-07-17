@@ -1,30 +1,42 @@
-# Desktop Milestone Test Status
+# DevPilot Desktop Test Status
 
-This file records what can be verified in the current Windows development environment without changing either repository's toolchain.
+Recorded on Windows with Python 3.12.0, Node 24.14.0, and Yarn 1.22.22.
 
-## Passing focused checks
+## Implemented and unit-tested
 
-- Happier import allowlist, exclusion, conflict, upstream-SHA, and nested-Git safeguards
-- root desktop command preflight behavior
-- central DevPilot branding configuration
-- sibling/configured/active-environment/PATH runtime discovery and readiness probing
-- Research Run event normalization, transcript extraction, reducer, selectors, parallel Executor isolation, approvals, evidence, artifacts, and usage
-- DevPilot Python unit and integration suite after the ACP adapter changes
-- TypeScript syntax transpilation for DevPilot provider and Research workspace integration files
+- `python -m pytest --collect-only -q` collects **2** tracked Python tests.
+  They cover SDK configuration precedence and ACP JSON-only stdout/stderr
+  isolation. This is the full currently tracked Python test scope, not a claim
+  of a broad legacy runtime suite.
+- `python -m pytest -vv` passes: **2 passed, 0 failed, 0 skipped**.
+- `yarn test:runtime-discovery` passes: **8 Node tests**.
+- `yarn electron:verify` passes: **2 Electron shell/security tests**.
+- `yarn test:research` passes: **5 Node tests**.
+- The local unauthenticated ACP route allowlist has a focused Node test.
 
-## Environment-limited checks
+## Type checking
 
-The complete JavaScript dependency graph is not installed in this checkout. The offline Yarn cache is missing `@shopify/react-native-skia@2.2.12`, while the online install did not complete in the available session. Consequently the full workspace TypeScript and Vitest commands are not claimed as passing.
+`yarn workspace @happier-dev/app typecheck` passes when its repository-owned
+script provisions an 8 GB Node heap. The imported UI program is large enough
+to exceed Node's default ~4 GB heap; this is a resource setting, not a missing
+Happier checkout. The historical `not-monorepo` failure is resolved by the
+DevPilot workspace guard in `apps/ui/scripts/ensureWorkspacePackagesBuilt.mjs`.
 
-The Electron dependency installation did not complete in this environment: the existing large Yarn workspace graph stalled before dependency resolution produced output. Electron development startup, Forge production bundling, and installer verification remain unexecuted until `corepack yarn install` completes. The root scripts now fail quickly with an actionable dependency message and do not require Rust/Cargo or modify a separate runtime repository.
+`corepack yarn typecheck` passes after excluding the unreachable upstream Node
+daemon CLI from the desktop-only gate. It remains a typecheck, not a package
+build verification.
 
-macOS and Linux packages require their respective CI or host environments. Android, iOS, public web deployment, and mobile end-to-end testing are intentionally outside this desktop milestone.
+## Manually smoke-tested
 
-## Still deferred product coverage
+- Repository-local `.venv\\Scripts\\devpilot.exe --version` succeeds.
+- A real `devpilot acp --stdio` initialize request produces JSON-RPC on stdout
+  only; malformed input diagnostics use stderr.
+- Electron runtime-discovery and shell-boundary tests pass.
 
-- native searchable Memory, Skills, and Audits navigation backed by DevPilot SDK APIs
-- interactive evidence source/open/copy actions and rich on-disk artifact viewers
-- standard ACP permission decisions wired to every sensitive runtime operation
-- a complete packaged-desktop smoke test on each supported desktop platform
+## Not yet integration-tested or packaged
 
-These are explicit gaps, not silently skipped successes. They should be implemented and tested in focused follow-up phases before declaring the full acceptance matrix complete.
+- A deterministic renderer/Node ACP client → Python ACP → fake runtime prompt
+  test is still pending.
+- Electron Forge packaging and a packaged-app runtime-discovery smoke test are
+  pending; no packaged verification is claimed.
+- Python checkpoint-level `session/list/load/resume` ACP APIs remain deferred.

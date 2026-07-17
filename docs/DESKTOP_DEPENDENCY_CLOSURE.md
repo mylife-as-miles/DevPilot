@@ -1,6 +1,30 @@
-# Desktop Dependency Closure
+# DevPilot Desktop Dependency Closure
 
-This audit describes the source closure needed to build the Happier-derived Tauri desktop shell without making a clean DevPilot build depend on the ignored `happier/` checkout.
+This audit describes the source closure needed to build the Happier-derived
+Electron desktop shell without making a clean DevPilot build depend on the
+ignored `happier/` checkout.
+
+## Verified closure state
+
+`apps/ui/scripts/ensureWorkspacePackagesBuilt.mjs` recognizes the tracked
+DevPilot Yarn workspace and no longer delegates to the upstream stack helper's
+full-services-monorepo test. The retained `@happier-dev/*` packages resolve
+from DevPilot's own `packages/` workspaces. The UI typecheck passes with an
+8 GB Node heap via `apps/ui/scripts/typecheck.mjs`.
+
+| Historical failure | Classification | Resolution |
+| --- | --- | --- |
+| `apps/ui must be run from inside the Happier monorepo checkout` | Incorrect upstream monorepo guard | Replaced by a DevPilot workspace check; no `happier/` clone required. |
+| `featureTestGating` absent from `scripts/testing` | Missing generated/support file | Added a local no-hosted-feature gate. |
+| `research` rejected by local mobile-surface persistence | Actual DevPilot type error | Added the `research` persisted-surface variant. |
+| DevPilot labels missing in non-English locales | Actual DevPilot code error | Added safe fallback labels to retained locales. |
+| UI `tsc` OOM near 4 GB | Environment/resource limit | Repository script raises the typecheck heap to 8 GB. |
+
+`apps/cli` is intentionally excluded from the desktop typecheck command. The
+Electron architecture launches the repository's Python `devpilot acp --stdio`
+runtime and does not import the upstream Node daemon/terminal CLI. Keeping its
+heavy hosted-provider build out of the desktop gate prevents an unreachable
+feature from imposing a separate runtime closure.
 
 Audit source: Happier `dev` at `212776ed66af179d1bb26a1d9a6fe9576441632c`.
 

@@ -3792,6 +3792,11 @@ export const ru: TranslationStructure = {
     invalidNumber: "Некорректное число",
     invalidJson: "Некорректный JSON",
     plugins: {
+            devpilot: {
+                title: 'DevPilot',
+                sections: { runtime: { title: 'Local runtime', footer: 'DevPilot checks this path first, then this repository\'s .venv and venv, and finally PATH.' } },
+                fields: { devpilotExecutablePath: { title: 'Runtime executable', subtitle: 'Optional absolute path to devpilot or a Python executable with DevPilot installed. Leave empty for automatic discovery.' } },
+            },
             claude: {
                 title: "Claude Code",
                 sections: {
@@ -6045,6 +6050,7 @@ export const ru: TranslationStructure = {
       badgePlanMode: "Режим планирования",
     },
     agent: {
+      devpilot: 'DevPilot',
       claude: "Claude",
       codex: "Codex",
       opencode: "OpenCode",
@@ -9971,6 +9977,7 @@ settingsSession: {
       title: "Бекенд ИИ",
       selectAtLeastOneError: "Выберите хотя бы один бекенд ИИ.",
       claudeSubtitle: "CLI Claude",
+      devpilotSubtitle: 'DevPilot Autonomous Research',
       codexSubtitle: "CLI Codex",
       opencodeSubtitle: "CLI OpenCode",
       geminiSubtitleExperimental: "Gemini CLI (экспериментально)",

@@ -124,7 +124,12 @@ function textFromAcpUpdate(update: AcpUpdate): { text: string; kind: 'message' |
     const metaType = normalizeId(devpilotMeta?.type);
     const rawText = typeof content?.text === 'string'
         ? content.text
-        : (typeof candidate?.text === 'string' ? candidate.text : '');
+        : (() => {
+            const rawCandidate: unknown = candidate;
+            return isRecord(rawCandidate) && typeof rawCandidate.text === 'string'
+                ? rawCandidate.text
+                : '';
+        })();
     const text = rawText.trim();
     if (!text) return null;
     return {
@@ -260,12 +265,19 @@ export function handleDevPilotLocalAcpUpdate(update: AcpUpdate, localSession: De
     const runtimeState = normalizeId(meta?.state);
     if (runtimeState) {
         const now = Date.now();
+        const latestTurnStatus = runtimeState === 'cancelled'
+            ? 'cancelled'
+            : runtimeState === 'completed'
+                ? 'completed'
+                : runtimeState === 'failed'
+                    ? 'failed'
+                    : 'in_progress';
         updateLocalAcpSession(acpSessionId, {
             updatedAt: now,
             activeAt: now,
             thinking: runtimeState === 'starting' || runtimeState === 'running' || runtimeState === 'cancelling',
             thinkingAt: runtimeState === 'starting' || runtimeState === 'running' || runtimeState === 'cancelling' ? now : 0,
-            latestTurnStatus: runtimeState === 'cancelling' ? 'in_progress' : runtimeState,
+            latestTurnStatus,
             latestTurnStatusObservedAt: now,
         });
         return;
@@ -388,7 +400,7 @@ export async function submitDevPilotLocalAcpPrompt(sessionId: string, text: stri
                 scope: 'primary_session',
                 status: 'failed',
                 code: 'devpilot_local_acp_prompt_failed',
-                source: 'devpilot-desktop',
+                source: 'unknown',
                 occurredAt: failedAt,
                 sanitizedPreview: message,
             } as Session['lastRuntimeIssue'],
@@ -434,7 +446,7 @@ export async function abortDevPilotLocalAcpSession(sessionId: string): Promise<v
                 scope: 'primary_session',
                 status: 'failed',
                 code: 'devpilot_local_acp_cancel_failed',
-                source: 'devpilot-desktop',
+                source: 'unknown',
                 occurredAt: failedAt,
                 sanitizedPreview: message,
             } as Session['lastRuntimeIssue'],

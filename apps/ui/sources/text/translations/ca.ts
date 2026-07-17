@@ -3628,6 +3628,11 @@ export const ca: TranslationStructure = {
 	        invalidNumber: 'Número no vàlid',
 	        invalidJson: 'JSON no vàlid',
 	        plugins: {
+            devpilot: {
+                title: 'DevPilot',
+                sections: { runtime: { title: 'Local runtime', footer: 'DevPilot checks this path first, then this repository\'s .venv and venv, and finally PATH.' } },
+                fields: { devpilotExecutablePath: { title: 'Runtime executable', subtitle: 'Optional absolute path to devpilot or a Python executable with DevPilot installed. Leave empty for automatic discovery.' } },
+            },
             claude: {
                 title: "Claude Code",
                 sections: {
@@ -5661,6 +5666,7 @@ deps: {
             badgePlanMode: 'Mode de planificació',
         },
         agent: {
+            devpilot: 'DevPilot',
             claude: 'Claude',
             codex: 'Codex',
             opencode: 'OpenCode',
@@ -9165,6 +9171,7 @@ settingsSession: {
             title: 'Backend d\'IA',
             selectAtLeastOneError: 'Selecciona com a mínim un backend d\'IA.',
             claudeSubtitle: 'CLI de Claude',
+            devpilotSubtitle: 'DevPilot Autonomous Research',
             codexSubtitle: 'CLI de Codex',
             opencodeSubtitle: 'CLI d\'OpenCode',
             geminiSubtitleExperimental: 'CLI de Gemini (experimental)',
