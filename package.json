@@ -18,7 +18,7 @@
     "ui:electron": "yarn electron:dev",
     "build:packages": "yarn workspace @happier-dev/protocol build && yarn workspace @happier-dev/transfers build && yarn workspace @happier-dev/agents build && yarn workspace @happier-dev/release-runtime build && yarn workspace @happier-dev/cli-common build && yarn workspace @happier-dev/connection-supervisor build",
     "test": "yarn test:unit",
-    "test:unit": "yarn workspace @happier-dev/protocol test && yarn workspace @happier-dev/transfers test && yarn workspace @happier-dev/agents test && yarn workspace @happier-dev/cli-common test && yarn workspace @happier-dev/connection-supervisor test && yarn workspace @happier-dev/bootstrap test && yarn workspace @happier-dev/app test:unit && yarn workspace @happier-dev/cli test:unit",
+    "test:unit": "yarn workspace @happier-dev/protocol test && yarn workspace @happier-dev/transfers test && yarn workspace @happier-dev/agents test && yarn workspace @happier-dev/cli-common test && yarn workspace @happier-dev/connection-supervisor test && yarn workspace @happier-dev/bootstrap test && yarn workspace @happier-dev/app test:unit",
     "typecheck": "yarn workspace @happier-dev/protocol typecheck && yarn workspace @happier-dev/transfers typecheck && yarn workspace @happier-dev/agents typecheck && yarn workspace @happier-dev/cli-common typecheck && yarn workspace @happier-dev/connection-supervisor typecheck && yarn workspace @happier-dev/bootstrap typecheck && yarn workspace @happier-dev/app typecheck",
     "import:happier": "node scripts/import-happier-desktop.mjs",
     "import:happier:dry": "node scripts/import-happier-desktop.mjs --dry-run",
