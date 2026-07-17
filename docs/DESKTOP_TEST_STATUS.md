@@ -46,6 +46,10 @@ the Electron application launches Python ACP instead of importing that daemon.
 
 ## Currently blocked locally
 
+- `corepack yarn install --frozen-lockfile` did not complete or emit output
+  within five minutes and was stopped. Existing root and UI dependency trees
+  remain present, but a fresh-install completion is not claimed while the
+  development server is active.
 - `corepack yarn test:unit` reaches `@happier-dev/cli-common` after the
   protocol, transfers, and agents suites, then fails to rename
   `packages/cli-common/dist` with Windows `EPERM`. The same generated-directory
