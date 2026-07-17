@@ -203,7 +203,7 @@ async function createMainWindow() {
   staticServer = frontend.stop ? null : frontend.server;
   const allowedOrigin = new URL(frontend.url).origin;
   mainWindow = new BrowserWindow({
-    title: 'DevPilot', width: 1280, height: 840, minWidth: 960, minHeight: 640, backgroundColor: '#F5F5F5', show: false,
+    title: 'DevPilot', width: 1280, height: 840, minWidth: 960, minHeight: 640, backgroundColor: '#F5F5F5', show: true,
     webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true, webviewTag: false, preload: path.join(__dirname, 'preload.cjs') },
   });
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
@@ -214,6 +214,10 @@ async function createMainWindow() {
   mainWindow.once('ready-to-show', () => mainWindow?.show());
   mainWindow.on('closed', () => { mainWindow = null; });
   await mainWindow.loadURL(frontend.url);
+  // Some development-server navigations do not emit `ready-to-show` even
+  // though the renderer has loaded. Keep the fast-path event above, but make
+  // the desktop visible after a successful navigation in that case.
+  if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.isVisible()) mainWindow.show();
 }
 
 ipcMain.handle('devpilot:get-runtime-status', (event) => {
