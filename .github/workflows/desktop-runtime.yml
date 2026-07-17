@@ -1,0 +1,40 @@
+name: Desktop runtime
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  python-sdk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install -e ".[dev]"
+      - run: python -m pytest --collect-only -q
+      - run: python -m pytest -vv
+
+  windows-desktop:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: python -m venv .venv
+      - run: .\.venv\Scripts\python.exe -m pip install -e ".[dev]"
+      - run: corepack enable
+      - run: corepack yarn install --frozen-lockfile
+      - run: corepack yarn test:runtime-discovery
+      - run: corepack yarn electron:verify
+      - run: corepack yarn test:research
+      - run: corepack yarn typecheck
+      - run: corepack yarn test:unit
+      - run: corepack yarn desktop:build
+      - run: corepack yarn workspace @devpilot/desktop package
