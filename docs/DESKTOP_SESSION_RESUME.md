@@ -11,3 +11,8 @@ extensions are added, this restores the local connection rather than claiming
 that an in-progress Coordinator run was resumed. A future runtime resume must
 use the DevPilot checkpoint/workspace reference, not an Electron-owned copy of
 messages or artifacts.
+
+The reconnect path validates the persisted project directory, starts a new ACP
+process, and then creates a new ACP session. The deterministic ACP process
+integration test verifies the fresh-process/fresh-session half of that
+contract; checkpoint restoration remains deferred.

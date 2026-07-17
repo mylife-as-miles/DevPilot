@@ -26,7 +26,17 @@ Electron verifies the selected runtime with `devpilot --version`, lets the user 
 .\.venv\Scripts\devpilot.exe acp --stdio
 ```
 
-The ACP process is scoped to the selected project and is stopped when the Electron application exits. Hosted Relay, account, QR-login, and cross-device-sync flows are disabled by default for the local desktop milestone.
+The ACP process is scoped to the selected project and is stopped when the
+Electron application exits. Electron uses the reusable
+`packages/devpilot-runtime/acpProcessClient.cjs` bridge; packaged builds carry
+that module as an explicit application resource. Hosted Relay, account,
+QR-login, and cross-device-sync flows are disabled by default for the local
+desktop milestone.
+
+The runtime is deliberately not bundled as a Python sidecar. A packaged app
+searches the configured executable, repository virtual environments, then a
+global command. If none is usable, the UI reports the paths searched, version
+probe result, and offers retry and executable selection.
 # Local Desktop Runtime
 
 The desktop launches the repository-local `devpilot acp --stdio` executable.

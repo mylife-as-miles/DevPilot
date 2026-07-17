@@ -14,3 +14,7 @@ sanitization.
 Project preflight is read-only. It validates directory, configuration,
 credentials, Git, and evaluation readiness; it does not install packages,
 write configuration, or change Git state.
+
+The real ACP integration test sends a sentinel API key through preflight and
+asserts that it is absent from captured ACP stderr. Electron applies a second
+redaction and bounded-log layer before any diagnostic reaches the renderer.
