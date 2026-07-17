@@ -39,6 +39,7 @@ import { SessionCockpitChromeRegistryProvider } from '@/components/workspaceCock
 import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
 import { isElectronDesktop } from '@/config/devpilotServices';
 import { isLocalDevPilotDesktopMode, readDevPilotLocalSession, useDevPilotLocalSession } from '@/config/devpilotLocalSession';
+import { isLocalDevPilotAllowedAppPath } from '@/config/devpilotLocalRouteAccess';
 
 const bootstrappedWebServerOverride = bootstrapActiveServerFromWebLocation({ scope: 'device' });
 const DESKTOP_PET_OVERLAY_SCREEN_OPTIONS = { headerShown: false } as const;
@@ -232,20 +233,20 @@ export default function RootLayout() {
     }, [auth.isAuthenticated]);
 
     const localDevPilotAcpSessionId = String(effectiveLocalDevPilotSession?.acpSessionId ?? '').trim();
+    const routeSegments = segments as readonly string[];
     const routeSessionId = String(
-        Array.isArray(segments) && segments[0] === 'session' && typeof segments[1] === 'string'
-            ? segments[1]
+        routeSegments[0] === 'session' && typeof routeSegments[1] === 'string'
+            ? routeSegments[1]
             : pickFirstRouteParamString(globalSearchParams.id),
     ).trim();
-    const isLocalDevPilotSessionPath = pathname === `/session/${encodeURIComponent(localDevPilotAcpSessionId)}`
-        || (pathname.startsWith('/session/') && routeSessionId === localDevPilotAcpSessionId);
     const isLocalDevPilotRouteAllowed = Boolean(
         (isElectronDesktop() || isLocalDevPilotDesktopMode())
         && localDevPilotAcpSessionId
-        && (
-            pathname === '/'
-            || isLocalDevPilotSessionPath
-        ),
+        && isLocalDevPilotAllowedAppPath({
+            pathname,
+            localAcpSessionId: localDevPilotAcpSessionId,
+            routeSessionId,
+        }),
     );
     const shouldRedirect = !auth.isAuthenticated
         && !isLocalDevPilotRouteAllowed
