@@ -11,7 +11,7 @@
     "dev": "electron .",
     "package": "electron-forge package",
     "make": "electron-forge make",
-    "verify": "node --check main.cjs && node --check preload.cjs && node --test desktop-shell.test.cjs"
+    "verify": "node --check main.cjs && node --check preload.cjs && node --test desktop-shell.test.cjs forge-config.test.cjs"
   },
   "config": {
     "forge": "./forge.config.cjs"

@@ -1,18 +1,20 @@
 const { app, BrowserWindow, dialog, ipcMain, session, shell } = require('electron');
 const { createReadStream, existsSync, statSync, readFileSync, writeFileSync, mkdirSync } = require('node:fs');
-const { spawn, spawnSync } = require('node:child_process');
+const { spawnSync } = require('node:child_process');
 const http = require('node:http');
 const path = require('node:path');
 
 const { isAllowedExternalUrl, mimeTypeForPath, resolveStaticCandidate } = require('./desktop-shell.cjs');
+const acpClientModule = app.isPackaged
+  ? path.join(process.resourcesPath, 'acpProcessClient.cjs')
+  : path.resolve(__dirname, '../../packages/devpilot-runtime/src/acpProcessClient.cjs');
+const { AcpProcessClient } = require(acpClientModule);
 
 let mainWindow = null;
 let staticServer = null;
-let acpProcess = null;
+let acpClient = null;
 let acpProcessProjectPath = null;
 let acpSessionId = null;
-let acpRequestSequence = 0;
-const acpPendingRequests = new Map();
 const runtimeLogs = [];
 let runtimeLogBytes = 0;
 const MAX_RUNTIME_LOG_ENTRIES = 1000;
@@ -119,133 +121,48 @@ function addRuntimeLog(raw) {
   if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('devpilot:runtime-log', entry);
 }
 
-function rejectPendingAcpRequests(error) {
-  for (const pending of acpPendingRequests.values()) {
-    clearTimeout(pending.timeout);
-    pending.reject(error);
-  }
-  acpPendingRequests.clear();
-}
-
-function handleAcpMessage(message) {
-  if (!message || typeof message !== 'object') return;
-  if (Object.prototype.hasOwnProperty.call(message, 'id')) {
-    const pending = acpPendingRequests.get(String(message.id));
-    if (!pending) return;
-    acpPendingRequests.delete(String(message.id));
-    clearTimeout(pending.timeout);
-    if (message.error && typeof message.error === 'object') {
-      pending.reject(new Error(String(message.error.message || 'DevPilot ACP request failed.')));
-      return;
-    }
-    pending.resolve(message.result || {});
-    return;
-  }
-  if (message.method === 'session/update' && mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.webContents.send('devpilot:acp-update', message.params || {});
-  }
-}
-
-function attachAcpProcess(child) {
-  let stdoutBuffer = '';
-  child.stdout.setEncoding('utf8');
-  child.stdout.on('data', (chunk) => {
-    stdoutBuffer += chunk;
-    let newlineIndex = stdoutBuffer.indexOf('\n');
-    while (newlineIndex >= 0) {
-      const line = stdoutBuffer.slice(0, newlineIndex).trim();
-      stdoutBuffer = stdoutBuffer.slice(newlineIndex + 1);
-      if (line) {
-        try {
-          handleAcpMessage(JSON.parse(line));
-        } catch {
-          // ACP diagnostics are written to stderr; ignore malformed stdout frames.
-        }
-      }
-      newlineIndex = stdoutBuffer.indexOf('\n');
-    }
-  });
-  child.stderr.setEncoding('utf8');
-  child.stderr.on('data', (chunk) => addRuntimeLog(chunk));
-  child.on('error', (error) => {
-    if (acpProcess !== child) return;
-    rejectPendingAcpRequests(error instanceof Error ? error : new Error(String(error)));
-  });
-  child.on('exit', () => {
-    if (acpProcess !== child) return;
-    acpProcess = null;
-    acpProcessProjectPath = null;
-    acpSessionId = null;
-    rejectPendingAcpRequests(new Error('DevPilot ACP stopped.'));
-  });
-}
-
 function stopAcpProcess() {
-  const child = acpProcess;
-  acpProcess = null;
+  const client = acpClient;
+  acpClient = null;
   acpProcessProjectPath = null;
   acpSessionId = null;
-  rejectPendingAcpRequests(new Error('DevPilot ACP was restarted for another project.'));
-  if (child && child.exitCode === null) child.kill();
+  if (client) client.terminate();
 }
 
 function requestAcp(method, params, timeoutMs = 15_000) {
-  if (!acpProcess || acpProcess.exitCode !== null || !acpProcess.stdin.writable) {
+  if (!acpClient || acpClient.child.exitCode !== null || !acpClient.child.stdin.writable) {
     return Promise.reject(new Error('DevPilot ACP is not running.'));
   }
-  const id = ++acpRequestSequence;
-  return new Promise((resolve, reject) => {
-    const timeout = timeoutMs > 0
-      ? setTimeout(() => {
-        acpPendingRequests.delete(String(id));
-        reject(new Error(`DevPilot ACP timed out while handling ${method}.`));
-      }, timeoutMs)
-      : null;
-    acpPendingRequests.set(String(id), { resolve, reject, timeout });
-    const payload = `${JSON.stringify({ jsonrpc: '2.0', id, method, params })}\n`;
-    acpProcess.stdin.write(payload, 'utf8', (error) => {
-      if (!error) return;
-      const pending = acpPendingRequests.get(String(id));
-      if (!pending) return;
-      acpPendingRequests.delete(String(id));
-      clearTimeout(pending.timeout);
-      pending.reject(error);
-    });
-  });
+  return acpClient.request(method, params, timeoutMs);
 }
 
 async function launchAcpSession(projectPath) {
   const resolvedProjectPath = path.resolve(projectPath);
-  if (acpProcess && acpProcess.exitCode === null && acpProcessProjectPath === resolvedProjectPath && acpSessionId) {
-    return { pid: acpProcess.pid, sessionId: acpSessionId };
+  if (acpClient && acpClient.child.exitCode === null && acpProcessProjectPath === resolvedProjectPath && acpSessionId) {
+    return { pid: acpClient.child.pid, sessionId: acpSessionId };
   }
 
   stopAcpProcess();
   const runtime = resolveDevPilotRuntime();
   if (!runtime) throw new Error('DevPilot was not found in this repository.');
 
-  const child = spawn(runtime.command, [...runtime.argsPrefix, 'acp', '--stdio'], {
+  const client = await AcpProcessClient.start({
+    command: runtime.command,
+    args: [...runtime.argsPrefix, 'acp', '--stdio'],
     cwd: resolvedProjectPath,
-    shell: false,
-    windowsHide: true,
-    stdio: ['pipe', 'pipe', 'pipe'],
+    onUpdate: (update) => {
+      if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('devpilot:acp-update', update);
+    },
+    onStderr: addRuntimeLog,
+    onExit: () => {
+      if (acpClient !== client) return;
+      acpClient = null;
+      acpProcessProjectPath = null;
+      acpSessionId = null;
+    },
   });
-  acpProcess = child;
+  acpClient = client;
   acpProcessProjectPath = resolvedProjectPath;
-  attachAcpProcess(child);
-
-  await new Promise((resolve, reject) => {
-    const onSpawn = () => {
-      child.off('error', onError);
-      resolve();
-    };
-    const onError = (error) => {
-      child.off('spawn', onSpawn);
-      reject(error);
-    };
-    child.once('spawn', onSpawn);
-    child.once('error', onError);
-  });
 
   await requestAcp('initialize', {});
   const created = await requestAcp('session/new', { cwd: resolvedProjectPath });
@@ -253,7 +170,7 @@ async function launchAcpSession(projectPath) {
   if (!sessionId) throw new Error('DevPilot ACP did not return a session id.');
   acpSessionId = sessionId;
   persistLocalSession('idle');
-  return { pid: child.pid, sessionId };
+  return { pid: client.child.pid, sessionId };
 }
 
 function startStaticServer(rootDir) {
@@ -328,7 +245,7 @@ ipcMain.handle('devpilot:restore-acp', async (event) => {
 });
 ipcMain.handle('devpilot:start-acp-prompt', async (event, sessionId, prompt) => {
   if (!isTrustedSender(event)) throw new Error('Untrusted Electron renderer.');
-  if (!acpProcess || acpProcess.exitCode !== null || String(sessionId || '') !== acpSessionId) {
+  if (!acpClient || acpClient.child.exitCode !== null || String(sessionId || '') !== acpSessionId) {
     throw new Error('The local ACP session is no longer active. Reconnect the project and try again.');
   }
   const text = String(prompt || '').trim();
@@ -342,7 +259,7 @@ ipcMain.handle('devpilot:start-acp-prompt', async (event, sessionId, prompt) => 
 });
 ipcMain.handle('devpilot:cancel-acp-run', async (event, sessionId) => {
   if (!isTrustedSender(event)) throw new Error('Untrusted Electron renderer.');
-  if (!acpProcess || acpProcess.exitCode !== null || String(sessionId || '') !== acpSessionId) {
+  if (!acpClient || acpClient.child.exitCode !== null || String(sessionId || '') !== acpSessionId) {
     throw new Error('The local ACP session is no longer active. Reconnect the project and try again.');
   }
   persistLocalSession('cancelling');

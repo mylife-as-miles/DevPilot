@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import sys
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -268,4 +269,27 @@ def _public_error(exc: Exception) -> str:
 
 def serve_stdio() -> None:
     """Start the ACP server using only standard streams."""
-    asyncio.run(AcpStdioServer().serve())
+    asyncio.run(AcpStdioServer(_deterministic_test_sdk() if os.environ.get("DEVPILOT_ACP_TEST_MODE") == "1" else None).serve())
+
+
+def _deterministic_test_sdk() -> DevPilotSDK:
+    """Return a no-network SDK fixture for the process integration test only.
+
+    It is opt-in through a test-only environment variable and still exercises
+    ACP request routing, ``ResearchSession``, config resolution and EventBus
+    publication. Production ACP never selects this path.
+    """
+    class DeterministicOrchestrator:
+        def __init__(self, _config: Any, _provider: Any, bus: Any) -> None:
+            self._bus = bus
+
+        async def run(self) -> str:
+            self._bus.emit("runtime.started", {"state": "running", "component": "deterministic-test"})
+            await asyncio.sleep(float(os.environ.get("DEVPILOT_ACP_TEST_DELAY_SECONDS", "0.05")))
+            self._bus.emit("runtime.completed", {"state": "completed", "report_path": "REPORT.md"})
+            return "Deterministic DevPilot report"
+
+    return DevPilotSDK(
+        provider_factory=lambda _config: object(),
+        orchestrator_factory=DeterministicOrchestrator,
+    )
