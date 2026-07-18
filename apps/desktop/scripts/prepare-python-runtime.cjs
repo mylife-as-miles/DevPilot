@@ -38,6 +38,13 @@ function copyDirectory(source, destination) {
       source,
       destination,
       '/MIR',
+      // The dependency tree contains many small files.  Parallel copying keeps
+      // an ordinary desktop package build responsive on Windows.
+      '/MT:16',
+      // Do not make a package build appear hung while repeatedly retrying one
+      // inaccessible cache file.  A real copy failure is still surfaced below.
+      '/R:1',
+      '/W:1',
       '/NFL',
       '/NDL',
       '/NJH',

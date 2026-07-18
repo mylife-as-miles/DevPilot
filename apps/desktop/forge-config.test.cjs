@@ -15,6 +15,15 @@ test('packages the bundled Python runtime with the desktop app', () => {
   assert.ok(config.packagerConfig.extraResource.includes(
     resolve(__dirname, 'runtime'),
   ));
+  assert.equal(
+    config.packagerConfig.ignore(resolve(__dirname, 'runtime', 'python', 'python.exe')),
+    true,
+  );
+  assert.equal(config.packagerConfig.ignore('runtime/python/python.exe'), true);
+  assert.equal(config.packagerConfig.ignore('out-preview/DevPilot-win32-x64/DevPilot.exe'), true);
+  assert.equal(config.packagerConfig.ignore('out-native-release/DevPilot-win32-x64/DevPilot.exe'), true);
+  assert.equal(config.packagerConfig.ignore('apps/desktop/out-preview/DevPilot-win32-x64/DevPilot.exe'), true);
+  assert.equal(config.packagerConfig.ignore(resolve(__dirname, 'main.cjs')), false);
 });
 
 test('uses the DevPilot mark for the executable, installer, and background tray', () => {
