@@ -10,3 +10,9 @@ test('packages the reusable ACP process client beside the desktop resources', ()
     resolve(__dirname, '../../packages/devpilot-runtime/src/acpProcessClient.cjs'),
   ));
 });
+
+test('packages the bundled Python runtime with the desktop app', () => {
+  assert.ok(config.packagerConfig.extraResource.includes(
+    resolve(__dirname, 'runtime'),
+  ));
+});

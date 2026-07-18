@@ -3,9 +3,15 @@
 export type RuntimeStatus = Readonly<{
   ready: boolean;
   command: string | null;
-  source: 'configured' | 'repository-virtual-environment' | 'path' | null;
+  source: 'bundled-runtime' | 'configured' | 'repository-virtual-environment' | 'path' | null;
   version: string | null;
   issue: string | null;
+}>;
+
+export type CodexAuthStatus = Readonly<{
+  runtimeReady: boolean;
+  signedIn: boolean;
+  message: string;
 }>;
 
 export type AcpSession = Readonly<{
@@ -41,6 +47,8 @@ export type PreflightResult = Readonly<{
 
 export type DesktopClient = Readonly<{
   getRuntimeStatus: () => Promise<RuntimeStatus>;
+  getCodexAuthStatus: () => Promise<CodexAuthStatus>;
+  startCodexLogin: () => Promise<Readonly<{ pid: number; alreadyRunning: boolean }>>;
   selectProject: () => Promise<string | null>;
   launchAcp: (projectPath: string) => Promise<AcpSession>;
   restoreAcp: () => Promise<RestoredAcpSession | null>;
@@ -61,6 +69,8 @@ export function getDesktopClient(target: DesktopGlobal = globalThis): DesktopCli
   const candidate = target.__DEVPILOT_ELECTRON__;
   return candidate
     && typeof candidate.getRuntimeStatus === 'function'
+    && typeof candidate.getCodexAuthStatus === 'function'
+    && typeof candidate.startCodexLogin === 'function'
     && typeof candidate.selectProject === 'function'
     && typeof candidate.launchAcp === 'function'
     && typeof candidate.restoreAcp === 'function'

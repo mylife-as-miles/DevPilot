@@ -2,6 +2,8 @@ const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('__DEVPILOT_ELECTRON__', Object.freeze({
   getRuntimeStatus: () => ipcRenderer.invoke('devpilot:get-runtime-status'),
+  getCodexAuthStatus: () => ipcRenderer.invoke('devpilot:get-codex-auth-status'),
+  startCodexLogin: () => ipcRenderer.invoke('devpilot:start-codex-login'),
   selectProject: () => ipcRenderer.invoke('devpilot:select-project'),
   launchAcp: (projectPath) => ipcRenderer.invoke('devpilot:launch-acp', projectPath),
   restoreAcp: () => ipcRenderer.invoke('devpilot:restore-acp'),

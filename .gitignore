@@ -10,6 +10,8 @@
 /build/
 /target/
 /apps/electron/out/
+/apps/desktop/out/
+/apps/desktop/runtime/
 **/dist/
 **/build/
 **/target/

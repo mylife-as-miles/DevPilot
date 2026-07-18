@@ -1,6 +1,6 @@
 const { app, BrowserWindow, dialog, ipcMain, session, shell } = require('electron');
 const { createReadStream, existsSync, statSync, readFileSync, writeFileSync, mkdirSync } = require('node:fs');
-const { spawnSync } = require('node:child_process');
+const { spawn, spawnSync } = require('node:child_process');
 const http = require('node:http');
 const path = require('node:path');
 
@@ -15,6 +15,7 @@ let staticServer = null;
 let acpClient = null;
 let acpProcessProjectPath = null;
 let acpSessionId = null;
+let codexLoginProcess = null;
 const runtimeLogs = [];
 let runtimeLogBytes = 0;
 const MAX_RUNTIME_LOG_ENTRIES = 1000;
@@ -53,14 +54,11 @@ function persistLocalSession(status = 'idle') {
   writeFileSync(localSessionRecordPath(), JSON.stringify(record), { encoding: 'utf8', mode: 0o600 });
 }
 
-function desktopRoots() {
+function developmentRuntimeRoots() {
   const configured = String(process.env.DEVPILOT_DESKTOP_ROOT || '').trim();
   const roots = [
     configured,
-    // Development starts from the repository, while a packaged executable
-    // lives under AppData and must still find the local DevPilot checkout.
-    app.isPackaged ? null : path.resolve(__dirname, '..', '..'),
-    path.join(app.getPath('documents'), 'DevPilot'),
+    path.resolve(__dirname, '..', '..'),
   ].filter(Boolean).map((candidate) => path.resolve(candidate));
   return [...new Set(roots)];
 }
@@ -75,7 +73,13 @@ function isElectronExecutable(command) {
 
 function resolveDevPilotRuntime() {
   const configured = String(process.env.DEVPILOT_EXECUTABLE_PATH || '').trim();
-  const candidates = configured ? [configured] : desktopRoots().flatMap((repository) => [
+  const bundledPython = path.join(process.resourcesPath, 'runtime', 'python', 'python.exe');
+  if (app.isPackaged) {
+    return existsSync(bundledPython)
+      ? { command: bundledPython, argsPrefix: ['-m', 'devpilot.cli.app'], source: 'bundled-runtime' }
+      : null;
+  }
+  const candidates = configured ? [configured] : developmentRuntimeRoots().flatMap((repository) => [
     path.join(repository, '.venv', 'Scripts', 'devpilot.exe'),
     path.join(repository, 'venv', 'Scripts', 'devpilot.exe'),
     path.join(repository, '.venv', 'Scripts', 'python.exe'),
@@ -96,11 +100,52 @@ function resolveDevPilotRuntime() {
 
 function getRuntimeStatus() {
   const runtime = resolveDevPilotRuntime();
-  if (!runtime) return { ready: false, command: null, source: null, version: null, issue: 'DevPilot was not found. Expected .venv\\Scripts\\devpilot.exe in this repository.' };
+  if (!runtime) return {
+    ready: false,
+    command: null,
+    source: null,
+    version: null,
+    issue: app.isPackaged
+      ? 'The bundled DevPilot runtime is missing. Reinstall the desktop app.'
+      : 'DevPilot was not found. Expected .venv\\Scripts\\devpilot.exe in this repository.',
+  };
   const result = spawnSync(runtime.command, [...runtime.argsPrefix, '--version'], { encoding: 'utf8', timeout: 5_000, windowsHide: true });
   const output = `${result.stdout || ''}\n${result.stderr || ''}`.trim();
   if (result.status !== 0) return { ready: false, command: runtime.command, source: runtime.source, version: null, issue: output || 'DevPilot version check failed.' };
   return { ready: true, command: runtime.command, source: runtime.source, version: output || null, issue: null };
+}
+
+function getCodexAuthStatus() {
+  const runtime = resolveDevPilotRuntime();
+  if (!runtime) return { runtimeReady: false, signedIn: false, message: 'DevPilot runtime is unavailable.' };
+  const result = spawnSync(runtime.command, [...runtime.argsPrefix, 'login', 'status'], {
+    encoding: 'utf8', timeout: 5_000, windowsHide: true,
+  });
+  return {
+    runtimeReady: true,
+    signedIn: result.status === 0,
+    message: result.status === 0
+      ? 'Signed in with Codex.'
+      : 'Sign in with your ChatGPT account to use Codex.',
+  };
+}
+
+function startCodexLogin() {
+  if (codexLoginProcess && codexLoginProcess.exitCode === null) {
+    return { pid: codexLoginProcess.pid, alreadyRunning: true };
+  }
+  const runtime = resolveDevPilotRuntime();
+  if (!runtime) throw new Error('DevPilot runtime is unavailable. Reinstall the desktop app.');
+  const child = spawn(runtime.command, [...runtime.argsPrefix, 'login', 'openai'], {
+    windowsHide: true,
+    stdio: ['ignore', 'ignore', 'pipe'],
+  });
+  codexLoginProcess = child;
+  child.stderr.on('data', addRuntimeLog);
+  child.once('exit', () => {
+    if (codexLoginProcess === child) codexLoginProcess = null;
+  });
+  return { pid: child.pid, alreadyRunning: false };
 }
 
 function parseDevUrl() {
@@ -240,6 +285,14 @@ ipcMain.handle('devpilot:get-runtime-status', (event) => {
   if (!isTrustedSender(event)) throw new Error('Untrusted Electron renderer.');
   return getRuntimeStatus();
 });
+ipcMain.handle('devpilot:get-codex-auth-status', (event) => {
+  if (!isTrustedSender(event)) throw new Error('Untrusted Electron renderer.');
+  return getCodexAuthStatus();
+});
+ipcMain.handle('devpilot:start-codex-login', (event) => {
+  if (!isTrustedSender(event)) throw new Error('Untrusted Electron renderer.');
+  return startCodexLogin();
+});
 ipcMain.handle('devpilot:open-external', async (event, rawUrl) => {
   if (!isTrustedSender(event)) throw new Error('Untrusted Electron renderer.');
   if (!isAllowedExternalUrl(rawUrl)) throw new Error('Only HTTPS and mailto links may be opened externally.');
@@ -312,4 +365,8 @@ app.whenReady().then(async () => {
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) void createMainWindow(); });
 }).catch((error) => { console.error(error instanceof Error ? error.stack || error.message : String(error)); app.quit(); });
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
-app.on('before-quit', () => { stopAcpProcess(); if (staticServer) staticServer.close(); });
+app.on('before-quit', () => {
+  stopAcpProcess();
+  if (codexLoginProcess && codexLoginProcess.exitCode === null) codexLoginProcess.kill();
+  if (staticServer) staticServer.close();
+});

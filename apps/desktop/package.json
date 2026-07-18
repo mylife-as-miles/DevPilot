@@ -1,6 +1,6 @@
 {
   "name": "@devpilot/desktop",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "DevPilot local-first autonomous development workspace.",
   "author": "DevPilot",
   "private": true,
@@ -11,8 +11,9 @@
   },
   "scripts": {
     "dev": "electron .",
-    "package": "electron-forge package",
-    "make": "electron-forge make",
+    "prepare:runtime": "node scripts/prepare-python-runtime.cjs",
+    "package": "yarn prepare:runtime && electron-forge package",
+    "make": "yarn prepare:runtime && electron-forge make",
     "verify": "node --check main.cjs && node --check preload.cjs && node --test desktop-shell.test.cjs forge-config.test.cjs"
   },
   "devDependencies": {

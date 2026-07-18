@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { Platform, Pressable, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { getDesktopClient, type RuntimeStatus } from '@devpilot/desktop/client';
+import { getDesktopClient, type CodexAuthStatus, type RuntimeStatus } from '@devpilot/desktop/client';
 import Animated, {
     Easing,
     interpolate,
@@ -276,17 +276,20 @@ function formatShortProjectPath(projectPath: string | null): string {
 }
 
 function runtimePathForCopy(runtime: RuntimeStatus | null): string {
-    return runtime?.command ? runtime.command : 'C:\\Users\\MILES\\Documents\\DevPilot\\.venv\\Scripts\\devpilot.exe';
+    return runtime?.source === 'bundled-runtime'
+        ? 'Bundled DevPilot runtime'
+        : runtime?.command ?? 'Bundled DevPilot runtime';
 }
 
 function LocalDevPilotSessionPanel(): React.ReactElement {
     const styles = stylesheet;
     const desktop = React.useMemo(() => getDesktopClient(), []);
     const [runtime, setRuntime] = React.useState<RuntimeStatus | null>(null);
+    const [codexAuth, setCodexAuth] = React.useState<CodexAuthStatus | null>(null);
     const [projectPath, setProjectPath] = React.useState<string | null>(null);
     const [acpPid, setAcpPid] = React.useState<number | null>(null);
     const [acpSessionId, setAcpSessionId] = React.useState<string | null>(null);
-    const [busy, setBusy] = React.useState<'runtime' | 'project' | 'launch' | null>('runtime');
+    const [busy, setBusy] = React.useState<'runtime' | 'auth' | 'project' | 'launch' | null>('runtime');
     const [error, setError] = React.useState<string | null>(null);
 
     const refreshRuntime = React.useCallback(async () => {
@@ -303,7 +306,9 @@ function LocalDevPilotSessionPanel(): React.ReactElement {
                 });
                 return;
             }
-            setRuntime(await desktop.getRuntimeStatus());
+            const nextRuntime = await desktop.getRuntimeStatus();
+            setRuntime(nextRuntime);
+            setCodexAuth(nextRuntime.ready ? await desktop.getCodexAuthStatus() : null);
         } catch (caught) {
             setRuntime(null);
             setError(caught instanceof Error ? caught.message : 'DevPilot runtime detection failed.');
@@ -345,6 +350,19 @@ function LocalDevPilotSessionPanel(): React.ReactElement {
         }
     }, [desktop]);
 
+    const signInWithCodex = React.useCallback(async () => {
+        if (!desktop) return;
+        setBusy('auth');
+        setError(null);
+        try {
+            await desktop.startCodexLogin();
+        } catch (caught) {
+            setError(caught instanceof Error ? caught.message : 'Could not start Codex sign-in.');
+        } finally {
+            setBusy(null);
+        }
+    }, [desktop]);
+
     const launchAcp = React.useCallback(async () => {
         if (!desktop) return;
         if (!projectPath) {
@@ -374,6 +392,7 @@ function LocalDevPilotSessionPanel(): React.ReactElement {
     }, [chooseProject, desktop, projectPath]);
 
     const runtimeReady = runtime?.ready === true;
+    const codexReady = codexAuth?.signedIn === true;
     const isRunning = acpPid !== null;
     const statusTitle = error
         ? 'Session needs attention'
@@ -381,42 +400,54 @@ function LocalDevPilotSessionPanel(): React.ReactElement {
             ? 'ACP session running'
             : projectPath
                 ? 'Project selected'
-                : runtimeReady
-                    ? 'Runtime detected'
-                    : busy === 'runtime'
+                : !runtimeReady
+                    ? busy === 'runtime'
                         ? 'Checking DevPilot'
-                        : 'Runtime unavailable';
+                        : 'Runtime unavailable'
+                    : busy === 'auth'
+                        ? 'Opening Codex sign-in'
+                        : codexReady
+                            ? 'Codex connected'
+                            : 'Connect Codex'
     const statusBody = error
         ? error
         : isRunning
             ? `devpilot acp --stdio is running for ${formatShortProjectPath(projectPath)}.`
             : projectPath
                 ? 'Launch the local ACP bridge and start a DevPilot session from this workspace.'
-                : runtimeReady
-                    ? 'Choose a local project and DevPilot will launch ACP through the bundled Python runtime.'
-                    : runtime?.issue ?? 'DevPilot is not ready on this computer yet.';
-    const primaryTitle = busy === 'launch'
-        ? 'Launching ACP...'
-        : isRunning
-            ? 'ACP session running'
-            : projectPath
-                ? 'Launch ACP session'
-                : 'Select a project to continue';
+                : !runtimeReady
+                    ? runtime?.issue ?? 'DevPilot is not ready on this computer yet.'
+                    : codexReady
+                        ? 'Your account is ready. Choose a project only when you want DevPilot to start a session there.'
+                        : codexAuth?.message ?? 'Sign in with your ChatGPT account to use Codex.';
+    const primaryTitle = busy === 'auth'
+        ? 'Opening Codex sign-in...'
+        : !codexReady
+            ? 'Sign in with Codex'
+            : busy === 'launch'
+                ? 'Launching ACP...'
+                : isRunning
+                    ? 'ACP session running'
+                    : projectPath
+                        ? 'Launch ACP session'
+                        : 'Choose a project for this session';
     const primarySubtitle = projectPath
         ? formatShortProjectPath(projectPath)
-        : 'Pick the local codebase DevPilot should work in';
+        : !codexReady
+            ? 'Uses the DevPilot CLI OAuth flow in your browser'
+            : 'DevPilot only works inside the folder you choose';
 
     return (
         <View testID="welcome-decision-panel" style={styles.decisionPanel}>
             <View style={styles.headingBlock}>
                 <Text testID="devpilot-session-title" accessibilityRole="header" style={styles.questionTitle}>
-                    DevPilot session
+                    Connect DevPilot
                 </Text>
                 <Text testID="devpilot-session-subtitle" accessibilityRole="header" style={styles.questionSubtitleTitle}>
-                    Local ACP
+                    Codex workspace
                 </Text>
                 <Text testID="devpilot-session-body" style={styles.questionBody}>
-                    Start the desktop runtime through the repository Python executable and keep the work tied to your local project.
+                    Sign in with Codex first. When you start a session, choose the local project DevPilot should work in.
                 </Text>
             </View>
             <View testID="devpilot-local-session-status" style={styles.localSessionBlock}>
@@ -437,15 +468,33 @@ function LocalDevPilotSessionPanel(): React.ReactElement {
                     onPress={refreshRuntime}
                 />
                 {runtimeReady ? (
+                    !codexReady ? (
+                        <>
+                            <DecisionActionRow
+                                testID="devpilot-sign-in-codex"
+                                primary
+                                title={primaryTitle}
+                                subtitle={primarySubtitle}
+                                iconName="key-outline"
+                                onPress={signInWithCodex}
+                            />
+                            <DecisionActionRow
+                                testID="devpilot-refresh-codex"
+                                title="I’ve signed in"
+                                subtitle="Check the Codex account connection"
+                                iconName="checkmark-circle-outline"
+                                onPress={refreshRuntime}
+                            />
+                        </>
+                    ) : (
+                        <>
                     <DecisionActionRow
                         testID="devpilot-select-project"
                         title={projectPath ? 'Change local project' : 'Select local project'}
-                        subtitle={projectPath ? formatShortProjectPath(projectPath) : undefined}
+                        subtitle={projectPath ? formatShortProjectPath(projectPath) : 'Choose the folder for this DevPilot session'}
                         iconName="folder-open-outline"
                         onPress={chooseProject}
                     />
-                ) : null}
-                {runtimeReady ? (
                     <DecisionActionRow
                         testID="devpilot-launch-acp"
                         primary
@@ -454,6 +503,8 @@ function LocalDevPilotSessionPanel(): React.ReactElement {
                         iconName={isRunning ? 'checkmark-circle-outline' : 'terminal-outline'}
                         onPress={isRunning ? () => undefined : launchAcp}
                     />
+                        </>
+                    )
                 ) : null}
             </View>
         </View>

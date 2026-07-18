@@ -11,6 +11,7 @@ module.exports = {
     appBundleId: 'com.devpilot.desktop',
     extraResource: [
       path.resolve(__dirname, '../ui/dist'),
+      path.resolve(__dirname, './runtime'),
       path.resolve(__dirname, '../../packages/devpilot-runtime/src/acpProcessClient.cjs'),
     ],
   },
