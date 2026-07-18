@@ -83,6 +83,7 @@ packages = [
     "devpilot.report",
     "devpilot.search_agent",
     "devpilot.sdk",
+    "devpilot.desktop_runtime",
     "devpilot.skills",
     "devpilot.webui",
 ]

@@ -22,6 +22,7 @@ from .commands.skills_cmd import skills_app
 from .commands.memory_cmd import memory_app
 from .commands.compress_cmd import compress_app
 from .commands.acp_cmd import acp_command
+from .commands.desktop_runtime_cmd import desktop_runtime_command
 
 
 # We don't use a Typer.callback() default because that would shadow flag
@@ -54,6 +55,7 @@ app.add_typer(skills_app, name="skills")
 app.add_typer(memory_app, name="memory")
 app.add_typer(compress_app, name="compress")
 app.command("acp")(acp_command)
+app.command("desktop-runtime")(desktop_runtime_command)
 
 
 @app.command("version")
@@ -75,7 +77,7 @@ def version_command() -> None:
     typer.echo(f"{APP_NAME} {ver}")
 
 
-_KNOWN_COMMANDS = {"run", "report", "export", "config", "version", "doctor", "setup", "login", "reach", "learn", "audit", "skills", "memory", "compress", "acp"}
+_KNOWN_COMMANDS = {"run", "report", "export", "config", "version", "doctor", "setup", "login", "reach", "learn", "audit", "skills", "memory", "compress", "acp", "desktop-runtime"}
 _ROOT_FLAGS = {"--help", "-h"}
 _VERSION_FLAGS = {"--version", "-V"}
 
