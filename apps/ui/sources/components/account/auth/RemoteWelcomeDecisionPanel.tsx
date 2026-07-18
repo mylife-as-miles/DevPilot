@@ -236,7 +236,10 @@ function DecisionActionRow(props: DecisionActionRowProps): React.ReactElement {
         isPressed ? DECISION_ROW_PRESSED_STYLE : null,
     ];
 
-    if (!supportsHoverAnimation) {
+    // React Native Web's animated Pressable can drop a static background while
+    // it is applying a worklet style. Keep the session CTA on the regular
+    // Pressable path so its branded fill and white label always render.
+    if (!supportsHoverAnimation || isBrandPrimary) {
         return (
             <Pressable
                 testID={props.testID}
