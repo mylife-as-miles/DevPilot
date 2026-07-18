@@ -76,6 +76,8 @@ type DecisionActionRowProps = Readonly<{
     title: string;
     subtitle?: string;
     primary?: boolean;
+    /** Reserve the DevPilot blue CTA for actions that create a local session. */
+    brandPrimary?: boolean;
     iconName?: keyof typeof Ionicons.glyphMap;
     onPress: () => AuthActionResult;
 }>;
@@ -128,9 +130,15 @@ function DecisionActionRow(props: DecisionActionRowProps): React.ReactElement {
     }, [isHovered, reducedMotion, hoverProgress]);
 
     const isPrimary = props.primary === true;
+    const isBrandPrimary = isPrimary && props.brandPrimary === true;
     const supportsHoverAnimation = Platform.OS === 'web';
-    const primaryBg = theme.colors.button.primary.background;
-    const primaryTint = theme.colors.button.primary.tint;
+    // Some imported Happier profiles intentionally use a white primary
+    // surface. That made the local-session CTA appear as an empty outlined
+    // rectangle because its foreground is also light. A DevPilot session is a
+    // product-level primary action, so keep its blue treatment stable across
+    // those profiles rather than relying on an arbitrary imported palette.
+    const primaryBg = isBrandPrimary ? '#0A84FF' : theme.colors.button.primary.background;
+    const primaryTint = isBrandPrimary ? '#FFFFFF' : theme.colors.button.primary.tint;
     const surfaceRest = theme.colors.surface.base;
     const surfaceHover = theme.colors.surface.elevated;
 
@@ -394,6 +402,18 @@ function LocalDevPilotSessionPanel(): React.ReactElement {
     const runtimeReady = runtime?.ready === true;
     const codexReady = codexAuth?.signedIn === true;
     const isRunning = acpPid !== null;
+    const sessionSetupReady = runtimeReady && codexReady;
+    const headingTitle = sessionSetupReady
+        ? isRunning
+            ? 'DevPilot is working'
+            : 'Start a DevPilot session'
+        : 'Connect DevPilot';
+    const headingSubtitle = sessionSetupReady ? 'Local workspace' : 'Codex workspace';
+    const headingBody = isRunning
+        ? 'DevPilot is connected to this project through the local ACP session.'
+        : sessionSetupReady
+            ? 'Choose the Git project for this session. DevPilot will work only inside that folder.'
+            : 'Sign in with Codex first. When you start a session, choose the local project DevPilot should work in.';
     const statusTitle = error
         ? 'Session needs attention'
         : isRunning
@@ -429,10 +449,10 @@ function LocalDevPilotSessionPanel(): React.ReactElement {
                 : isRunning
                     ? 'ACP session running'
                     : projectPath
-                        ? 'Launch ACP session'
+                        ? 'Start DevPilot session'
                         : 'Choose a project for this session';
     const primarySubtitle = projectPath
-        ? formatShortProjectPath(projectPath)
+        ? `Launch ACP for ${formatShortProjectPath(projectPath)}`
         : !codexReady
             ? 'Uses the DevPilot CLI OAuth flow in your browser'
             : 'DevPilot only works inside the folder you choose';
@@ -441,13 +461,13 @@ function LocalDevPilotSessionPanel(): React.ReactElement {
         <View testID="welcome-decision-panel" style={styles.decisionPanel}>
             <View style={styles.headingBlock}>
                 <Text testID="devpilot-session-title" accessibilityRole="header" style={styles.questionTitle}>
-                    Connect DevPilot
+                    {headingTitle}
                 </Text>
                 <Text testID="devpilot-session-subtitle" accessibilityRole="header" style={styles.questionSubtitleTitle}>
-                    Codex workspace
+                    {headingSubtitle}
                 </Text>
                 <Text testID="devpilot-session-body" style={styles.questionBody}>
-                    Sign in with Codex first. When you start a session, choose the local project DevPilot should work in.
+                    {headingBody}
                 </Text>
             </View>
             <View testID="devpilot-local-session-status" style={styles.localSessionBlock}>
@@ -461,18 +481,21 @@ function LocalDevPilotSessionPanel(): React.ReactElement {
                 </Text>
             </View>
             <View style={styles.actionStack}>
-                <DecisionActionRow
-                    testID="devpilot-retry-runtime"
-                    title={busy === 'runtime' ? 'Checking runtime...' : 'Retry runtime detection'}
-                    iconName="refresh"
-                    onPress={refreshRuntime}
-                />
-                {runtimeReady ? (
+                {!runtimeReady ? (
+                    <DecisionActionRow
+                        testID="devpilot-retry-runtime"
+                        title={busy === 'runtime' ? 'Checking DevPilot...' : 'Check DevPilot runtime'}
+                        subtitle="Verify the bundled desktop runtime"
+                        iconName="refresh"
+                        onPress={refreshRuntime}
+                    />
+                ) : (
                     !codexReady ? (
                         <>
                             <DecisionActionRow
                                 testID="devpilot-sign-in-codex"
                                 primary
+                                brandPrimary
                                 title={primaryTitle}
                                 subtitle={primarySubtitle}
                                 iconName="key-outline"
@@ -488,24 +511,25 @@ function LocalDevPilotSessionPanel(): React.ReactElement {
                         </>
                     ) : (
                         <>
-                    <DecisionActionRow
-                        testID="devpilot-select-project"
-                        title={projectPath ? 'Change local project' : 'Select local project'}
-                        subtitle={projectPath ? formatShortProjectPath(projectPath) : 'Choose the folder for this DevPilot session'}
-                        iconName="folder-open-outline"
-                        onPress={chooseProject}
-                    />
-                    <DecisionActionRow
-                        testID="devpilot-launch-acp"
-                        primary
-                        title={primaryTitle}
-                        subtitle={primarySubtitle}
-                        iconName={isRunning ? 'checkmark-circle-outline' : 'terminal-outline'}
-                        onPress={isRunning ? () => undefined : launchAcp}
-                    />
+                            <DecisionActionRow
+                                testID="devpilot-select-project"
+                                title={projectPath ? 'Change project folder' : 'Select project folder'}
+                                subtitle={projectPath ? formatShortProjectPath(projectPath) : 'Choose the folder for this DevPilot session'}
+                                iconName="folder-open-outline"
+                                onPress={chooseProject}
+                            />
+                            <DecisionActionRow
+                                testID="devpilot-launch-acp"
+                                primary
+                                brandPrimary
+                                title={primaryTitle}
+                                subtitle={primarySubtitle}
+                                iconName={isRunning ? 'checkmark-circle-outline' : 'terminal-outline'}
+                                onPress={isRunning ? () => undefined : launchAcp}
+                            />
                         </>
                     )
-                ) : null}
+                )}
             </View>
         </View>
     );

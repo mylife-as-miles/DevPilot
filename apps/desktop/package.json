@@ -1,6 +1,6 @@
 {
   "name": "@devpilot/desktop",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "DevPilot local-first autonomous development workspace.",
   "author": "DevPilot",
   "private": true,
