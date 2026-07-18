@@ -3,6 +3,9 @@ const path = require('node:path');
 module.exports = {
   packagerConfig: {
     asar: true,
+    // Electron is managed at the repository root; make its version explicit so
+    // Forge does not try to infer it from this intentionally lean app manifest.
+    electronVersion: require('../../node_modules/electron/package.json').version,
     name: 'DevPilot',
     executableName: 'DevPilot',
     appBundleId: 'com.devpilot.desktop',

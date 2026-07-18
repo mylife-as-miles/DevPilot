@@ -1,6 +1,8 @@
 {
   "name": "@devpilot/desktop",
   "version": "0.1.0",
+  "description": "DevPilot local-first autonomous development workspace.",
+  "author": "DevPilot",
   "private": true,
   "type": "module",
   "main": "main.cjs",
@@ -12,6 +14,9 @@
     "package": "electron-forge package",
     "make": "electron-forge make",
     "verify": "node --check main.cjs && node --check preload.cjs && node --test desktop-shell.test.cjs forge-config.test.cjs"
+  },
+  "devDependencies": {
+    "electron": "43.1.1"
   },
   "config": {
     "forge": "./forge.config.cjs"
