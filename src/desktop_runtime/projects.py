@@ -37,15 +37,18 @@ def preflight_project(raw_path: str | Path) -> ProjectPreflight:
         return ProjectPreflight(path, readable, False, None, None, bool(git))
 
     def git_output(*args: str) -> tuple[int, str]:
-        completed = subprocess.run(
-            [git, *args],
-            cwd=path,
-            shell=False,
-            check=False,
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
+        try:
+            completed = subprocess.run(
+                [git, *args],
+                cwd=path,
+                shell=False,
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            return 1, ""
         return completed.returncode, completed.stdout.strip()
 
     code, inside = git_output("rev-parse", "--is-inside-work-tree")

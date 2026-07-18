@@ -32,7 +32,11 @@ class DesktopRuntimeServer:
         self._stdin = stdin
         self._stdout = stdout
         self._stderr = stderr
-        self._handlers = DesktopRuntimeHandlers(authentication=authentication)
+        self._handlers = DesktopRuntimeHandlers(
+            sdk=self.sdk,
+            authentication=authentication,
+            event_sink=self._send_runtime_event,
+        )
         self._write_lock = asyncio.Lock()
 
     async def serve(self) -> None:
@@ -67,6 +71,9 @@ class DesktopRuntimeServer:
         async with self._write_lock:
             self._stdout.write(payload)
             self._stdout.flush()
+
+    async def _send_runtime_event(self, emitted: Any) -> None:
+        await self._send(event(emitted.name, emitted.data))
 
     def _log(self, message: str) -> None:
         self._stderr.write(f"devpilot desktop-runtime: {sanitize_text(message)}\n")

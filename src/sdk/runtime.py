@@ -150,6 +150,7 @@ class DevPilotSDK:
         *,
         provider_factory: ProviderFactory | None = None,
         orchestrator_factory: OrchestratorFactory | None = None,
+        project_registry_path: Path | None = None,
     ) -> None:
         if provider_factory is None:
             from ..coordinator.main import create_provider
@@ -159,6 +160,8 @@ class DevPilotSDK:
             orchestrator_factory = CoordinatorOrchestrator
         self._provider_factory = provider_factory
         self._orchestrator_factory = orchestrator_factory
+        from .conversations import ConversationStore
+        self._conversations = ConversationStore(self, registry_path=project_registry_path)
 
     def create_session(self, request: ResearchRequest) -> ResearchSession:
         return ResearchSession(
@@ -166,3 +169,33 @@ class DevPilotSDK:
             provider_factory=self._provider_factory,
             orchestrator_factory=self._orchestrator_factory,
         )
+
+    async def open_project(self, cwd: str | Path):
+        """Register a local folder as a DevPilot project without starting a run."""
+        return await self._conversations.open_project(cwd)
+
+    async def list_projects(self):
+        return await self._conversations.list_projects()
+
+    async def get_project(self, project_id: str):
+        return await self._conversations.get_project(project_id)
+
+    async def remove_project(self, project_id: str) -> bool:
+        return await self._conversations.remove_project(project_id)
+
+    async def create_conversation(self, **kwargs: Any):
+        """Create a persistent project-local coding conversation."""
+        return await self._conversations.create(**kwargs)
+
+    async def list_conversations(self, project_id: str, *, include_archived: bool = False):
+        return await self._conversations.list(project_id, include_archived=include_archived)
+
+    async def open_conversation(self, project_id: str, conversation_id: str):
+        return await self._conversations.open(project_id, conversation_id)
+
+    async def delete_conversation(self, project_id: str, conversation_id: str) -> bool:
+        return await self._conversations.delete(project_id, conversation_id)
+
+    async def shutdown(self) -> None:
+        """Persist/cancel live conversations before the desktop process exits."""
+        await self._conversations.shutdown()

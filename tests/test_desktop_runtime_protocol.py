@@ -5,7 +5,10 @@ import io
 import json
 
 from devpilot.desktop_runtime.authentication import AuthenticationStatus
+from devpilot.desktop_runtime.handlers import DesktopRuntimeHandlers
+from devpilot.desktop_runtime.protocol import Request
 from devpilot.desktop_runtime.server import DesktopRuntimeServer
+from devpilot.sdk import DevPilotSDK
 
 
 class FakeAuthentication:
@@ -96,3 +99,53 @@ def test_desktop_runtime_shutdown_returns_a_protocol_response_then_stops() -> No
         {"id": "shutdown", "result": {"status": "shutting_down"}},
         {"event": "runtime.status", "data": {"state": "shutting_down"}},
     ]
+
+
+def test_desktop_runtime_exposes_project_and_conversation_domain(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(
+        "devpilot.cli.user_config.llm_defaults",
+        lambda: {"provider": "openai-oauth", "model": "configured-codex-model"},
+    )
+    emitted = []
+    sdk = DevPilotSDK(project_registry_path=tmp_path / "desktop-projects.json")
+
+    async def scenario() -> None:
+        handlers = DesktopRuntimeHandlers(
+            sdk=sdk,
+            authentication=FakeAuthentication(),
+            event_sink=lambda event: emitted.append(event),
+        )
+        opened = await handlers.dispatch(Request("open", "project.open", {"path": str(tmp_path)}))
+        project = opened.result["project"]
+        assert project["path"] == str(tmp_path.resolve())
+        assert opened.result["preflight"]["readable"] is True
+
+        created = await handlers.dispatch(Request("create", "conversation.create", {
+            "projectId": project["projectId"],
+            "title": "Fix the tests",
+            "model": "configured-codex-model",
+            "reasoningEffort": "high",
+            "sandbox": "workspace-write",
+        }))
+        conversation = created.result["conversation"]
+        assert conversation["projectId"] == project["projectId"]
+        assert created.events[0].name == "conversation.created"
+
+        listed = await handlers.dispatch(Request("list", "conversation.list", {"projectId": project["projectId"]}))
+        assert [item["conversationId"] for item in listed.result["conversations"]] == [conversation["conversationId"]]
+        renamed = await handlers.dispatch(Request("rename", "conversation.rename", {
+            "projectId": project["projectId"],
+            "conversationId": conversation["conversationId"],
+            "title": "Fix the integration tests",
+        }))
+        assert renamed.result["conversation"]["title"] == "Fix the integration tests"
+        pinned = await handlers.dispatch(Request("pin", "conversation.pin", {
+            "projectId": project["projectId"],
+            "conversationId": conversation["conversationId"],
+            "pinned": True,
+        }))
+        assert pinned.result["conversation"]["pinned"] is True
+        assert any(event.name == "conversation.renamed" for event in emitted)
+        assert any(event.name == "conversation.pinned" for event in emitted)
+
+    asyncio.run(scenario())

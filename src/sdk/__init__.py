@@ -5,6 +5,7 @@ the Coordinator and Executors remain the only owners of orchestration state.
 """
 
 from .runtime import DevPilotSDK, ResearchRequest, ResearchSession, SessionEvent
+from .conversations import ConversationEvent, ConversationMessage, ConversationRecord, ProjectRecord
 from .acp import AcpStdioServer, serve_stdio
 
 __all__ = [
@@ -13,5 +14,9 @@ __all__ = [
     "ResearchRequest",
     "ResearchSession",
     "SessionEvent",
+    "ConversationEvent",
+    "ConversationMessage",
+    "ConversationRecord",
+    "ProjectRecord",
     "serve_stdio",
 ]
