@@ -1,6 +1,13 @@
 import * as React from 'react';
 
-import { getDesktopClient, type AcpUpdate } from '@devpilot/desktop/client';
+import {
+    getDesktopClient,
+    type AcpUpdate,
+    type DevPilotProject,
+    type DevPilotTask,
+    type DevPilotTaskMessage,
+    type DevPilotWorkspace,
+} from '@devpilot/desktop/client';
 
 import { storage } from '@/sync/domains/state/storage';
 import type { Metadata, Session } from '@/sync/domains/state/storageTypes';
@@ -13,9 +20,10 @@ export const DEVPILOT_LOCAL_MACHINE_ID = 'local-devpilot';
 
 export type DevPilotLocalAcpSessionMarker = Readonly<{
     v: 1;
+    taskId?: string;
     projectPath: string;
-    acpPid: number;
-    acpSessionId: string;
+    acpPid: number | null;
+    acpSessionId: string | null;
     connectedAt: number;
 }>;
 
@@ -143,16 +151,18 @@ export function readDevPilotLocalAcpMarker(metadata: Metadata | null | undefined
     if (!isRecord(marker)) return null;
     if (marker.v !== 1) return null;
     const projectPath = normalizeId(marker.projectPath);
-    const acpSessionId = normalizeId(marker.acpSessionId);
+    const taskId = normalizeId(marker.taskId);
+    const acpSessionId = normalizeId(marker.acpSessionId) || null;
     const acpPid = typeof marker.acpPid === 'number' && Number.isFinite(marker.acpPid)
         ? Math.trunc(marker.acpPid)
         : null;
     const connectedAt = typeof marker.connectedAt === 'number' && Number.isFinite(marker.connectedAt)
         ? marker.connectedAt
         : null;
-    if (!projectPath || !acpSessionId || acpPid === null || connectedAt === null) return null;
+    if (!projectPath || connectedAt === null || (!taskId && !acpSessionId)) return null;
     return {
         v: 1,
+        ...(taskId ? { taskId } : {}),
         projectPath,
         acpSessionId,
         acpPid,
@@ -165,6 +175,8 @@ export function isDevPilotLocalAcpSession(session: Session | null | undefined): 
 }
 
 export function isDevPilotLocalAcpRoute(sessionId: string, localSession: DevPilotLocalSession | null): boolean {
+    const session = storage.getState().sessions[sessionId] ?? null;
+    if (isDevPilotLocalAcpSession(session)) return true;
     const localAcpSessionId = normalizeId(localSession?.acpSessionId);
     return Boolean(localAcpSessionId && normalizeId(sessionId) === localAcpSessionId);
 }
@@ -255,6 +267,130 @@ export function ensureDevPilotLocalAcpSessionSeeded(localSession: DevPilotLocalS
     return acpSessionId;
 }
 
+function latestTurnStatusForTask(status: DevPilotTask['status']): Session['latestTurnStatus'] {
+    if (status === 'starting' || status === 'running') return 'in_progress';
+    if (status === 'cancelled') return 'cancelled';
+    if (status === 'failed') return 'failed';
+    return 'completed';
+}
+
+function createStoredTaskMessage(
+    sessionId: string,
+    message: DevPilotTaskMessage,
+    seq: number,
+): NormalizedMessage {
+    const built = message.role === 'user'
+        ? createUserMessage(sessionId, message.text, message.createdAt, seq)
+        : createAgentTextMessage(sessionId, message.text, message.createdAt, seq, message.kind);
+    return {
+        ...built,
+        id: message.id,
+        localId: message.role === 'user' ? message.id : null,
+    };
+}
+
+export function ensureDevPilotLocalTaskSessionSeeded(
+    project: DevPilotProject,
+    task: DevPilotTask,
+): string {
+    const sessionId = task.id;
+    const now = Date.now();
+    const existing = storage.getState().sessions[sessionId] ?? null;
+    const marker: DevPilotLocalAcpSessionMarker = {
+        v: 1,
+        taskId: task.id,
+        projectPath: project.path,
+        acpPid: null,
+        acpSessionId: task.acpSessionId,
+        connectedAt: task.createdAt,
+    };
+    const metadata: Metadata = {
+        ...(existing?.metadata ?? {}),
+        name: task.title,
+        path: project.path,
+        host: 'Local ACP',
+        machineId: DEVPILOT_LOCAL_MACHINE_ID,
+        flavor: 'codex',
+        codexBackendMode: 'acp',
+        codexSessionId: task.acpSessionId ?? task.id,
+        directSessionV1: { v: 1, providerId: 'devpilot' },
+        devpilotLocalAcpSessionV1: marker,
+        summary: {
+            text: task.title,
+            updatedAt: task.updatedAt || now,
+        },
+    } as Metadata;
+    const latestTurnStatus = latestTurnStatusForTask(task.status);
+    const session: Session = {
+        id: sessionId,
+        serverId: DEVPILOT_LOCAL_SERVER_ID,
+        seq: existing?.seq ?? 0,
+        encryptionMode: 'plain',
+        createdAt: existing?.createdAt ?? task.createdAt,
+        updatedAt: task.updatedAt,
+        meaningfulActivityAt: task.updatedAt,
+        active: true,
+        activeAt: task.updatedAt,
+        archivedAt: null,
+        pendingVersion: 0,
+        pendingCount: 0,
+        latestTurnId: existing?.latestTurnId ?? null,
+        latestTurnStatus,
+        latestTurnStatusObservedAt: task.updatedAt,
+        latestReadyEventSeq: existing?.latestReadyEventSeq ?? null,
+        latestReadyEventAt: existing?.latestReadyEventAt ?? null,
+        metadata,
+        metadataVersion: existing?.metadataVersion ?? 1,
+        agentState: existing?.agentState ?? null,
+        agentStateVersion: existing?.agentStateVersion ?? 0,
+        thinking: task.status === 'starting' || task.status === 'running',
+        thinkingAt: task.status === 'starting' || task.status === 'running' ? task.updatedAt : 0,
+        presence: 'online',
+        optimisticThinkingAt: existing?.optimisticThinkingAt ?? null,
+        thinkingGraceUntil: existing?.thinkingGraceUntil ?? null,
+        permissionMode: existing?.permissionMode ?? 'default',
+        permissionModeUpdatedAt: existing?.permissionModeUpdatedAt ?? null,
+        modelMode: task.model,
+        modelModeUpdatedAt: task.updatedAt,
+        latestUsage: existing?.latestUsage ?? null,
+        canApprovePermissions: true,
+        accessLevel: 'admin',
+    };
+
+    storage.getState().applySessions([session]);
+    appendMessages(sessionId, task.messages.map((message, index) => createStoredTaskMessage(sessionId, message, index + 1)));
+    storage.getState().applyMessagesLoaded(sessionId);
+    return sessionId;
+}
+
+export function seedDevPilotLocalWorkspace(workspace: DevPilotWorkspace): void {
+    for (const project of workspace.projects) {
+        for (const task of project.tasks) {
+            ensureDevPilotLocalTaskSessionSeeded(project, task);
+        }
+    }
+}
+
+export function useDevPilotLocalWorkspaceBridge(enabled: boolean): void {
+    React.useEffect(() => {
+        if (!enabled) return undefined;
+        const desktop = getDesktopClient();
+        if (!desktop) return undefined;
+        let active = true;
+        const seed = (workspace: DevPilotWorkspace) => {
+            if (active) seedDevPilotLocalWorkspace(workspace);
+        };
+        void desktop.getWorkspace().then(seed).catch(() => {
+            // The desktop boundary will surface runtime errors when the user starts a task.
+        });
+        const removeWorkspaceListener = desktop.onWorkspaceChanged(seed);
+        return () => {
+            active = false;
+            removeWorkspaceListener();
+        };
+    }, [enabled]);
+}
+
 export function handleDevPilotLocalAcpUpdate(update: AcpUpdate, localSession: DevPilotLocalSession | null): void {
     const acpSessionId = ensureDevPilotLocalAcpSessionSeeded(localSession);
     if (!acpSessionId) return;
@@ -328,6 +464,14 @@ export async function submitDevPilotLocalAcpPrompt(sessionId: string, text: stri
     const session = storage.getState().sessions[sessionId] ?? null;
     const marker = readDevPilotLocalAcpMarker(session?.metadata);
     if (!marker) throw new Error('This session is not connected to local DevPilot ACP.');
+
+    if (marker.taskId) {
+        const workspace = await desktop.sendTaskPrompt(marker.taskId, text);
+        seedDevPilotLocalWorkspace(workspace);
+        return;
+    }
+
+    if (!marker.acpSessionId) throw new Error('This local DevPilot session is no longer connected.');
 
     const preflight = await desktop.preflight(marker.projectPath);
     const failures = preflight.checks.filter((check) => check.status === 'fail');
@@ -423,7 +567,14 @@ export async function abortDevPilotLocalAcpSession(sessionId: string): Promise<v
     const marker = readDevPilotLocalAcpMarker(session?.metadata);
     if (!desktop || !marker) throw new Error('This local DevPilot session is no longer connected.');
     try {
-        await desktop.cancelAcpRun(marker.acpSessionId);
+        if (marker.taskId) {
+            const workspace = await desktop.cancelTask(marker.taskId);
+            seedDevPilotLocalWorkspace(workspace);
+        } else if (marker.acpSessionId) {
+            await desktop.cancelAcpRun(marker.acpSessionId);
+        } else {
+            throw new Error('This local DevPilot session is no longer connected.');
+        }
         const completedAt = Date.now();
         updateLocalAcpSession(sessionId, {
             updatedAt: completedAt,

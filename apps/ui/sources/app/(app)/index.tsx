@@ -40,11 +40,11 @@ import {
 
 import { shouldAutoRedirectToSetupOnFirstLaunch } from "@/utils/navigation/firstLaunchSetupRedirectPolicy";
 import { isElectronDesktop } from '@/config/devpilotServices';
-import { isLocalDevPilotDesktopMode, readDevPilotLocalSession, useDevPilotLocalSession } from '@/config/devpilotLocalSession';
+import { isLocalDevPilotDesktopMode } from '@/config/devpilotLocalSession';
 import {
-    ensureDevPilotLocalAcpSessionSeeded,
-    useDevPilotLocalAcpSessionBridge,
+    useDevPilotLocalWorkspaceBridge,
 } from '@/config/devpilotLocalAcpSession';
+import { useDevPilotLocalWorkspaceActive } from '@/config/devpilotLocalWorkspace';
 
 const DEFAULT_WELCOME_SERVER_CHECK_TIMEOUT_MS = 6_000;
 const DEFAULT_WELCOME_SERVER_CHECK_RETRY_DELAY_MS = 1_000;
@@ -67,9 +67,9 @@ function readWelcomeServerCheckRetryDelayMs(): number {
 
 export default function Home() {
     const auth = useAuth();
-    const localDevPilotSession = useDevPilotLocalSession() ?? readDevPilotLocalSession();
-    if (!auth.isAuthenticated && (isElectronDesktop() || isLocalDevPilotDesktopMode()) && localDevPilotSession) {
-        return <Authenticated />
+    const localWorkspaceActive = useDevPilotLocalWorkspaceActive();
+    if (!auth.isAuthenticated && (isElectronDesktop() || isLocalDevPilotDesktopMode()) && localWorkspaceActive) {
+        return <Authenticated />;
     }
     if (!auth.isAuthenticated) {
         return <NotAuthenticated />;
@@ -80,28 +80,16 @@ export default function Home() {
 }
 
 function Authenticated() {
-    const localDevPilotSession = useDevPilotLocalSession() ?? readDevPilotLocalSession();
-    if ((isElectronDesktop() || isLocalDevPilotDesktopMode()) && localDevPilotSession) {
-        return <AuthenticatedLocalDevPilot localSession={localDevPilotSession} />;
+    const localWorkspaceActive = useDevPilotLocalWorkspaceActive();
+    if ((isElectronDesktop() || isLocalDevPilotDesktopMode()) && localWorkspaceActive) {
+        return <AuthenticatedLocalDevPilotWorkspace />;
     }
     return <AuthenticatedRemote />;
 }
 
-function AuthenticatedLocalDevPilot({ localSession }: Readonly<{ localSession: NonNullable<ReturnType<typeof useDevPilotLocalSession>> }>) {
-    useDevPilotLocalAcpSessionBridge(localSession);
-
-    React.useEffect(() => {
-        const sessionId = ensureDevPilotLocalAcpSessionSeeded(localSession);
-        if (!sessionId) return;
-        router.replace(`/session/${encodeURIComponent(sessionId)}` as never);
-    }, [
-        localSession.acpPid,
-        localSession.acpSessionId,
-        localSession.connectedAt,
-        localSession.projectPath,
-    ]);
-
-    return <View style={{ flex: 1 }} />;
+function AuthenticatedLocalDevPilotWorkspace() {
+    useDevPilotLocalWorkspaceBridge(true);
+    return <MainView variant="phone" />;
 }
 
 function AuthenticatedRemote() {

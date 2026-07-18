@@ -16,3 +16,15 @@ test('packages the bundled Python runtime with the desktop app', () => {
     resolve(__dirname, 'runtime'),
   ));
 });
+
+test('uses the DevPilot mark for the executable, installer, and background tray', () => {
+  const icon = resolve(__dirname, 'assets/devpilot.ico');
+  assert.equal(config.packagerConfig.icon, icon);
+  assert.equal(config.makers[0].config.setupIcon, icon);
+  assert.ok(config.packagerConfig.extraResource.includes(
+    resolve(__dirname, '../ui/sources/assets/images/icon.png'),
+  ));
+  assert.ok(config.packagerConfig.extraResource.includes(
+    resolve(__dirname, '../ui/sources/assets/images/devpilot-bot.png'),
+  ));
+});

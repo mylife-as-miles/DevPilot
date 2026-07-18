@@ -17,7 +17,8 @@ import { isTauriDesktop } from '@/utils/platform/tauri';
 import { DesktopMainContentDragSurface } from '@/components/navigation/desktopWindowChrome/DesktopMainContentDragSurface';
 import { isDesktopPetOverlayWindowContext } from '@/components/pets/desktop/runtime/isDesktopPetOverlayWindowContext';
 import { isElectronDesktop } from '@/config/devpilotServices';
-import { isLocalDevPilotDesktopMode, readDevPilotLocalSession, useDevPilotLocalSession } from '@/config/devpilotLocalSession';
+import { isLocalDevPilotDesktopMode } from '@/config/devpilotLocalSession';
+import { useDevPilotLocalWorkspaceActive } from '@/config/devpilotLocalWorkspace';
 
 const TERMINAL_CONNECT_ROUTE = '/terminal/connect';
 const EXPANDED_SIDEBAR_MIN_WINDOW_WIDTH_PX = SIDEBAR_DOCK_MIN_WIDTH_PX + PANE_SIZING_DEFAULTS.mainMinPx;
@@ -41,10 +42,10 @@ export type SidebarNavigatorProps = Readonly<{
 export const SidebarNavigator = React.memo((props: SidebarNavigatorProps) => {
     const styles = stylesheet;
     const auth = useAuth();
-    const localDevPilotSession = useDevPilotLocalSession() ?? readDevPilotLocalSession();
+    const localDevPilotWorkspaceActive = useDevPilotLocalWorkspaceActive();
     const localDevPilotShellActive = Boolean(
         (isElectronDesktop() || isLocalDevPilotDesktopMode())
-        && localDevPilotSession?.acpSessionId,
+        && localDevPilotWorkspaceActive,
     );
     const isTablet = useIsTablet();
     const pathname = usePathname();

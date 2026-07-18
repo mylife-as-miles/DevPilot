@@ -2,10 +2,10 @@ import { brand } from '@devpilot/branding';
 
 const mcpServersUxTranslationExtension = {
   mcpServersConfiguredEmptySubtitle: 'Create a server, import host JSON, or install a recommended preset.',
-  mcpServersHeroSubtitle: ({ configuredCount }: { configuredCount: number }) => `${configuredCount} configured in Happier`,
+  mcpServersHeroSubtitle: ({ configuredCount }: { configuredCount: number }) => `${configuredCount} configured in DevPilot`,
   mcpServersHeroSubtitleEmpty: 'Create servers once, preview where they apply, and import what other tools already use.',
   mcpServersSegmentConfigured: 'Configured',
-  mcpServersSegmentConfiguredSubtitle: 'Your Happier catalog',
+  mcpServersSegmentConfiguredSubtitle: 'Your DevPilot catalog',
   mcpServersSegmentDetected: 'Detected',
   mcpServersSegmentDetectedSubtitle: 'Found in provider config files',
   mcpServersSegmentPreview: 'Preview',
@@ -22,12 +22,12 @@ const mcpServersUxTranslationExtension = {
   mcpServersPreviewDirectorySubtitle: 'Pick the folder you plan to start the session in',
   mcpServersPreviewDirectoryPlaceholder: '/path/to/workspace',
   mcpServersPreviewRefreshTitle: 'Refresh preview',
-  mcpServersPreviewRefreshSubtitle: 'Resolve Happier and provider-native MCP servers for this context',
+  mcpServersPreviewRefreshSubtitle: 'Resolve DevPilot and provider-native MCP servers for this context',
   mcpServersPreviewEmptyTitle: 'No preview yet',
   mcpServersPreviewEmptySubtitle: 'Choose a backend, machine, and directory, then refresh to inspect the effective MCP set.',
   mcpServersPreviewDirectoryRequired: 'Choose a directory to preview this session.',
-  mcpServersBuiltInDescription: 'Always available in Happier sessions.',
-  mcpServersSourceHappier: 'Happier',
+  mcpServersBuiltInDescription: 'Always available in DevPilot sessions.',
+  mcpServersSourceHappier: 'DevPilot',
   mcpServersSourceBuiltIn: 'Built-in',
   mcpServersSourceDetected: 'Detected',
   mcpServersQuickInstallTitle: 'Quick install',
@@ -88,17 +88,17 @@ const mcpServersUxTranslationExtension = {
   mcpServersStatusDetected: ({ provider }: { provider: string }) => `Enabled in ${provider}`,
   mcpServersStatusDisabledInProvider: ({ provider }: { provider: string }) => `Disabled in ${provider}`,
   mcpServersEditorAppliesTo: 'Applies to',
-  mcpServersEditorAppliesToSubtitle: 'Choose where Happier should add this server by default.',
+  mcpServersEditorAppliesToSubtitle: 'Choose where DevPilot should add this server by default.',
   mcpServersAddApplyRule: 'Add applies-to rule',
   mcpServersAddApplyRuleSubtitle: 'Choose where this server should apply by default.',
   mcpServersAddApplyRuleHelp: 'Save this applies-to rule to make it part of this server configuration.',
   mcpServersAddApplyRuleSave: 'Save applies-to rule',
   mcpServersDeliveryNativeTitle: 'Native MCP',
-  mcpServersDeliveryNativeSubtitle: 'This backend receives Happier tools as native MCP servers.',
-  mcpServersDeliveryShellBridgeTitle: 'Happier shell bridge',
-  mcpServersDeliveryShellBridgeSubtitle: 'This backend calls Happier tools through the `happier tools` bridge.',
+  mcpServersDeliveryNativeSubtitle: 'This backend receives DevPilot tools as native MCP servers.',
+  mcpServersDeliveryShellBridgeTitle: 'DevPilot shell bridge',
+  mcpServersDeliveryShellBridgeSubtitle: 'This backend calls DevPilot tools through the `devpilot tools` bridge.',
   mcpServersDeliveryUnsupportedTitle: 'Unsupported',
-  mcpServersDeliveryUnsupportedSubtitle: 'This backend does not currently receive Happier tools.',
+  mcpServersDeliveryUnsupportedSubtitle: 'This backend does not currently receive DevPilot tools.',
 } as const;
 
 const memoryEmbeddingsTranslationExtension = {
@@ -138,7 +138,7 @@ const memoryEmbeddingsTranslationExtension = {
       title: 'Provider',
       options: {
         localTitle: 'Local model',
-        localSubtitle: 'Managed by Happier and downloaded on first use',
+        localSubtitle: 'Managed by DevPilot and downloaded on first use',
         openAiCompatibleTitle: 'OpenAI-compatible endpoint',
         openAiCompatibleSubtitle: 'Use your own embeddings server and API key',
       },
@@ -189,9 +189,9 @@ const newSessionMcpTranslationExtension = {
   mcpDetectedEmptyTitle: 'No detected MCP servers',
   mcpDetectedEmptySubtitle: 'Refresh to scan provider config files on this machine.',
   mcpDetectedUnsupportedTitle: 'Detected MCP servers are not available',
-  mcpDetectedUnsupportedSubtitle: 'Update Happier on this machine to enable provider config scanning.',
-  mcpHappierSectionTitle: 'Happier MCP servers',
-  mcpHappierEmptyTitle: 'No MCP servers defined in Happier',
+  mcpDetectedUnsupportedSubtitle: 'Update DevPilot on this machine to enable provider config scanning.',
+  mcpHappierSectionTitle: 'DevPilot MCP servers',
+  mcpHappierEmptyTitle: 'No MCP servers defined in DevPilot',
   mcpHappierEmptySubtitle: 'Define MCP servers in settings to use them in sessions.',
   mcpReasonActiveByDefault: 'Included by default',
   mcpReasonForcedIncluded: 'Required by configuration',
@@ -261,7 +261,7 @@ const settingsAppearanceTranslationExtension = {
     customGroup: 'Custom themes',
     customFooter: 'Tap a theme to activate it, or use row actions to edit, duplicate, or delete it.',
     defaultTheme: 'Default theme',
-    defaultThemeSubtitle: 'Use Happier theme colors without a custom profile',
+    defaultThemeSubtitle: 'Use DevPilot theme colors without a custom profile',
     active: 'Active',
     customProfileSubtitle: 'Custom local theme profile',
     tapToActivate: 'Tap to activate',
@@ -269,7 +269,7 @@ const settingsAppearanceTranslationExtension = {
     createProfile: 'Create theme',
     createProfileSubtitle: 'Start from any built-in or custom theme',
     importProfile: 'Import theme',
-    importProfileSubtitle: 'Paste JSON or choose a Happier theme profile file',
+    importProfileSubtitle: 'Paste JSON or choose a DevPilot theme profile file',
     exportProfile: 'Export theme',
     exportProfileSubtitle: 'Export this theme as JSON',
     presetsGroup: 'Built-in presets',
@@ -319,7 +319,7 @@ const settingsAppearanceTranslationExtension = {
     previewSubtitle: 'A local sandbox preview of surfaces, text, controls, state, and syntax colors.',
     previewButton: 'Primary action',
     previewStatus: 'Ready',
-    previewCode: 'const theme = "happier";',
+    previewCode: 'const theme = "devpilot";',
     colorInputPlaceholder: '#RRGGBB, rgba(...), transparent',
     tokenSubtitle: 'Public color token override',
     recentColors: 'Recent colors',
@@ -650,7 +650,7 @@ export const en = {
         externalAssetsInstallMethodCopy: 'Copy files',
         externalAssetsInstallMethodCopySubtitle: 'Write a standalone copy into the selected target',
         externalAssetsInstallMethodSymlink: 'Symlink (recommended)',
-        externalAssetsInstallMethodSymlinkSubtitle: 'Link the target to a Happier-managed copy for easier updates',
+        externalAssetsInstallMethodSymlinkSubtitle: 'Link the target to a DevPilot-managed copy for easier updates',
         externalAssetsExportTargetPathPlaceholder: 'Target path (e.g. review/code.md)',
         externalAssetsExportTargetNamePlaceholder: 'Target name (e.g. reviewer)',
         externalAssetsDeleteConfirmTitle: 'Delete external asset?',
@@ -685,7 +685,7 @@ export const en = {
         registriesItemFiles: 'Supporting files',
         registriesItemPreview: 'SKILL.md preview',
         registriesItemPreviewUnavailable: 'No SKILL.md preview is available for this registry item.',
-        registriesItemImportSubtitle: 'Import this skill bundle into the Happier library',
+        registriesItemImportSubtitle: 'Import this skill bundle into the DevPilot library',
         registriesItemInstallAction: 'Install to machine',
         registriesItemInstallConfirmTitle: 'Install registry item?',
         registriesItemInstallConfirmBody: 'This imports the skill into your library and installs it to the selected machine target.',
@@ -1243,11 +1243,11 @@ export const en = {
         scanComputerQrUnavailableTitle: 'Scan desktop QR unavailable',
         scanComputerQrUnavailableBody:
             'This sign-in method is disabled on this server. Use another option below to restore your account.',
-        scanComputerQrInstructions: 'Scan the QR code shown in Happier on your computer (Settings → Add your phone).',
+        scanComputerQrInstructions: 'Scan the QR code shown in DevPilot on your computer (Settings → Add your phone).',
         scanComputerQrButton: 'Scan QR to sign in',
         waitingForApproval: 'Waiting for approval…',
         showQrInstead: 'Show a QR code instead',
-        addPhoneQrInstructions: 'Scan this QR code with the Happier mobile app to sign in on your phone.',
+        addPhoneQrInstructions: 'Scan this QR code with the DevPilot mobile app to sign in on your phone.',
         serverUrlNotEmbeddedTitle: 'Set up your phone’s server',
         serverUrlNotEmbeddedBody:
             'This QR code can’t include the server address because it’s set to localhost. On your phone, go to Settings → Servers and add a URL your phone can reach (LAN IP or Tailscale), then scan again.',
@@ -1262,18 +1262,18 @@ export const en = {
         generateNewQrCode: 'Generate new QR code',
         pairingQrExpired: 'This QR code expired. Generate a new one.',
         openMachine: 'Open machine',
-        terminalUrlPlaceholder: 'happier://terminal?...',
-        accountUrlPlaceholder: 'happier:///account?...',
+        terminalUrlPlaceholder: 'devpilot://terminal?...',
+        accountUrlPlaceholder: 'devpilot:///account?...',
         restoreQrInstructions: "On a device that's already signed in, go to Settings → Account and scan this QR code.",
         externalAuthVerifiedTitle: ({ provider }: { provider: string }) => `${provider} verified`,
         externalAuthVerifiedBody: ({ provider }: { provider: string }) =>
-            `We found an existing Happier account linked to ${provider}. To finish signing in on this device, restore your account key using the QR code or your secret key.`,
+            `We found an existing DevPilot account linked to ${provider}. To finish signing in on this device, restore your account key using the QR code or your secret key.`,
         restoreWithSecretKeyInstead: 'Restore with Secret Key Instead',
         restoreWithSecretKeyDescription: 'Enter your secret key to restore access to your account.',
         lostAccessLink: 'Lost access?',
         lostAccessTitle: 'Lost access to your account?',
         lostAccessBody:
-            'If you no longer have any device linked to this account and you lost your secret key, you can reset your account using your identity provider. This creates a new Happier account. Your old encrypted history cannot be recovered.',
+            'If you no longer have any device linked to this account and you lost your secret key, you can reset your account using your identity provider. This creates a new DevPilot account. Your old encrypted history cannot be recovered.',
         lostAccessContinue: ({ provider }: { provider: string }) => `Continue with ${provider}`,
         lostAccessConfirmTitle: 'Reset account?',
         lostAccessConfirmBody:
@@ -1282,14 +1282,14 @@ export const en = {
         secretKeyPlaceholder: 'XXXXX-XXXXX-XXXXX...',
         linkNewDeviceTitle: 'Link New Device',
         linkNewDeviceSubtitle: 'Scan the QR code shown on your new device to link it to this account',
-        linkNewDeviceQrInstructions: 'Open Happier on your new device and display the QR code',
+        linkNewDeviceQrInstructions: 'Open DevPilot on your new device and display the QR code',
         scanQrCodeOnDevice: 'Scan QR Code',
         unsupported: {
             connectTitle: ({ name }: { name: string }) => `Connect ${name}`,
             runCommandInTerminal: 'Run the following command in your terminal:',
             runCommandInTerminalWithCommand: ({ command }: { command: string }) =>
                 `Run the following command in your terminal:\n\n${command}`,
-            command: ({ name }: { name: string }) => `happier connect ${name}`,
+            command: ({ name }: { name: string }) => `devpilot connect ${name}`,
         },
     },
 
@@ -1317,7 +1317,7 @@ export const en = {
                 disabledByServerSuffix: ' (disabled by server)',
                 pasteDoctorJson: {
                     title: 'CLI doctor JSON (optional)',
-                    subtitle: 'If your machine is unreachable from the UI, run `happier doctor --json` on your computer and paste it here.',
+                    subtitle: 'If your machine is unreachable from the UI, run `devpilot doctor --json` on your computer and paste it here.',
                     placeholder: '{ "capturedAt": "...", ... }',
                     invalid: ({ error }: { error: string }) => `Invalid doctor JSON: ${error}`,
                     valid: 'Doctor JSON looks valid and will be attached to the report.',
@@ -1362,7 +1362,7 @@ export const en = {
                 expectedBehaviorLabel: 'Expected behavior (optional)',
                 expectedBehaviorPlaceholder: 'What should happen instead?',
                 reproductionStepsLabel: 'Reproduction steps (optional)',
-                reproductionStepsPlaceholder: '1. Open Happier\n2. Start a session\n3. ...',
+                reproductionStepsPlaceholder: '1. Open DevPilot\n2. Start a session\n3. ...',
                 whatChangedLabel: 'What changed recently (optional)',
                 whatChangedPlaceholder: 'Updates, config changes, new setup steps...',
             },
@@ -1437,7 +1437,7 @@ export const en = {
             title: 'Enabled',
             subtitle: 'Build and maintain a local index on this machine',
             footer:
-                'When enabled, Happier builds a device-local index derived from decrypted transcripts to support fast recall and search.',
+                'When enabled, DevPilot builds a device-local index derived from decrypted transcripts to support fast recall and search.',
         },
         budgets: {
             groupTitle: 'Disk budget',
@@ -1654,7 +1654,7 @@ export const en = {
               groupTitle: 'Subagents',
               disabled: {
                   footer:
-                      'Subagents are disabled. Enable Happier Subagents in Settings → Features to use delegation guidance.',
+                      'Subagents are disabled. Enable DevPilot Subagents in Settings → Features to use delegation guidance.',
                   enableExecutionRuns: {
                       title: 'Enable Execution Runs',
                       subtitle: 'Open Features settings',
@@ -1758,7 +1758,7 @@ export const en = {
         addYourPhoneSubtitle: 'Show a QR code to sign in on your phone',
         addMachine: 'Add a machine',
         machineSetupCurrentMachineTitle: 'This computer',
-        machineSetupCurrentMachineSubtitle: 'Set up Happier directly on this device',
+        machineSetupCurrentMachineSubtitle: 'Set up DevPilot directly on this device',
         machineSetupAdoptExistingTitle: 'Adopt existing installation',
         machineSetupAdoptExistingSubtitle: 'Use an existing daemon/service setup on this computer',
         machineSetupAdoptExistingProgressTitle: 'Checking existing installation',
@@ -1767,7 +1767,7 @@ export const en = {
         machineSetupSshMachineSubtitle: 'Connect a dev box, VM, or server with SSH',
         machineSetupStagesTitle: 'What happens',
         machineSetupStageConnect: 'Connect and validate access',
-        machineSetupStageInstall: 'Install Happier and pair the machine',
+        machineSetupStageInstall: 'Install DevPilot and pair the machine',
         machineSetupStageFinish: 'Finish setup in the built-in terminal',
         machineSetupComingSoon: 'Machine setup is coming soon.',
         machineSetupTaskWaitingForInput: 'Waiting for input',
@@ -1786,7 +1786,7 @@ export const en = {
         machineSetupRemoteRelaySwitchSubtitle: 'Switch now and continue setup against the new Relay.',
         machineSetupRemoteRelaySwitchConfirmTitle: 'Switch Relay?',
         machineSetupRemoteRelaySwitchConfirmBody: ({ relayUrl }: { relayUrl: string }) =>
-            `Switch Happier to ${relayUrl} and continue setup?`,
+            `Switch DevPilot to ${relayUrl} and continue setup?`,
         machineSetupRemotePromptTrustAction: 'Trust host key',
         machineSetupRemotePromptReplaceAction: 'Replace saved key',
         machineSetupRemotePromptApproveAction: 'Approve pairing',
@@ -2186,7 +2186,7 @@ export const en = {
             copyReportSubtitle: 'Copy a redacted JSON report for support',
         },
         pasteDoctorJson: {
-            footer: 'Tip: run `happier doctor --json` on your computer and paste it here.',
+            footer: 'Tip: run `devpilot doctor --json` on your computer and paste it here.',
             placeholder: '{ "capturedAt": "...", ... }',
             parse: 'Validate pasted JSON',
             ok: 'Pasted doctor JSON looks valid.',
@@ -2395,22 +2395,22 @@ export const en = {
                     `The daemon could not verify ${agentId} resume state because required resume inputs were missing. Reported reason: ${reason}. Start fresh under the selected account or continue with the current account.`,
                 metadata_update_failed: 'The session could not save the new authentication selection. Try again after the session finishes syncing.',
                 no_eligible_group_member: 'No account in this pool is currently eligible for fallback. Review connected accounts and reconnect a profile if needed.',
-                recovery_retry_scheduled: 'Happier scheduled a provider recovery retry. You can retry now or review connected accounts.',
-                recovery_dead_lettered: 'Happier exhausted automatic provider recovery retries. Review connected accounts or reconnect the selected profile.',
-                runtime_auth_recovery_superseded: 'This provider recovery attempt was replaced by newer connected-service state. Happier will not keep retrying the stale account.',
+                recovery_retry_scheduled: 'DevPilot scheduled a provider recovery retry. You can retry now or review connected accounts.',
+                recovery_dead_lettered: 'DevPilot exhausted automatic provider recovery retries. Review connected accounts or reconnect the selected profile.',
+                runtime_auth_recovery_superseded: 'This provider recovery attempt was replaced by newer connected-service state. DevPilot will not keep retrying the stale account.',
                 runtime_auth_generation_stale: 'This provider recovery attempt belongs to an older connected-service generation. Wait for the latest switch or review connected accounts.',
-                hot_apply_unavailable: 'This provider cannot safely switch authentication in the running session. Happier will wait for a safe restart or the next eligible recovery path.',
+                hot_apply_unavailable: 'This provider cannot safely switch authentication in the running session. DevPilot will wait for a safe restart or the next eligible recovery path.',
                 app_server_unavailable: 'The provider app server was not available to verify or apply the authentication switch. Retry when the session is ready.',
                 provider_account_adoption_mismatch: 'The provider stayed on a different account after the switch. Review connected accounts or retry the switch.',
-                provider_account_identity_unverified: 'Happier could not prove the live provider account identity. It will avoid same-account fanout until stronger proof is available.',
-                post_switch_verification_failed: 'Happier could not verify that the provider adopted the selected account. Review connected accounts or retry the switch.',
-                quota_snapshot_stale: 'The latest quota snapshot is too old to drive a proactive switch. Happier will keep using reactive recovery until fresh quota is available.',
-                quota_fetch_disabled: 'Quota checks are currently disabled for this provider. Happier will keep using reactive recovery.',
-                quota_fetch_backoff: 'Quota checks are temporarily backed off after a provider or network response. Happier will retry quota refresh later.',
-                auth_surface_weakly_verified: 'Happier verified the selected authentication files were rewritten, but this provider does not expose exact live account identity.',
+                provider_account_identity_unverified: 'DevPilot could not prove the live provider account identity. It will avoid same-account fanout until stronger proof is available.',
+                post_switch_verification_failed: 'DevPilot could not verify that the provider adopted the selected account. Review connected accounts or retry the switch.',
+                quota_snapshot_stale: 'The latest quota snapshot is too old to drive a proactive switch. DevPilot will keep using reactive recovery until fresh quota is available.',
+                quota_fetch_disabled: 'Quota checks are currently disabled for this provider. DevPilot will keep using reactive recovery.',
+                quota_fetch_backoff: 'Quota checks are temporarily backed off after a provider or network response. DevPilot will retry quota refresh later.',
+                auth_surface_weakly_verified: 'DevPilot verified the selected authentication files were rewritten, but this provider does not expose exact live account identity.',
                 connected_service_credential_reconnect_required: 'The selected connected account needs to be reconnected before this session can resume. Reconnect the profile, then retry.',
                 claude_subscription_missing_claude_code_scope: 'This Claude profile was connected before Claude Code scopes were granted. Reconnect it, then retry the session or pool switch.',
-                claude_subscription_native_auth_materialization_failed: 'Happier could not create the native Claude Code credential file for this profile. Reconnect the profile or choose another pool member.',
+                claude_subscription_native_auth_materialization_failed: 'DevPilot could not create the native Claude Code credential file for this profile. Reconnect the profile or choose another pool member.',
                 claude_subscription_setup_token_not_supported_for_unified: 'Claude Unified mode must launch the Claude CLI with native OAuth credentials. Reconnect this profile with OAuth instead of a setup token.',
             },
             actions: {
@@ -2621,7 +2621,7 @@ export const en = {
             connectAccessTokenTitle: 'Connect access token',
             connectAccessTokenSubtitle: 'Paste a GitHub personal access token',
             openGithubTokenTemplateTitle: 'Create GitHub token',
-            openGithubTokenTemplateSubtitle: 'Open GitHub with the permissions Happier needs prefilled',
+            openGithubTokenTemplateSubtitle: 'Open GitHub with the permissions DevPilot needs prefilled',
             disconnectConfirmBody: ({ service, profileId }: { service: string; profileId: string }) =>
                 `Disconnect ${service} (${profileId})?`,
             disconnectGroupCleanupConfirmBody: ({ service, profileId, groups }: { service: string; profileId: string; groups: string }) =>
@@ -2778,13 +2778,13 @@ export const en = {
                 softSwitchThresholdTitle: 'Soft switch threshold',
                 softSwitchThresholdSubtitle: ({ percent }: { percent: string }) => `Switch below ${percent}% left when this pool has another member with fresher usable quota.`,
                 softSwitchThresholdPromptTitle: 'Soft switch threshold',
-                softSwitchThresholdPromptBody: 'Enter the remaining percentage where Happier should prefer a safer member in this multi-account pool. Use 0 to disable preventive switching.',
+                softSwitchThresholdPromptBody: 'Enter the remaining percentage where DevPilot should prefer a safer member in this multi-account pool. Use 0 to disable preventive switching.',
                 invalidSoftSwitchThresholdTitle: 'Invalid threshold',
                 invalidSoftSwitchThresholdBody: 'Enter a number from 0 to 100.',
                 staleProbeTitle: 'Probe stale quota after',
                 staleProbeSubtitle: ({ minutes }: { minutes: string }) => `Check again when quota data is older than ${minutes} min.`,
                 staleProbePromptTitle: 'Probe stale quota after',
-                staleProbePromptBody: 'Enter how many minutes quota data can be reused before Happier checks again.',
+                staleProbePromptBody: 'Enter how many minutes quota data can be reused before DevPilot checks again.',
                 invalidStaleProbeTitle: 'Invalid probe interval',
                 invalidStaleProbeBody: 'Enter at least 1 minute.',
                 switchBudgetTitle: 'Automatic switch limits',
@@ -2887,7 +2887,7 @@ export const en = {
             groupUnknownSubtitle: 'Readiness is still syncing',
             groupUnsupportedSubtitle: 'This runtime cannot switch account pools',
             connectedServicesTitle: 'Use connected services',
-            connectedServicesSubtitle: 'Fetch and materialize from Happier cloud',
+            connectedServicesSubtitle: 'Fetch and materialize from DevPilot cloud',
             notConnectedTitle: 'No connected services',
             notConnectedSubtitle: 'Tap to open settings',
             profileLabel: 'Profile',
@@ -2934,7 +2934,7 @@ export const en = {
                 promptTitle: 'Uploads directory',
                 promptMessage: 'Enter a workspace-relative directory (no absolute paths, no ..).',
                 invalidDirectoryTitle: 'Invalid directory',
-                invalidDirectoryMessage: 'Use a relative path like `.happier/uploads`.',
+                invalidDirectoryMessage: 'Use a relative path like `.devpilot/uploads`.',
             },
         },
         sourceControlIgnore: {
@@ -3082,7 +3082,7 @@ export const en = {
                         subtitle: 'Best diff rendering on web/desktop. Uses a worker pipeline and falls back safely if unavailable.',
                     },
                     happier: {
-                        title: 'Diff renderer: Happier',
+                        title: 'Diff renderer: DevPilot',
                         subtitle: 'Fallback renderer for compatibility and troubleshooting.',
                     },
                 },
@@ -3165,7 +3165,7 @@ export const en = {
         deviceOverrideTitle: 'Use on this device',
         deviceOverrideSubtitle: 'Override the account pet setting locally.',
         sourceTitle: 'Pet source',
-        builtInSubtitle: 'Built into Happier.',
+        builtInSubtitle: 'Built into DevPilot.',
         builtInBlinkSubtitle: 'Watches session health and blinks when the team needs a nudge.',
         builtInFurySubtitle: 'Charges through flaky workflows until the path is clear.',
         builtInMiloSubtitle: 'Keeps the UI tidy and naps on failing tests.',
@@ -3174,7 +3174,7 @@ export const en = {
         localLibraryTitle: 'This device',
         localLibraryFooter: 'Local pets stay on this device unless you import them to your account.',
         helpDocsTitle: 'Pet help',
-        helpDocsSubtitle: 'Open the Happier docs for companion setup and troubleshooting.',
+        helpDocsSubtitle: 'Open the DevPilot docs for companion setup and troubleshooting.',
         detectCodexPetsTitle: 'Detect Codex pets',
         detectCodexPetsSubtitle: 'Look for compatible pets in local Codex homes.',
         detectedCodexPetsTileSubtitle: 'Found in Codex and ready to join this device.',
@@ -3183,7 +3183,7 @@ export const en = {
         detectedCodexPetsErrorTitle: 'Could not detect Codex pets',
         detectedCodexPetsErrorSubtitle: 'Check that the daemon is connected, then try again.',
         detectedCodexPetsNoTargetTitle: 'No daemon available',
-        detectedCodexPetsNoTargetSubtitle: 'Start Happier on this computer, then detect Codex pets again.',
+        detectedCodexPetsNoTargetSubtitle: 'Start DevPilot on this computer, then detect Codex pets again.',
         detectedCodexPetsDaemonMismatchTitle: 'Update the daemon to detect pets',
         detectedCodexPetsDaemonMismatchSubtitle: 'This daemon does not expose pet discovery yet. Refresh the stack and try again.',
         useOnThisDeviceTitle: 'Use on this device',
@@ -3283,7 +3283,7 @@ export const en = {
             footer: 'Controls account switching and quota recovery notifications.',
             accountSwitch: {
                 title: 'Account switches',
-                subtitle: 'Notify when Happier automatically switches a provider to another connected account',
+                subtitle: 'Notify when DevPilot automatically switches a provider to another connected account',
             },
             quotaBlocked: {
                 title: 'Quota blocked',
@@ -3514,7 +3514,7 @@ export const en = {
         },
         cliSourcePreference: {
             title: 'CLI source preference',
-            subtitle: 'Choose whether Happier prefers the system CLI or the managed install when both exist.',
+            subtitle: 'Choose whether DevPilot prefers the system CLI or the managed install when both exist.',
             options: {
                 systemFirst: {
                     title: 'System install first',
@@ -3522,7 +3522,7 @@ export const en = {
                 },
                 managedFirst: {
                     title: 'Managed install first',
-                    subtitle: 'Prefer the CLI installed by Happier for this provider.',
+                    subtitle: 'Prefer the CLI installed by DevPilot for this provider.',
                 },
             },
         },
@@ -3617,11 +3617,11 @@ export const en = {
                 sections: {
                     claudeUnifiedTerminal: {
                         title: "Unified terminal runtime",
-                        footer: "When enabled, Happier sends prompts into the same Claude Code terminal session instead of starting a separate Agent SDK runner."
+                        footer: "When enabled, DevPilot sends prompts into the same Claude Code terminal session instead of starting a separate Agent SDK runner."
                     },
                     claudeCodeExperiments: {
                         title: "Claude Code experiments",
-                        footer: "These settings apply to both local Claude (terminal) and remote Claude (Agent SDK) sessions started by Happier."
+                        footer: "These settings apply to both local Claude (terminal) and remote Claude (Agent SDK) sessions started by DevPilot."
                     },
                     claudeRemoteSdk: {
                         title: "Classic runtime (Agent SDK fallback)",
@@ -3635,7 +3635,7 @@ export const en = {
                     },
                     claudeUnifiedTerminalHost: {
                         title: "Terminal host",
-                        subtitle: "Choose how Happier hosts the shared Claude terminal session.",
+                        subtitle: "Choose how DevPilot hosts the shared Claude terminal session.",
                         options: {
                             auto: {
                                 title: "Auto",
@@ -3647,13 +3647,13 @@ export const en = {
                             },
                             zellij: {
                                 title: "zellij",
-                                subtitle: "Use Happier's bundled zellij host."
+                                subtitle: "Use DevPilot's bundled zellij host."
                             }
                         }
                     },
                     claudeUnifiedTerminalResumeChoice: {
                         title: "Large-session resume",
-                        subtitle: "Choose how Happier responds when Claude asks how to resume a large session.",
+                        subtitle: "Choose how DevPilot responds when Claude asks how to resume a large session.",
                         options: {
                             ask_every_time: {
                                 title: "Ask every time",
@@ -3671,11 +3671,11 @@ export const en = {
                     },
                     claudeCodeExperimentalAgentTeamsEnabled: {
                         title: "Force-enable Agent Teams",
-                        subtitle: "Enable Claude Code experimental Agent Teams (agent swarm) in all Claude sessions started by Happier."
+                        subtitle: "Enable Claude Code experimental Agent Teams (agent swarm) in all Claude sessions started by DevPilot."
                     },
                     claudeRemoteAgentSdkEnabled: {
                         title: "Use Agent SDK fallback",
-                        subtitle: "When unified terminal runtime is off, route Happier-controlled Claude sessions through the Agent SDK."
+                        subtitle: "When unified terminal runtime is off, route DevPilot-controlled Claude sessions through the Agent SDK."
                     },
                     claudeRemoteDebugEnabled: {
                         title: "Debug mode",
@@ -3731,15 +3731,15 @@ export const en = {
                     },
                     claudeLocalPermissionBridgeEnabled: {
                         title: "Experimental: local permission bridge",
-                        subtitle: "Forward Claude local-mode permission prompts to Happier so you can approve or deny from the app UI."
+                        subtitle: "Forward Claude local-mode permission prompts to DevPilot so you can approve or deny from the app UI."
                     },
                     claudeLocalPermissionBridgeWaitIndefinitely: {
                         title: "Keep requests open until answered",
-                        subtitle: "When enabled, Happier keeps Claude local permission requests pending until you approve or deny them from the app UI."
+                        subtitle: "When enabled, DevPilot keeps Claude local permission requests pending until you approve or deny them from the app UI."
                     },
                     claudeLocalPermissionBridgeTimeoutSeconds: {
                         title: "Optional permission timeout (seconds)",
-                        subtitle: "Only used when indefinite waiting is turned off. After this delay, Happier falls back to Claude’s terminal prompt."
+                        subtitle: "Only used when indefinite waiting is turned off. After this delay, DevPilot falls back to Claude’s terminal prompt."
                     },
                     claudeRemoteEnableFileCheckpointing: {
                         title: "File checkpointing + /rewind",
@@ -3772,7 +3772,7 @@ export const en = {
                     },
                     server: {
                         title: "Server connection",
-                        footer: "Leave empty to use Happier-managed OpenCode server lifecycle. Set an absolute http(s) URL to connect to an existing OpenCode server instead."
+                        footer: "Leave empty to use DevPilot-managed OpenCode server lifecycle. Set an absolute http(s) URL to connect to an existing OpenCode server instead."
                     }
                 },
                 fields: {
@@ -3807,7 +3807,7 @@ export const en = {
                 sections: {
                     cli: {
                         title: "Cursor CLI",
-                        footer: "Use a specific Cursor binary when auto-detection is not enough. Happier prefers cursor-agent and can fall back to agent when enabled."
+                        footer: "Use a specific Cursor binary when auto-detection is not enough. DevPilot prefers cursor-agent and can fall back to agent when enabled."
                     }
                 },
                 fields: {
@@ -3845,7 +3845,7 @@ export const en = {
                 fields: {
                     kimiAcpPythonSelector: {
                         title: "Python stdio selector",
-                        subtitle: "Choose how Happier starts Kimi ACP's Python stdio loop.",
+                        subtitle: "Choose how DevPilot starts Kimi ACP's Python stdio loop.",
                         options: {
                             auto: {
                                 title: "Automatic",
@@ -4141,13 +4141,13 @@ export const en = {
         expConnectedServicesQuotas: 'Connected services quotas',
         expConnectedServicesQuotasSubtitle: 'Show quota badges and usage meters for connected services',
         expChannelBridges: 'Channel bridges',
-        expChannelBridgesSubtitle: 'Connect Telegram and other chat channels to Happier sessions (experimental)',
+        expChannelBridgesSubtitle: 'Connect Telegram and other chat channels to DevPilot sessions (experimental)',
         expMemorySearch: 'Memory search',
         expMemorySearchSubtitle: 'Enable local memory search screens and settings',
         expSessionsDirect: 'Direct sessions',
         expSessionsDirectSubtitle: 'List and open provider-backed direct sessions in the sidebar',
         expSessionsFolders: 'Session folders',
-        expSessionsFoldersSubtitle: 'Organize Happier sidebar sessions into workspace folders',
+        expSessionsFoldersSubtitle: 'Organize DevPilot sidebar sessions into workspace folders',
         expPetsCompanion: 'Pets',
         expPetsCompanionSubtitle: 'Enable Blink companion surfaces and local pet selection',
             expFriends: 'Friends',
@@ -4186,7 +4186,7 @@ export const en = {
         groupInactiveSessionsByProject: 'Group inactive sessions by project',
         groupInactiveSessionsByProjectSubtitle: 'Organize inactive chats under each project',
         environmentBadge: 'Environment badge',
-        environmentBadgeSubtitle: 'Show a small badge next to the Happier title indicating the current app environment',
+        environmentBadgeSubtitle: 'Show a small badge next to the DevPilot title indicating the current app environment',
         enhancedSessionWizard: 'Enhanced Session Wizard',
         enhancedSessionWizardEnabled: 'Profile-first session launcher active',
         enhancedSessionWizardDisabled: 'Using standard session launcher',
@@ -4217,7 +4217,7 @@ export const en = {
         failedToForkSession: 'Failed to fork session',
         daemonUnavailableTitle: 'Daemon unavailable',
         daemonUnavailableBody:
-            'Happier can’t reach the daemon on this machine. It may be offline, still starting, or disconnected from the server.',
+            'DevPilot can’t reach the daemon on this machine. It may be offline, still starting, or disconnected from the server.',
         tryAgain: 'Please try again',
         contactSupport: 'Contact support if the problem persists',
         sessionNotFound: 'Session not found',
@@ -4231,7 +4231,7 @@ export const en = {
         tokenStorageFailed: 'Failed to store authentication tokens',
         oauthStateMismatch: 'Security validation failed. Please try again',
         providerAlreadyLinked: ({ provider }: { provider: string }) =>
-            `${provider} is already linked to an existing Happier account. To sign in on this device, link it from a device that’s already signed in.`,
+            `${provider} is already linked to an existing DevPilot account. To sign in on this device, link it from a device that’s already signed in.`,
         tokenExchangeFailed: 'Failed to exchange authorization code',
         oauthAuthorizationDenied: 'Authorization was denied',
         webViewLoadFailed: 'Failed to load authentication page',
@@ -4281,7 +4281,7 @@ export const en = {
     },
 
     deps: {
-        installNotSupported: 'Update Happier CLI to install this dependency.',
+        installNotSupported: 'Update DevPilot CLI to install this dependency.',
         installFailed: 'Install failed',
         installed: 'Installed',
         installLog: ({ path }: { path: string }) => `Install log: ${path}`,
@@ -4377,7 +4377,7 @@ export const en = {
         selectSessionTypeTitle: 'Select Session Type',
         selectSessionTypeDescription: 'Choose a simple session or one tied to a Git worktree.',
         searchPathsPlaceholder: 'Search paths...',
-        noMachinesFound: 'No machines found. Start a Happier session on your computer first.',
+        noMachinesFound: 'No machines found. Start a DevPilot session on your computer first.',
         allMachinesOffline: 'All machines appear offline',
         machineOfflineInlineTitle: 'Machine is offline',
         machineOfflineInlineBody: 'Start the daemon on this machine or choose another machine before creating a session.',
@@ -4400,7 +4400,7 @@ export const en = {
         notConnectedToServer: 'Not connected to server. Check your internet connection.',
         daemonRpcUnavailableTitle: 'Daemon unavailable',
         daemonRpcUnavailableBody:
-            'Happier can’t reach the daemon on this machine. It may be offline, still starting, or disconnected from the server.',
+            'DevPilot can’t reach the daemon on this machine. It may be offline, still starting, or disconnected from the server.',
         connectedServiceSwitchUnavailable: {
             title: 'Switch unavailable',
             body: ({ reason, agentId }: { reason: string; agentId: string }) =>
@@ -4540,7 +4540,7 @@ export const en = {
             clearAndRemove: 'Clear',
             helpText: 'You can find session IDs in the Session Info screen.',
             cannotApplyBody:
-                'This resume ID can’t be applied right now. Happier will start a new session instead.\n\nIf you expected resume to work, check that the provider is configured for resume (e.g. Codex routing mode set to App Server, ACP, or MCP + resume) and that the required machine dependencies are installed.',
+                'This resume ID can’t be applied right now. DevPilot will start a new session instead.\n\nIf you expected resume to work, check that the provider is configured for resume (e.g. Codex routing mode set to App Server, ACP, or MCP + resume) and that the required machine dependencies are installed.',
         },
         codexResumeBanner: {
             title: 'Codex resume server',
@@ -4582,7 +4582,7 @@ export const en = {
             installTitle: 'Install GitHub CLI?',
             updateTitle: 'Update GitHub CLI?',
             reinstallTitle: 'Reinstall GitHub CLI?',
-            description: 'This installs the GitHub CLI so Happier can use your local GitHub authentication for pull request workflows.',
+            description: 'This installs the GitHub CLI so DevPilot can use your local GitHub authentication for pull request workflows.',
         },
     },
 
@@ -4625,7 +4625,7 @@ export const en = {
         recovery: {
             title: 'Session stopped here before handoff completed',
             messageAfterSourceStop:
-                'Happier already stopped this session on this machine, but could not finish starting it on the target machine. Restart it here, or keep it stopped while you recover the target machine.',
+                'DevPilot already stopped this session on this machine, but could not finish starting it on the target machine. Restart it here, or keep it stopped while you recover the target machine.',
             restartOnSource: 'Restart on source',
             keepStopped: 'Keep stopped',
         },
@@ -4735,11 +4735,11 @@ export const en = {
         resumeFailed: 'Failed to resume session',
         pendingQueuedResumeFailedTitle: 'Message queued',
         pendingQueuedResumeFailedBody:
-            'Your message was saved in the pending queue, but Happier couldn’t resume this session. Retry to start it.',
+            'Your message was saved in the pending queue, but DevPilot couldn’t resume this session. Retry to start it.',
         invalidLinkTitle: 'Invalid session link',
         invalidLinkDescription: 'The session link is missing or invalid. Please check the URL and try again.',
-        resumeSupportNoteChecking: 'Note: Happier is still checking whether this machine can resume the provider session.',
-        resumeSupportNoteUnverified: 'Note: Happier couldn’t verify resume support for this machine.',
+        resumeSupportNoteChecking: 'Note: DevPilot is still checking whether this machine can resume the provider session.',
+        resumeSupportNoteUnverified: 'Note: DevPilot couldn’t verify resume support for this machine.',
         resumeSupportDetails: {
             cliNotDetected: 'CLI not detected on the machine.',
             capabilityProbeFailed: 'Capability probe failed.',
@@ -4754,7 +4754,7 @@ export const en = {
             `This session ended and can’t be resumed because ${provider} doesn’t support restoring its context here. Start a new session to continue.`,
         machineOfflineNoticeTitle: 'Machine is offline',
         machineOfflineNoticeBody: ({ machine }: { machine: string }) =>
-            `“${machine}” is offline, so Happier can’t resume this session yet. Bring it online to continue.`,
+            `“${machine}” is offline, so DevPilot can’t resume this session yet. Bring it online to continue.`,
         machineOfflineCannotResume: 'Machine is offline. Bring it online to resume this session.',
         openRuns: 'Open session runs',
         openAutomations: 'Open session automations',
@@ -4969,7 +4969,7 @@ export const en = {
                 sendDiscardedFailed: 'Failed to send discarded message',
                 reorderFailed: 'Failed to reorder pending messages',
                 clearTerminalComposerFailed: 'Failed to clear the terminal composer',
-                clearTerminalComposerUnsupported: 'This session does not support clearing the terminal composer from Happier.',
+                clearTerminalComposerUnsupported: 'This session does not support clearing the terminal composer from DevPilot.',
                 clearTerminalComposerUnsafe: 'The terminal composer cannot be cleared safely right now.',
             },
         },
@@ -5204,7 +5204,7 @@ export const en = {
         // Used by Server Configuration screen (app/(app)/server.tsx)
         serverConfiguration: 'Relay settings',
         enterServerUrl: 'Please enter a relay URL',
-        notValidHappyServer: 'Not a valid Happier Relay',
+        notValidHappyServer: 'Not a valid DevPilot Relay',
         changeServer: 'Change Relay',
         continueWithServer: 'Continue with this relay?',
         resetToDefault: 'Reset to Default',
@@ -5476,9 +5476,9 @@ export const en = {
         createWorktreeSubtitle: 'Start a new session that will create a Git worktree in this linked workspace.',
         locationLabel: 'Location',
         checkoutLabel: 'Checkout',
-        happySessionIdCopied: 'Happier Session ID copied to clipboard',
-        failedToCopySessionId: 'Failed to copy Happier Session ID',
-        happySessionId: 'Happier Session ID',
+        happySessionIdCopied: 'DevPilot Session ID copied to clipboard',
+        failedToCopySessionId: 'Failed to copy DevPilot Session ID',
+        happySessionId: 'DevPilot Session ID',
         claudeCodeSessionId: 'Claude Code Session ID',
         claudeCodeSessionIdCopied: 'Claude Code Session ID copied to clipboard',
         aiProfile: 'AI Profile',
@@ -5531,7 +5531,7 @@ export const en = {
         pinSession: 'Pin session',
         unpinSession: 'Unpin session',
         copyResumeCommand: 'Copy resume command',
-        resumeCommand: ({ sessionId }: { sessionId: string }) => `happier resume ${sessionId}`,
+        resumeCommand: ({ sessionId }: { sessionId: string }) => `devpilot resume ${sessionId}`,
         viewMachine: 'View Machine',
         viewMachineSubtitle: 'View machine details and sessions',
         manageSharing: 'Manage sharing',
@@ -5550,7 +5550,7 @@ export const en = {
         path: 'Path',
         operatingSystem: 'Operating System',
         processId: 'Process ID',
-        happyHome: 'Happier Home',
+        happyHome: 'DevPilot Home',
         attachFromTerminal: 'Attach from terminal',
         tmuxTarget: 'Tmux target',
         tmuxFallback: 'Tmux fallback',
@@ -5572,7 +5572,7 @@ export const en = {
         cliVersionOutdated: 'CLI Update Required',
         cliVersionOutdatedMessage: ({ currentVersion, requiredVersion }: { currentVersion: string; requiredVersion: string }) =>
             `Version ${currentVersion} installed. Update to ${requiredVersion} or later`,
-        updateCliInstructions: 'Please run happier self update',
+        updateCliInstructions: 'Please update DevPilot to the latest version.',
         deleteSession: 'Delete Session',
         deleteSessionSubtitle: 'Permanently remove this session',
         deleteSessionConfirm: 'Delete Session Permanently?',
@@ -5612,11 +5612,11 @@ export const en = {
         emptyMainScreen: {
             // Used by SessionGettingStartedGuidance component
             readyToCode: 'Ready to code?',
-            installCli: 'Install the Happier CLI',
+            installCli: 'Install the DevPilot CLI',
             runIt: 'Run it',
             scanQrCode: 'Scan the QR code',
             openCamera: 'Open Camera',
-            runCommand: '$ happier',
+            runCommand: '$ devpilot',
         },
         emptyMessages: {
             noMessagesYet: 'No messages yet',
@@ -5926,7 +5926,7 @@ export const en = {
         },
         acpHistoryImport: {
             title: 'Import session history?',
-            defaultNote: 'This session history differs from what is already in Happier. Importing may create duplicates.',
+            defaultNote: 'This session history differs from what is already in DevPilot. Importing may create duplicates.',
             counts: {
                 local: ({ count }: { count: number }) => `Local: ${count}`,
                 remote: ({ count }: { count: number }) => `Remote: ${count}`,
@@ -6151,7 +6151,7 @@ export const en = {
                 },
                 indexLock: {
                     title: 'Remove stale Git lock?',
-                    body: 'Git reported an index lock. If no other Git command is running, Happier can remove the stale lock and retry.',
+                    body: 'Git reported an index lock. If no other Git command is running, DevPilot can remove the stale lock and retry.',
                     confirm: 'Remove lock and retry',
                     recoveryFailed: 'Failed to remove the Git index lock.',
                 },
@@ -6271,7 +6271,7 @@ export const en = {
                     frontmatterReadOnly: 'Frontmatter (read-only)',
                 },
             fileEditingUnsupported:
-                'File editing isn’t supported by the connected daemon. Update Happier on the machine to enable write operations.',
+                'File editing isn’t supported by the connected daemon. Update DevPilot on the machine to enable write operations.',
           fileChangedExternally:
               'This file changed on disk while you were editing. Your draft was kept unchanged; review the latest file before saving.',
           selectionFailed: 'Failed to update selection',
@@ -6513,7 +6513,7 @@ export const en = {
                     createFeatureBranch: 'Create feature branch',
                     createFeatureBranchAndOpen: 'Create branch & open PR',
                     featureBranchPromptTitle: 'Feature branch name',
-                    featureBranchPromptBody: 'Happier will check out this branch before continuing.',
+                    featureBranchPromptBody: 'DevPilot will check out this branch before continuing.',
                     defaultBranchRequiresFeature: 'Create a feature branch before opening a pull request from the default branch.',
                     defaultBranchDenied: 'Pull requests cannot be opened directly from the default branch.',
                     states: {
@@ -6917,7 +6917,7 @@ settingsSession: {
                   queueForReviewSubtitle: 'Put messages into Pending first; send later using “Steer now”.',
               },
               nonSteerablePromptTitle: 'When a message can\'t steer the active turn',
-              nonSteerablePromptFooter: 'Permission-mode changes and /clear or /compact can\'t apply mid-turn. Choose what Happier does with such a message while the agent is busy.',
+              nonSteerablePromptFooter: 'Permission-mode changes and /clear or /compact can\'t apply mid-turn. Choose what DevPilot does with such a message while the agent is busy.',
               nonSteerablePrompt: {
                 askTitle: 'Ask each time',
                 askSubtitle: 'Offer “Interrupt & send now” or “Queue for after turn”.',
@@ -6929,7 +6929,7 @@ settingsSession: {
           },
           usageLimitRecovery: {
               title: 'Usage limit recovery',
-              footer: 'Choose what Happier does when a provider asks the session to wait before continuing.',
+              footer: 'Choose what DevPilot does when a provider asks the session to wait before continuing.',
               modeTitle: 'When a usage limit is hit',
               askTitle: 'Ask each time',
               askSubtitle: 'Show session actions before waiting or retrying.',
@@ -7265,8 +7265,8 @@ settingsSession: {
                   groupFooter: 'Applies only when the source session is currently direct.',
                   keepDirectTitle: 'Keep direct',
                   keepDirectSubtitle: 'Resume the target as a direct session when the provider supports it.',
-                  convertToPersistedTitle: 'Convert to Happier',
-                  convertToPersistedSubtitle: 'Import the transcript and continue as a Happier session.',
+                  convertToPersistedTitle: 'Convert to DevPilot',
+                  convertToPersistedSubtitle: 'Import the transcript and continue as a DevPilot session.',
               },
           },
           sessionCreation: {
@@ -7298,7 +7298,7 @@ settingsSession: {
               wizardPresentationTitle: 'Wizard selector layout',
               wizardPresentationFooter: 'Auto keeps short sections as lists and switches long sections to searchable dropdowns.',
               wizardPresentationAutoTitle: 'Auto',
-              wizardPresentationAutoSubtitle: 'Let Happier choose the best layout for the amount of content.',
+              wizardPresentationAutoSubtitle: 'Let DevPilot choose the best layout for the amount of content.',
               wizardPresentationListTitle: 'List',
               wizardPresentationListSubtitle: 'Show all rows directly in the wizard.',
               wizardPresentationDropdownTitle: 'Dropdown',
@@ -7306,7 +7306,7 @@ settingsSession: {
           },
           promptPersonalization: {
               title: 'Prompt personalization',
-              footer: 'Choose which built-in instructions Happier adds to new agent sessions. This does not hide options an agent already sends.',
+              footer: 'Choose which built-in instructions DevPilot adds to new agent sessions. This does not hide options an agent already sends.',
               askAgentToRenameSessionsTitle: 'Session title updates',
               askAgentToRenameSessionsNeverTitle: 'Never',
               askAgentToRenameSessionsNeverSubtitle: 'Do not prompt agents to set session titles.',
@@ -7330,9 +7330,9 @@ settingsSession: {
           },
           defaultStorage: {
               title: 'Default session type',
-              footer: 'Choose whether new sessions start as Happier sessions or direct provider-backed sessions.',
+              footer: 'Choose whether new sessions start as DevPilot sessions or direct provider-backed sessions.',
               globalTitle: 'Global default',
-              persistedSubtitle: 'Store new sessions in Happier and sync them across devices by default.',
+              persistedSubtitle: 'Store new sessions in DevPilot and sync them across devices by default.',
               directSubtitle: 'Start machine-bound direct sessions when the provider supports it.',
               globalSubtitle: ({ label }: { label: string }) => `Global default: ${label}`,
               useGlobalDefault: 'Use global default',
@@ -7397,7 +7397,7 @@ settingsSession: {
             title: 'Windows',
             defaultModeTitle: 'Default Windows remote session mode',
             windowNameTitle: 'Windows Terminal window name',
-            windowNamePlaceholder: 'happier',
+            windowNamePlaceholder: 'devpilot',
             windowNameHint: 'Sessions opened in Windows Terminal use this named window so new sessions can appear as tabs.',
         },
     },
@@ -7416,12 +7416,12 @@ settingsSession: {
         // Voice settings screen
         modeTitle: 'Voice',
         modeDescription:
-            'Configure voice features. Depending on server capabilities, choose Happier Voice, Local voice, or your own ElevenLabs account.',
+            'Configure voice features. Depending on server capabilities, choose DevPilot Voice, Local voice, or your own ElevenLabs account.',
         mode: {
             off: 'Off',
             offSubtitle: 'Disable all voice features',
-            happier: 'Happier Voice',
-            happierSubtitle: 'Use Happier Voice (subscription required)',
+            happier: 'DevPilot Voice',
+            happierSubtitle: 'Use DevPilot Voice (subscription required)',
             local: 'Local voice',
             localSubtitle: 'Use device speech or local OpenAI-compatible STT/TTS endpoints',
             byo: 'Use My ElevenLabs',
@@ -7486,7 +7486,7 @@ settingsSession: {
         byo: {
             title: 'Use My ElevenLabs',
 	            agentReuseDialog: {
-	                title: 'Happier agent already exists',
+	                title: 'DevPilot agent already exists',
 	                messageWithId: ({ name, id }: { name: string; id: string }) =>
 	                    `We found an existing ElevenLabs agent (“${name}”, id: ${id}).\n\nDo you want to update it, or create a new one?`,
 	                messageNoId: ({ name }: { name: string }) =>
@@ -7501,32 +7501,32 @@ settingsSession: {
                 'Setup (2 minutes):\n' +
                 '1) Create an ElevenLabs account (or sign in).\n' +
                 '2) Create an API key (Developers → API Keys). Recommended permissions: Text to Speech (Access), Voices (Read), Conversational AI / Agents (Read & Write).\n' +
-                '3) Paste the API key in Happier.\n' +
-                '4) Tap "Create Happier Agent" to auto-provision (it fills the Agent ID).\n\n' +
-                'Tip: Your API key is stored encrypted. Happier never shows it again after you save it. If you rotate it in ElevenLabs, paste the new one here.',
+                '3) Paste the API key in DevPilot.\n' +
+                '4) Tap "Create DevPilot Agent" to auto-provision (it fills the Agent ID).\n\n' +
+                'Tip: Your API key is stored encrypted. DevPilot never shows it again after you save it. If you rotate it in ElevenLabs, paste the new one here.',
             createAccount: 'Create ElevenLabs account',
             createAccountSubtitle: 'Sign up (or sign in), then return here to connect',
             openApiKeys: 'Open ElevenLabs API keys',
             openApiKeysSubtitle:
-                'In ElevenLabs: Developers → API Keys → Create API key → Copy the key (you might only see it once). Tip: name it “Happier”.',
+                'In ElevenLabs: Developers → API Keys → Create API key → Copy the key (you might only see it once). Tip: name it “DevPilot”.',
             apiKeyHelp: 'How to create an API key',
             apiKeyHelpSubtitle: 'Step-by-step help for creating and copying your ElevenLabs API key',
             apiKeyHelpDialogTitle: 'Create an ElevenLabs API key',
             apiKeyHelpDialogBody:
                 '1) Open ElevenLabs (web).\n' +
                 '2) Go to Developers → API Keys.\n' +
-                '3) Click "Create API key" (name it “Happier”).\n' +
+                '3) Click "Create API key" (name it “DevPilot”).\n' +
                 '4) Recommended permissions: Text to Speech (Access), Voices (Read), Conversational AI / Agents (Read & Write).\n' +
                 '5) Copy the key (you may only be able to see it once).\n' +
-                '6) Back in Happier, tap "API Key" and paste it.\n' +
-                '7) Tap "Create Happier Agent" to provision automatically (it fills the Agent ID).\n\n' +
+                '6) Back in DevPilot, tap "API Key" and paste it.\n' +
+                '7) Tap "Create DevPilot Agent" to provision automatically (it fills the Agent ID).\n\n' +
                 'If you prefer manual setup:\n' +
-                '- Create an agent in ElevenLabs, then copy/paste its Agent ID into Happier.\n\n' +
+                '- Create an agent in ElevenLabs, then copy/paste its Agent ID into DevPilot.\n\n' +
                 'Security tip: treat API keys like passwords. If you think it leaked, revoke it and create a new one. (Most ElevenLabs keys start with "xi-".)',
-            autoprovCreate: 'Create Happier Agent',
-            autoprovCreateSubtitle: 'Creates a Happier agent in your ElevenLabs account and fills the Agent ID automatically',
+            autoprovCreate: 'Create DevPilot Agent',
+            autoprovCreateSubtitle: 'Creates a DevPilot agent in your ElevenLabs account and fills the Agent ID automatically',
             autoprovUpdate: 'Update Agent',
-            autoprovUpdateSubtitle: 'Update your agent to the latest Happier template',
+            autoprovUpdateSubtitle: 'Update your agent to the latest DevPilot template',
             autoprovCreated: ({ agentId }: { agentId: string }) => `Created agent: ${agentId}`,
             autoprovUpdated: 'Agent updated',
             autoprovFailed: 'Failed to create/update agent. Please try again.',
@@ -7534,7 +7534,7 @@ settingsSession: {
             agentIdSet: 'Set',
             agentIdNotSet: 'Not set',
             agentIdTitle: 'ElevenLabs Agent ID',
-            agentIdDescription: 'If you used "Create Happier Agent", this is filled automatically. Otherwise copy the Agent ID from ElevenLabs.',
+            agentIdDescription: 'If you used "Create DevPilot Agent", this is filled automatically. Otherwise copy the Agent ID from ElevenLabs.',
             agentIdPlaceholder: 'agent_...',
             apiKey: 'API Key',
             apiKeySet: 'Set',
@@ -7753,7 +7753,7 @@ settingsSession: {
                 manifest: {
                     title: 'Model pack manifest',
                     subtitle:
-                        'Defaults to Happier model packs (override via EXPO_PUBLIC_HAPPIER_MODEL_PACK_MANIFESTS).',
+                        'Defaults to DevPilot model packs (override via EXPO_PUBLIC_HAPPIER_MODEL_PACK_MANIFESTS).',
                     detailResolved: 'Resolved',
                     detailMissing: 'Missing',
                 },
@@ -7924,7 +7924,7 @@ settingsSession: {
                     title: 'Voice agent',
                 },
                 backend: {
-                    daemonSubtitle: 'Uses your Happier backend and supports provider resume.',
+                    daemonSubtitle: 'Uses your DevPilot backend and supports provider resume.',
                     openAiSubtitle: 'Connect to OpenAI-compatible HTTP endpoints.',
                 },
                 agentMachine: {
@@ -7985,7 +7985,7 @@ settingsSession: {
                     replaySubtitle: 'Resume by replaying recent messages.',
                     providerResumeTitle: 'Provider resume',
                     providerResumeSubtitle: 'Resume using provider session state (when supported).',
-                    disabledVoiceAgent: 'Requires Happier Voice Agent.',
+                    disabledVoiceAgent: 'Requires DevPilot Voice Agent.',
                     disabledDaemonBackend: 'Requires Daemon backend.',
                     disabledAgentNoProviderResume: 'Selected agent does not support provider resume.',
                 },
@@ -8027,7 +8027,7 @@ settingsSession: {
                 },
             },
             mediatorBackend: 'Voice agent backend',
-            mediatorBackendSubtitle: 'Daemon (uses your Happier backend) or OpenAI-compatible HTTP',
+            mediatorBackendSubtitle: 'Daemon (uses your DevPilot backend) or OpenAI-compatible HTTP',
             mediatorBackendDaemon: 'Daemon',
             mediatorBackendOpenAi: 'OpenAI-compatible HTTP',
             mediatorAgentSource: 'Voice agent source',
@@ -8129,7 +8129,7 @@ settingsSession: {
             },
             testTts: 'Test TTS',
             testTtsSubtitle: 'Play a short sample using your configured local TTS (device TTS or endpoint)',
-            testTtsSample: 'Hello from Happier. This is a test of your local TTS.',
+            testTtsSample: 'Hello from DevPilot. This is a test of your local TTS.',
             testTtsMissingBaseUrl: 'Set a TTS Base URL first.',
             testTtsFailed: 'TTS test failed. Check your base URL, API key, model, voice, and TTS Format (some endpoints only support mp3 or wav).',
             autoSpeak: 'Auto-speak replies',
@@ -8281,7 +8281,7 @@ settingsSession: {
                         "cockpitTitle": "Your mobile cockpit",
                         "cockpitBody": "Chat, files, Git, editor, terminal. Everything you need to build & ship your next project, at your fingertips.",
                         "existingTitle": "Existing sessions, already there",
-                        "existingBody": "Any Claude, Codex, or OpenCode session running on your machine, open it in Happier, live.",
+                        "existingBody": "Any Claude, Codex, or OpenCode session running on your machine, open it in DevPilot, live.",
                         "voiceTitle": "A voice assistant to brainstorm with",
                         "voiceBody": "Ask what your agents are doing, approve permission requests, and send messages. Hands-free.",
                         "reviewTitle": "Review diffs and leave comments",
@@ -8289,7 +8289,7 @@ settingsSession: {
                         "subagentsTitle": "Cross-provider subagents",
                         "subagentsBody": "Launch Codex subagents from a Claude session. Split work across agents. Route messages between sessions.",
                         "tuisTitle": "Use your favorite TUIs",
-                        "tuisBody": "Run Claude Code, Codex, or OpenCode in their native terminal UI. Happier captures it and syncs it to every device.",
+                        "tuisBody": "Run Claude Code, Codex, or OpenCode in their native terminal UI. DevPilot captures it and syncs it to every device.",
                         "inboxTitle": "One inbox. Every session.",
                         "inboxBody": "All pending approvals, permission requests, and unread activity, across every session and machine, in one place.",
                         "mcpTitle": "One MCP config. Every provider.",
@@ -8354,7 +8354,7 @@ settingsSession: {
                     "mcp": {
                         "title": "One config. Every provider.",
                         "wideTitle": "One config.\nEvery provider.",
-                        "body": "Define MCPs once in Happier and they work across all backends, even the ones that don't natively support MCP. Manage skills, prompts & more!",
+                        "body": "Define MCPs once in DevPilot and they work across all backends, even the ones that don't natively support MCP. Manage skills, prompts & more!",
                         "alt": "Abstract placeholder image for shared MCP configuration."
                     },
                     "queue": {
@@ -8396,7 +8396,7 @@ settingsSession: {
         invalidConnectionLink: 'Invalid Connection Link',
         invalidConnectionLinkDescription: 'The connection link is missing or invalid. Please check the URL and try again.',
         connectTerminal: 'Connect Terminal',
-        terminalRequestDescription: 'A terminal is requesting to connect to your Happier Coder account. This will allow the terminal to send and receive messages securely.',
+        terminalRequestDescription: 'A terminal is requesting to connect to your DevPilot Coder account. This will allow the terminal to send and receive messages securely.',
         connectionDetails: 'Connection Details',
         publicKey: 'Public Key',
         encryption: 'Encryption',
@@ -8454,11 +8454,11 @@ settingsSession: {
         terminalConnectionAlreadyUsedDescription: 'This connection link was already used by another device. To connect multiple devices to the same terminal, sign out and log in to the same account on all devices.',
         authRequestExpired: 'Connection Expired',
         authRequestExpiredDescription: 'This connection link has expired. Please generate a new link from your terminal.',
-        pleaseSignInFirst: 'Sign in or create an account to continue. If you already have a Happier account on another device, use that same account.',
+        pleaseSignInFirst: 'Sign in or create an account to continue. If you already have a DevPilot account on another device, use that same account.',
         invalidAuthUrl: 'Invalid authentication URL',
         microphoneAccessRequiredTitle: 'Microphone Access Required',
-        microphoneAccessRequiredRequestPermission: 'Happier needs access to your microphone for voice chat. Please grant permission when prompted.',
-        microphoneAccessRequiredEnableInSettings: 'Happier needs access to your microphone for voice chat. Please enable microphone access in your device settings.',
+        microphoneAccessRequiredRequestPermission: 'DevPilot needs access to your microphone for voice chat. Please grant permission when prompted.',
+        microphoneAccessRequiredEnableInSettings: 'DevPilot needs access to your microphone for voice chat. Please enable microphone access in your device settings.',
         microphoneAccessRequiredBrowserInstructions: 'Please allow microphone access in your browser settings. You may need to click the lock icon in the address bar and enable microphone permission for this site.',
         openSettings: 'Open Settings',
         developerMode: 'Developer Mode',
@@ -8567,8 +8567,8 @@ settingsSession: {
         // Returning-user buttons. For returning users we invert the visual
         // hierarchy: Login becomes the filled primary action (probability of
         // intent is high), Start fresh becomes the bordered secondary action.
-        // "I already use Happier" is dropped from the login button title for
-        // returning users because — they obviously do already use Happier.
+        // "I already use DevPilot" is dropped from the login button title for
+        // returning users because — they obviously do already use DevPilot.
         welcomeReturningLoginButton: 'Login — let\'s get back to it',
         welcomeReturningStartFreshButton: 'Start fresh — create a new account',
         welcomeReturningStartFreshSubtitle: 'Generate a new key on this device.',
@@ -8577,7 +8577,7 @@ settingsSession: {
         welcomeFooterRelay: 'Self-hosting?',
         welcomeFooterRelayAction: 'Use your own Relay',
         // Shown in place of welcomeFooterRelay when the active server is a
-        // custom (non-Happier-Cloud) relay. The action below the label is the
+        // custom (non-DevPilot-Cloud) relay. The action below the label is the
         // relay's host (optionally with :port) followed by a small pencil
         // icon so the user can tap to edit. Long hostnames are truncated with
         // a tail-ellipsis to avoid colliding with the right-side Docs group.
@@ -8640,7 +8640,7 @@ settingsSession: {
             },
             daemonInstall: {
                 title: 'Install the background service (recommended)',
-                description: 'Keeps Happier ready in the background for remote starts.',
+                description: 'Keeps DevPilot ready in the background for remote starts.',
                 copyLabel: 'Daemon install',
             },
             startDaemonInstall: {
@@ -8670,7 +8670,7 @@ settingsSession: {
         webDesktopOnlyBody: 'Open the desktop app to set up this computer. The web app can show status, but it can’t install or configure the background service.',
         preAuthTitle: 'Choose your Relay before you sign in',
         preAuthBody: 'Pick the Relay you want to use on this computer before you create, restore, or sign in to an account.',
-        preAuthContinueHint: 'When you continue, Happier will take you back to sign in against the selected Relay and then return here to finish setup.',
+        preAuthContinueHint: 'When you continue, DevPilot will take you back to sign in against the selected Relay and then return here to finish setup.',
         currentRelayTitle: 'Selected Relay',
         currentRelayDescription: ({ relayUrl }: { relayUrl: string }) => `Selected Relay: ${relayUrl}`,
         savedRelaysTitle: 'Saved Relays',
@@ -8710,7 +8710,7 @@ settingsSession: {
     machine: {
         launchNewSessionInDirectory: 'Launch New Session in Directory',
         offlineUnableToSpawn: 'Launcher disabled while machine is offline',
-        offlineHelp: '• Make sure your computer is online\n• Run `happier daemon status` to diagnose\n• Are you running the latest CLI version? Run `happier self update`',
+        offlineHelp: '• Make sure your computer is online\n• Run `devpilot doctor` to diagnose\n• Check that you are running the latest DevPilot version',
         customPathPlaceholder: 'Enter custom path',
         tools: {
             title: 'Tools',
@@ -8720,13 +8720,13 @@ settingsSession: {
         installables: {
             screenTitle: 'Installables',
             aboutGroupTitle: 'About',
-            aboutSubtitle: 'Manage tools that Happier can install and keep up to date on this machine.',
+            aboutSubtitle: 'Manage tools that DevPilot can install and keep up to date on this machine.',
             experimentalGroupTitle: ({ title }: { title: string }) => `${title} (experimental)`,
             autoInstallTitle: 'Auto-install when needed',
             autoInstallSubtitle: 'Installs in the background when required for a selected backend (best-effort).',
             autoUpdateTitle: 'Auto-update',
             autoUpdatePromptTitle: 'Auto-update',
-            autoUpdatePromptBody: 'Choose how Happier should handle updates for this installable.',
+            autoUpdatePromptBody: 'Choose how DevPilot should handle updates for this installable.',
             autoUpdateModes: {
                 off: 'Off',
                 notify: 'Notify',
@@ -8792,7 +8792,7 @@ settingsSession: {
         detectedCliDetected: 'Detected',
         detectedCliNotDetected: 'Not detected',
         detectedCliUnknown: 'Unknown',
-        detectedCliNotSupported: 'Not supported (update @happier-dev/cli)',
+        detectedCliNotSupported: 'Not supported (update the DevPilot CLI)',
         untitledSession: 'Untitled Session',
         back: 'Back',
         notFound: 'Machine not found',
@@ -8868,22 +8868,22 @@ settingsSession: {
         switchingToRemote: 'Switching to remote mode…',
         switchToRemote: 'Switch to remote',
         detachLocalTerminal: 'Detach terminal',
-        directSessionTakeoverAvailable: 'This direct session is available on your machine. Take it over in Happier to control it here.',
+        directSessionTakeoverAvailable: 'This direct session is available on your machine. Take it over in DevPilot to control it here.',
         directSessionMachineOffline: 'This direct session is currently unavailable because the machine is offline.',
         switchingToDirectTakeover: 'Taking over this direct session…',
         switchingToPersistedTakeover: 'Taking over and importing this session…',
         takeOverDirect: 'Take over',
         takeOverPersist: 'Take over + import',
-        directTakeoverDialogTitle: 'Continue this direct session in Happier?',
-        directTakeoverDialogBody: 'Choose how you want Happier to take control. Direct keeps using the provider transcript. Import brings the transcript into Happier.',
+        directTakeoverDialogTitle: 'Continue this direct session in DevPilot?',
+        directTakeoverDialogBody: 'Choose how you want DevPilot to take control. Direct keeps using the provider transcript. Import brings the transcript into DevPilot.',
         directTakeoverDialogDirectTitle: 'Take over',
-        directTakeoverDialogDirectBody: 'Control this session in Happier without importing the transcript into Happier.',
+        directTakeoverDialogDirectBody: 'Control this session in DevPilot without importing the transcript into DevPilot.',
         directTakeoverDialogPersistTitle: 'Take over + import',
-        directTakeoverDialogPersistBody: 'Import the transcript into Happier and continue with full Happier session features.',
+        directTakeoverDialogPersistBody: 'Import the transcript into DevPilot and continue with full DevPilot session features.',
         directTakeoverDialogForceStopTitle: 'Try to stop the local process first',
-        directTakeoverDialogForceStopBody: 'Happier found a trusted local process for this session. Enable this if you want Happier to stop it before taking over.',
+        directTakeoverDialogForceStopBody: 'DevPilot found a trusted local process for this session. Enable this if you want DevPilot to stop it before taking over.',
         directTakeoverForceStopConfirmTitle: 'Stop the local process first?',
-        directTakeoverForceStopConfirmBody: 'Happier found a trusted local process for this direct session. Stop it before taking over here?',
+        directTakeoverForceStopConfirmBody: 'DevPilot found a trusted local process for this direct session. Stop it before taking over here?',
         directTakeoverForceStopConfirmAction: 'Stop and take over',
     },
 
@@ -9242,7 +9242,7 @@ settingsSession: {
         duplicateName: 'A profile with this name already exists',
         setupInstructions: {
             title: 'Setup Instructions',
-            viewCloudGuide: 'View Happier Cloud Setup Guide',
+            viewCloudGuide: 'View DevPilot Cloud Setup Guide',
         },
         machineLogin: {
             title: 'CLI login',
@@ -9350,7 +9350,7 @@ settingsSession: {
         },
     defaultStorage: {
       title: 'Default session type',
-      footer: 'Overrides the account-level default Happier/direct session type for new sessions when this profile is selected.',
+      footer: 'Overrides the account-level default DevPilot/direct session type for new sessions when this profile is selected.',
       accountDefaultSubtitle: ({ label }: { label: string }) => `Account default: ${label}`,
       useAccountDefault: 'Use account default',
       currently: ({ label }: { label: string }) => `Currently: ${label}`,

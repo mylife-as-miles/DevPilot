@@ -51,7 +51,7 @@
     "tauri:prepare:sidecar": "node ./scripts/prepareTauriSidecar.mjs",
     "tauri:prepare:dev": "node ./scripts/prepareTauriSidecar.mjs && cross-env EXPO_UNSTABLE_WEB_MODAL=1 expo start",
     "tauri:prepare:build": "node ./scripts/prepareTauriSidecar.mjs && cross-env EXPO_UNSTABLE_WEB_MODAL=1 expo export --platform web --output-dir dist",
-    "electron:export": "yarn -s ensure:workspace:built && cross-env EXPO_UNSTABLE_WEB_MODAL=1 expo export --platform web --output-dir dist",
+    "electron:export": "yarn -s ensure:workspace:built && cross-env EXPO_UNSTABLE_WEB_MODAL=1 EXPO_PUBLIC_DEVPILOT_DESKTOP=1 HAPPIER_UI_METRO_DISABLE_WATCHMAN=1 expo export --platform web --output-dir dist",
     "ui:tauri": "node ../stack/scripts/tauri_dev.mjs",
     "tauri:dev": "node ../stack/scripts/tauri_dev.mjs",
     "tauri:qa": "node ./scripts/tauriMcpQa.mjs",

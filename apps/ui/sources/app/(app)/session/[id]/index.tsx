@@ -21,6 +21,7 @@ import {
     ensureDevPilotLocalAcpSessionSeeded,
     isDevPilotLocalAcpRoute,
     useDevPilotLocalAcpSessionBridge,
+    useDevPilotLocalWorkspaceBridge,
 } from '@/config/devpilotLocalAcpSession';
 import { isElectronDesktop } from '@/config/devpilotServices';
 import { isLocalDevPilotDesktopMode, readDevPilotLocalSession, useDevPilotLocalSession } from '@/config/devpilotLocalSession';
@@ -254,6 +255,7 @@ function RemoteSessionRoute({
 function LocalDevPilotSessionRoute({ sessionId }: Readonly<{ sessionId: string }>) {
     const localSession = useDevPilotLocalSession() ?? readDevPilotLocalSession();
     useDevPilotLocalAcpSessionBridge(localSession);
+    useDevPilotLocalWorkspaceBridge(true);
 
     React.useEffect(() => {
         ensureDevPilotLocalAcpSessionSeeded(localSession);

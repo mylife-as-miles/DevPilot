@@ -6,6 +6,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
+import { isLocalDevPilotDesktopMode } from '@/config/devpilotLocalSession';
 import { HAPPIER_CLOUD_SERVER_URL } from '@/sync/domains/server/serverProfiles';
 import { createServerUrlComparableKey } from '@/sync/domains/server/url/serverUrlCanonical';
 import { t } from '@/text';
@@ -72,11 +73,17 @@ export const WelcomeFooterLinks = React.memo(function WelcomeFooterLinks(props: 
     // server URL yet (cold start), default to the cloud framing so the footer
     // doesn't flicker into the custom layout for a single render.
     const activeServer = useActiveServerSnapshot();
+    const isLocalDevPilotDesktop = isLocalDevPilotDesktopMode();
     const isCustomRelay = activeServer.serverUrl.length > 0
         && createServerUrlComparableKey(activeServer.serverUrl) !== HAPPIER_CLOUD_COMPARABLE_KEY;
     const customRelayHost = isCustomRelay
         ? (derivePresentableRelayHost(activeServer.serverUrl) ?? activeServer.serverUrl)
         : null;
+
+    // The local DevPilot desktop app does not use the hosted Happier relay or
+    // its public support channels. Keep those upstream links out of the
+    // DevPilot setup screen rather than presenting a mismatched product.
+    if (isLocalDevPilotDesktop) return null;
 
     return (
         <View

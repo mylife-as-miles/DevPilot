@@ -38,8 +38,9 @@ import { isDesktopPetOverlayWindowContext } from '@/components/pets/desktop/runt
 import { SessionCockpitChromeRegistryProvider } from '@/components/workspaceCockpit/session/SessionCockpitChromeRegistry';
 import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
 import { isElectronDesktop } from '@/config/devpilotServices';
-import { isLocalDevPilotDesktopMode, readDevPilotLocalSession, useDevPilotLocalSession } from '@/config/devpilotLocalSession';
+import { isLocalDevPilotDesktopMode } from '@/config/devpilotLocalSession';
 import { isLocalDevPilotAllowedAppPath } from '@/config/devpilotLocalRouteAccess';
+import { useDevPilotLocalWorkspaceActive } from '@/config/devpilotLocalWorkspace';
 
 const bootstrappedWebServerOverride = bootstrapActiveServerFromWebLocation({ scope: 'device' });
 const DESKTOP_PET_OVERLAY_SCREEN_OPTIONS = { headerShown: false } as const;
@@ -141,8 +142,7 @@ export default function RootLayout() {
     const friendsIdentityReady = friendsIdentityReadiness.isReady;
     const debugRouterEnabled = process.env.EXPO_PUBLIC_DEBUG === '1';
     const happierVoiceSupported = useHappierVoiceSupport();
-    const localDevPilotSession = useDevPilotLocalSession();
-    const effectiveLocalDevPilotSession = localDevPilotSession ?? readDevPilotLocalSession();
+    const localDevPilotWorkspaceActive = useDevPilotLocalWorkspaceActive();
 
     useWebInitialRouteReconcile({ routerPathname: pathname });
 
@@ -232,7 +232,7 @@ export default function RootLayout() {
         }));
     }, [auth.isAuthenticated]);
 
-    const localDevPilotAcpSessionId = String(effectiveLocalDevPilotSession?.acpSessionId ?? '').trim();
+    const localDevPilotAcpSessionId = '';
     const routeSegments = segments as readonly string[];
     const routeSessionId = String(
         routeSegments[0] === 'session' && typeof routeSegments[1] === 'string'
@@ -246,6 +246,7 @@ export default function RootLayout() {
             pathname,
             localAcpSessionId: localDevPilotAcpSessionId,
             routeSessionId,
+            localWorkspaceActive: localDevPilotWorkspaceActive,
         }),
     );
     const shouldRedirect = !auth.isAuthenticated

@@ -19,7 +19,7 @@ import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreferenc
 import { useLocalSetting } from '@/sync/store/hooks';
 import { t } from '@/text';
 import { devpilotServices, isElectronDesktop } from '@/config/devpilotServices';
-import { writeDevPilotLocalSession } from '@/config/devpilotLocalSession';
+import { activateDevPilotLocalWorkspace } from '@/config/devpilotLocalWorkspace';
 
 import type { RemoteAuthEntryOptions } from './useRemoteAuthEntryOptions';
 import { useReturningGreeting } from './useReturningGreeting';
@@ -279,13 +279,6 @@ function DecisionActionRow(props: DecisionActionRowProps): React.ReactElement {
     );
 }
 
-function formatShortProjectPath(projectPath: string | null): string {
-    if (!projectPath) return 'No project selected';
-    const parts = projectPath.split(/[\\/]/).filter(Boolean);
-    if (parts.length <= 2) return projectPath;
-    return `...\\${parts.slice(-2).join('\\')}`;
-}
-
 function runtimePathForCopy(runtime: RuntimeStatus | null): string {
     return runtime?.source === 'bundled-runtime'
         ? 'Bundled DevPilot runtime'
@@ -297,10 +290,7 @@ function LocalDevPilotSessionPanel(): React.ReactElement {
     const desktop = React.useMemo(() => getDesktopClient(), []);
     const [runtime, setRuntime] = React.useState<RuntimeStatus | null>(null);
     const [codexAuth, setCodexAuth] = React.useState<CodexAuthStatus | null>(null);
-    const [projectPath, setProjectPath] = React.useState<string | null>(null);
-    const [acpPid, setAcpPid] = React.useState<number | null>(null);
-    const [acpSessionId, setAcpSessionId] = React.useState<string | null>(null);
-    const [busy, setBusy] = React.useState<'runtime' | 'auth' | 'project' | 'launch' | null>('runtime');
+    const [busy, setBusy] = React.useState<'runtime' | 'auth' | 'open' | null>('runtime');
     const [error, setError] = React.useState<string | null>(null);
 
     const refreshRuntime = React.useCallback(async () => {
@@ -313,7 +303,7 @@ function LocalDevPilotSessionPanel(): React.ReactElement {
                     command: null,
                     source: null,
                     version: null,
-                    issue: 'Open DevPilot in the desktop shell to start a local ACP session.',
+                    issue: 'Open DevPilot in the desktop shell to use the local runtime.',
                 });
                 return;
             }
@@ -332,35 +322,6 @@ function LocalDevPilotSessionPanel(): React.ReactElement {
         void refreshRuntime();
     }, [refreshRuntime]);
 
-    React.useEffect(() => {
-        if (!projectPath || acpPid === null) return;
-        writeDevPilotLocalSession({
-            mode: 'local-acp',
-            projectPath,
-            acpPid,
-            acpSessionId,
-            connectedAt: Date.now(),
-        });
-    }, [acpPid, acpSessionId, projectPath]);
-
-    const chooseProject = React.useCallback(async () => {
-        if (!desktop) return;
-        setBusy('project');
-        setError(null);
-        try {
-            const selected = await desktop.selectProject();
-            if (selected) {
-                setProjectPath(selected);
-                setAcpPid(null);
-                setAcpSessionId(null);
-            }
-        } catch (caught) {
-            setError(caught instanceof Error ? caught.message : 'Project selection failed.');
-        } finally {
-            setBusy(null);
-        }
-    }, [desktop]);
-
     const signInWithCodex = React.useCallback(async () => {
         if (!desktop) return;
         setBusy('auth');
@@ -368,97 +329,54 @@ function LocalDevPilotSessionPanel(): React.ReactElement {
         try {
             await desktop.startCodexLogin();
         } catch (caught) {
-            setError(caught instanceof Error ? caught.message : 'Could not start Codex sign-in.');
+            setError(caught instanceof Error ? caught.message : 'Could not start ChatGPT sign-in.');
         } finally {
             setBusy(null);
         }
     }, [desktop]);
 
-    const launchAcp = React.useCallback(async () => {
-        if (!desktop) return;
-        if (!projectPath) {
-            await chooseProject();
-            return;
-        }
-        setBusy('launch');
+    const openWorkspace = React.useCallback(() => {
+        setBusy('open');
         setError(null);
-        try {
-            const result = await desktop.launchAcp(projectPath);
-            setAcpPid(result.pid);
-            setAcpSessionId(result.sessionId);
-            writeDevPilotLocalSession({
-                mode: 'local-acp',
-                projectPath,
-                acpPid: result.pid,
-                acpSessionId: result.sessionId,
-                connectedAt: Date.now(),
-            });
-        } catch (caught) {
-            setAcpPid(null);
-            setAcpSessionId(null);
-            setError(caught instanceof Error ? caught.message : 'ACP launch failed.');
-        } finally {
-            setBusy(null);
-        }
-    }, [chooseProject, desktop, projectPath]);
+        activateDevPilotLocalWorkspace();
+    }, []);
 
     const runtimeReady = runtime?.ready === true;
     const codexReady = codexAuth?.signedIn === true;
-    const isRunning = acpPid !== null;
-    const sessionSetupReady = runtimeReady && codexReady;
-    const headingTitle = sessionSetupReady
-        ? isRunning
-            ? 'DevPilot is working'
-            : 'Start a DevPilot session'
-        : 'Connect DevPilot';
-    const headingSubtitle = sessionSetupReady ? 'Local workspace' : 'Codex workspace';
-    const headingBody = isRunning
-        ? 'DevPilot is connected to this project through the local ACP session.'
-        : sessionSetupReady
-            ? 'Choose the Git project for this session. DevPilot will work only inside that folder.'
-            : 'Sign in with Codex first. When you start a session, choose the local project DevPilot should work in.';
+    const workspaceReady = runtimeReady && codexReady;
+    const headingTitle = workspaceReady ? 'Open DevPilot' : 'Connect DevPilot';
+    const headingSubtitle = workspaceReady ? 'Your coding workspace' : 'ChatGPT account';
+    const headingBody = workspaceReady
+        ? 'Projects are folders you choose when you create a task. DevPilot starts ACP only after you send that first prompt.'
+        : 'Sign in with ChatGPT to use Codex in your local DevPilot workspace.';
     const statusTitle = error
-        ? 'Session needs attention'
-        : isRunning
-            ? 'ACP session running'
-            : projectPath
-                ? 'Project selected'
-                : !runtimeReady
-                    ? busy === 'runtime'
-                        ? 'Checking DevPilot'
-                        : 'Runtime unavailable'
-                    : busy === 'auth'
-                        ? 'Opening Codex sign-in'
-                        : codexReady
-                            ? 'Codex connected'
-                            : 'Connect Codex'
+        ? 'Setup needs attention'
+        : !runtimeReady
+            ? busy === 'runtime'
+                ? 'Checking DevPilot'
+                : 'Runtime unavailable'
+            : busy === 'auth'
+                ? 'Opening ChatGPT sign-in'
+                : codexReady
+                    ? 'ChatGPT connected'
+                    : 'Connect ChatGPT';
     const statusBody = error
         ? error
-        : isRunning
-            ? `devpilot acp --stdio is running for ${formatShortProjectPath(projectPath)}.`
-            : projectPath
-                ? 'Launch the local ACP bridge and start a DevPilot session from this workspace.'
-                : !runtimeReady
-                    ? runtime?.issue ?? 'DevPilot is not ready on this computer yet.'
-                    : codexReady
-                        ? 'Your account is ready. Choose a project only when you want DevPilot to start a session there.'
-                        : codexAuth?.message ?? 'Sign in with your ChatGPT account to use Codex.';
+        : !runtimeReady
+            ? runtime?.issue ?? 'DevPilot is not ready on this computer yet.'
+            : codexReady
+                ? 'Ready to create a project or open one you have already saved.'
+                : codexAuth?.message ?? 'Sign in with your ChatGPT account to use Codex.';
     const primaryTitle = busy === 'auth'
-        ? 'Opening Codex sign-in...'
+        ? 'Opening ChatGPT sign-in...'
         : !codexReady
-            ? 'Sign in with Codex'
-            : busy === 'launch'
-                ? 'Launching ACP...'
-                : isRunning
-                    ? 'ACP session running'
-                    : projectPath
-                        ? 'Start DevPilot session'
-                        : 'Choose a project for this session';
-    const primarySubtitle = projectPath
-        ? `Launch ACP for ${formatShortProjectPath(projectPath)}`
-        : !codexReady
-            ? 'Uses the DevPilot CLI OAuth flow in your browser'
-            : 'DevPilot only works inside the folder you choose';
+            ? 'Sign in with ChatGPT'
+            : busy === 'open'
+                ? 'Opening DevPilot...'
+                : 'Open DevPilot';
+    const primarySubtitle = !codexReady
+        ? 'Continue in your browser using the Codex CLI login'
+        : 'Choose a folder only when you start a task';
 
     return (
         <View testID="welcome-decision-panel" style={styles.decisionPanel}>
@@ -475,7 +393,7 @@ function LocalDevPilotSessionPanel(): React.ReactElement {
             </View>
             <View testID="devpilot-local-session-status" style={styles.localSessionBlock}>
                 <View style={styles.localSessionTitleRow}>
-                    <View style={[styles.localSessionDot, isRunning ? styles.localSessionDotLive : null]} />
+                    <View style={[styles.localSessionDot, codexReady ? styles.localSessionDotLive : null]} />
                     <Text style={styles.localSessionTitle}>{statusTitle}</Text>
                 </View>
                 <Text style={styles.localSessionBody}>{statusBody}</Text>
@@ -506,31 +424,22 @@ function LocalDevPilotSessionPanel(): React.ReactElement {
                             />
                             <DecisionActionRow
                                 testID="devpilot-refresh-codex"
-                                title="I’ve signed in"
-                                subtitle="Check the Codex account connection"
+                                title="I signed in"
+                                subtitle="Check the ChatGPT account connection"
                                 iconName="checkmark-circle-outline"
                                 onPress={refreshRuntime}
                             />
                         </>
                     ) : (
-                        <>
-                            <DecisionActionRow
-                                testID="devpilot-select-project"
-                                title={projectPath ? 'Change project folder' : 'Select project folder'}
-                                subtitle={projectPath ? formatShortProjectPath(projectPath) : 'Choose the folder for this DevPilot session'}
-                                iconName="folder-open-outline"
-                                onPress={chooseProject}
-                            />
-                            <DecisionActionRow
-                                testID="devpilot-launch-acp"
-                                primary
-                                brandPrimary
-                                title={primaryTitle}
-                                subtitle={primarySubtitle}
-                                iconName={isRunning ? 'checkmark-circle-outline' : 'terminal-outline'}
-                                onPress={isRunning ? () => undefined : launchAcp}
-                            />
-                        </>
+                        <DecisionActionRow
+                            testID="devpilot-open-workspace"
+                            primary
+                            brandPrimary
+                            title={primaryTitle}
+                            subtitle={primarySubtitle}
+                            iconName="arrow-forward-outline"
+                            onPress={openWorkspace}
+                        />
                     )
                 )}
             </View>

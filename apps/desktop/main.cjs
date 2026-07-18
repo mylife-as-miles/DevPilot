@@ -1,26 +1,111 @@
-const { app, BrowserWindow, dialog, ipcMain, session, shell } = require('electron');
+const { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, session, shell, Tray } = require('electron');
 const { createReadStream, existsSync, statSync, readFileSync, writeFileSync, mkdirSync } = require('node:fs');
 const { spawn, spawnSync } = require('node:child_process');
 const http = require('node:http');
 const path = require('node:path');
 
 const { isAllowedExternalUrl, mimeTypeForPath, resolveStaticCandidate } = require('./desktop-shell.cjs');
+const {
+  addProject,
+  appendTaskMessage,
+  createTask,
+  emptyWorkspace,
+  normalizeWorkspace,
+  selectProject: selectWorkspaceProject,
+  updateTask,
+} = require('./workspace-store.cjs');
 const acpClientModule = app.isPackaged
   ? path.join(process.resourcesPath, 'acpProcessClient.cjs')
   : path.resolve(__dirname, '../../packages/devpilot-runtime/src/acpProcessClient.cjs');
 const { AcpProcessClient } = require(acpClientModule);
+
+// Electron's development executable still carries its generic package name.
+// Set the process-visible name explicitly so tray, taskbar, and system dialogs
+// consistently identify the product as DevPilot.
+app.setName('DevPilot');
 
 let mainWindow = null;
 let staticServer = null;
 let acpClient = null;
 let acpProcessProjectPath = null;
 let acpSessionId = null;
+let acpRunInProgress = false;
 let codexLoginProcess = null;
+let tray = null;
+let isQuitting = false;
+const taskWorkers = new Map();
 const runtimeLogs = [];
 let runtimeLogBytes = 0;
 const MAX_RUNTIME_LOG_ENTRIES = 1000;
 const MAX_RUNTIME_LOG_BYTES = 1_500_000;
 const MAX_RUNTIME_LOG_ENTRY_BYTES = 16_384;
+
+function workspaceRecordPath() {
+  return path.join(app.getPath('userData'), 'devpilot-workspace.json');
+}
+
+function readWorkspace() {
+  try {
+    return normalizeWorkspace(JSON.parse(readFileSync(workspaceRecordPath(), 'utf8')));
+  } catch {
+    return emptyWorkspace();
+  }
+}
+
+function recoverInterruptedWorkspace() {
+  const workspace = readWorkspace();
+  let changed = false;
+  for (const project of workspace.projects) {
+    for (const task of project.tasks) {
+      if (task.status !== 'starting' && task.status !== 'running') continue;
+      task.status = 'interrupted';
+      task.acpSessionId = null;
+      changed = true;
+    }
+  }
+  return changed ? writeWorkspace(workspace) : workspace;
+}
+
+function writeWorkspace(workspace) {
+  const normalized = normalizeWorkspace(workspace);
+  const target = workspaceRecordPath();
+  mkdirSync(path.dirname(target), { recursive: true });
+  writeFileSync(target, JSON.stringify(normalized, null, 2), { encoding: 'utf8', mode: 0o600 });
+  return normalized;
+}
+
+function broadcastWorkspace(workspace) {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('devpilot:workspace-changed', workspace);
+  }
+}
+
+function saveWorkspace(workspace) {
+  const saved = writeWorkspace(workspace);
+  broadcastWorkspace(saved);
+  return saved;
+}
+
+function findWorkspaceTask(workspace, taskId) {
+  for (const project of workspace.projects) {
+    const task = project.tasks.find((candidate) => candidate.id === taskId);
+    if (task) return { project, task };
+  }
+  return null;
+}
+
+function publicTaskUpdate(taskId, update) {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('devpilot:task-update', { taskId, ...update });
+  }
+}
+
+function textFromTaskUpdate(update) {
+  const text = update?.update?.content?.text;
+  if (typeof text !== 'string' || !text.trim()) return null;
+  const type = String(update?.update?._meta?.devpilot?.type || '').toLowerCase();
+  return { text: text.trim(), kind: type.includes('thought') || type.includes('thinking') ? 'thinking' : 'message' };
+}
 
 function localSessionRecordPath() {
   return path.join(app.getPath('userData'), 'devpilot-local-session.json');
@@ -54,6 +139,82 @@ function persistLocalSession(status = 'idle') {
   writeFileSync(localSessionRecordPath(), JSON.stringify(record), { encoding: 'utf8', mode: 0o600 });
 }
 
+function trayProjectName() {
+  return acpProcessProjectPath ? path.basename(acpProcessProjectPath) || acpProcessProjectPath : null;
+}
+
+function getNativeIcon(fileName) {
+  const iconPath = app.isPackaged
+    ? path.join(process.resourcesPath, fileName)
+    : path.resolve(__dirname, '../ui/sources/assets/images', fileName);
+  const image = nativeImage.createFromPath(iconPath);
+  return image.isEmpty() ? nativeImage.createEmpty() : image;
+}
+
+function getTrayIcon() {
+  const image = getNativeIcon('devpilot-bot.png');
+  return image.isEmpty() ? nativeImage.createEmpty() : image.resize({ width: 16, height: 16 });
+}
+
+function getWindowIcon() {
+  return getNativeIcon('icon.png');
+}
+
+function showMainWindow() {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    void createMainWindow();
+    return;
+  }
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.show();
+  mainWindow.focus();
+}
+
+function updateTray() {
+  if (!tray) return;
+  const activeTaskCount = [...taskWorkers.values()].filter((worker) => worker.runInProgress).length;
+  const taskWorkerCount = taskWorkers.size;
+  const projectName = trayProjectName();
+  const status = activeTaskCount > 0
+    ? `${activeTaskCount} DevPilot task${activeTaskCount === 1 ? '' : 's'} running`
+    : taskWorkerCount > 0
+      ? `${taskWorkerCount} project task${taskWorkerCount === 1 ? '' : 's'} ready`
+      : acpClient && acpClient.child.exitCode === null
+    ? `${acpRunInProgress ? 'DevPilot task running' : 'ACP running'}${projectName ? ` - ${projectName}` : ''}`
+    : 'Ready for a project';
+  tray.setToolTip(`DevPilot - ${status}`);
+  tray.setContextMenu(Menu.buildFromTemplate([
+    { label: 'Open DevPilot', click: showMainWindow },
+    { label: status, enabled: false },
+    { type: 'separator' },
+    {
+      label: 'Stop background tasks',
+      enabled: Boolean(acpClient || taskWorkers.size),
+      click: () => {
+        stopAcpProcess();
+        stopAllTaskWorkers();
+      },
+    },
+    { type: 'separator' },
+    {
+      label: 'Quit DevPilot',
+      click: () => {
+        isQuitting = true;
+        app.quit();
+      },
+    },
+  ]));
+}
+
+function createTray() {
+  if (tray) return tray;
+  tray = new Tray(getTrayIcon());
+  tray.on('click', showMainWindow);
+  tray.on('double-click', showMainWindow);
+  updateTray();
+  return tray;
+}
+
 function developmentRuntimeRoots() {
   const configured = String(process.env.DEVPILOT_DESKTOP_ROOT || '').trim();
   const roots = [
@@ -80,10 +241,13 @@ function resolveDevPilotRuntime() {
       : null;
   }
   const candidates = configured ? [configured] : developmentRuntimeRoots().flatMap((repository) => [
-    path.join(repository, '.venv', 'Scripts', 'devpilot.exe'),
-    path.join(repository, 'venv', 'Scripts', 'devpilot.exe'),
+    // The console-script shim can inherit Electron's process environment on
+    // Windows and fail before Python starts. Invoking the same installed
+    // package through its virtual-environment interpreter is deterministic.
     path.join(repository, '.venv', 'Scripts', 'python.exe'),
     path.join(repository, 'venv', 'Scripts', 'python.exe'),
+    path.join(repository, '.venv', 'Scripts', 'devpilot.exe'),
+    path.join(repository, 'venv', 'Scripts', 'devpilot.exe'),
   ]);
   for (const command of candidates) {
     if (!existsSync(command) || isElectronExecutable(command)) continue;
@@ -125,8 +289,8 @@ function getCodexAuthStatus() {
     runtimeReady: true,
     signedIn: result.status === 0,
     message: result.status === 0
-      ? 'Signed in with Codex.'
-      : 'Sign in with your ChatGPT account to use Codex.',
+      ? 'Signed in with ChatGPT.'
+      : 'Sign in with your ChatGPT account to use DevPilot.',
   };
 }
 
@@ -187,7 +351,9 @@ function stopAcpProcess() {
   acpClient = null;
   acpProcessProjectPath = null;
   acpSessionId = null;
+  acpRunInProgress = false;
   if (client) client.terminate();
+  updateTray();
 }
 
 function requestAcp(method, params, timeoutMs = 15_000) {
@@ -205,7 +371,7 @@ async function launchAcpSession(projectPath) {
 
   stopAcpProcess();
   const runtime = resolveDevPilotRuntime();
-  if (!runtime) throw new Error('DevPilot was not found in this repository.');
+  if (!runtime) throw new Error('DevPilot runtime is unavailable. Reinstall the desktop app.');
 
   const client = await AcpProcessClient.start({
     command: runtime.command,
@@ -220,10 +386,13 @@ async function launchAcpSession(projectPath) {
       acpClient = null;
       acpProcessProjectPath = null;
       acpSessionId = null;
+      acpRunInProgress = false;
+      updateTray();
     },
   });
   acpClient = client;
   acpProcessProjectPath = resolvedProjectPath;
+  updateTray();
 
   await requestAcp('initialize', {});
   const created = await requestAcp('session/new', { cwd: resolvedProjectPath });
@@ -231,7 +400,143 @@ async function launchAcpSession(projectPath) {
   if (!sessionId) throw new Error('DevPilot ACP did not return a session id.');
   acpSessionId = sessionId;
   persistLocalSession('idle');
+  updateTray();
   return { pid: client.child.pid, sessionId };
+}
+
+function stopTaskWorker(taskId, message = 'DevPilot task stopped.') {
+  const worker = taskWorkers.get(taskId);
+  if (!worker) return;
+  taskWorkers.delete(taskId);
+  worker.runInProgress = false;
+  if (!isQuitting) {
+    try {
+      const interrupted = updateTask(readWorkspace(), taskId, { status: 'interrupted', acpSessionId: null });
+      saveWorkspace(interrupted.workspace);
+    } catch {
+      // The task may have been removed already.
+    }
+  }
+  worker.client.terminate(message);
+  updateTray();
+}
+
+function stopAllTaskWorkers() {
+  for (const taskId of [...taskWorkers.keys()]) stopTaskWorker(taskId, 'DevPilot is quitting.');
+}
+
+function taskPromptOptions(task) {
+  const options = {};
+  if (task.model && task.model !== 'default') options.model = task.model;
+  if (task.reasoningEffort && task.reasoningEffort !== 'default') options.reasoning_effort = task.reasoningEffort;
+  return options;
+}
+
+async function ensureTaskWorker(taskId) {
+  const existing = taskWorkers.get(taskId);
+  if (existing && existing.client.child.exitCode === null && existing.sessionId) return existing;
+
+  const workspace = readWorkspace();
+  const found = findWorkspaceTask(workspace, taskId);
+  if (!found) throw new Error('This DevPilot task no longer exists.');
+  if (!existsSync(found.project.path) || !statSync(found.project.path).isDirectory()) {
+    throw new Error('The project folder is no longer accessible.');
+  }
+  const runtime = resolveDevPilotRuntime();
+  if (!runtime) throw new Error('The bundled DevPilot runtime is unavailable. Reinstall the desktop app.');
+
+  const client = await AcpProcessClient.start({
+    command: runtime.command,
+    args: [...runtime.argsPrefix, 'acp', '--stdio'],
+    cwd: found.project.path,
+    onUpdate: (update) => {
+      publicTaskUpdate(taskId, { type: 'acp-update', update });
+      const content = textFromTaskUpdate(update);
+      if (!content) return;
+      try {
+        const appended = appendTaskMessage(readWorkspace(), taskId, {
+          role: 'assistant',
+          text: content.text,
+          kind: content.kind,
+        });
+        saveWorkspace(appended.workspace);
+      } catch (error) {
+        addRuntimeLog(error instanceof Error ? error.message : String(error));
+      }
+    },
+    onStderr: addRuntimeLog,
+    onExit: () => {
+      const current = taskWorkers.get(taskId);
+      if (!current || current.client !== client) return;
+      taskWorkers.delete(taskId);
+      if (!isQuitting) {
+        try {
+          const updated = updateTask(readWorkspace(), taskId, {
+            status: current.runInProgress ? 'interrupted' : 'completed',
+            acpSessionId: null,
+          });
+          saveWorkspace(updated.workspace);
+        } catch {
+          // The task may have been removed while its process was shutting down.
+        }
+      }
+      updateTray();
+    },
+  });
+
+  const worker = { client, sessionId: null, projectId: found.project.id, projectPath: found.project.path, runInProgress: false };
+  taskWorkers.set(taskId, worker);
+  updateTray();
+  try {
+    await client.request('initialize', {});
+    const created = await client.request('session/new', { cwd: found.project.path });
+    const sessionId = String(created.sessionId || '').trim();
+    if (!sessionId) throw new Error('DevPilot ACP did not return a task session id.');
+    worker.sessionId = sessionId;
+    const updated = updateTask(readWorkspace(), taskId, { acpSessionId: sessionId, status: 'running' });
+    saveWorkspace(updated.workspace);
+    return worker;
+  } catch (error) {
+    taskWorkers.delete(taskId);
+    client.terminate('DevPilot could not initialize this task.');
+    updateTray();
+    throw error;
+  }
+}
+
+async function runTaskPrompt(taskId, prompt) {
+  let worker = null;
+  try {
+    worker = await ensureTaskWorker(taskId);
+    const workspace = readWorkspace();
+    const found = findWorkspaceTask(workspace, taskId);
+    if (!found) throw new Error('This DevPilot task no longer exists.');
+    worker.runInProgress = true;
+    updateTray();
+    publicTaskUpdate(taskId, { type: 'status', status: 'running' });
+    await worker.client.request('session/prompt', {
+      sessionId: worker.sessionId,
+      prompt: { text: prompt },
+      options: taskPromptOptions(found.task),
+    }, 0);
+    const completed = updateTask(readWorkspace(), taskId, { status: 'completed' });
+    saveWorkspace(completed.workspace);
+    publicTaskUpdate(taskId, { type: 'status', status: 'completed' });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'DevPilot could not run this task.';
+    try {
+      const appended = appendTaskMessage(readWorkspace(), taskId, { role: 'system', text: message });
+      const failed = updateTask(appended.workspace, taskId, { status: 'failed', acpSessionId: worker?.sessionId || null });
+      saveWorkspace(failed.workspace);
+    } catch {
+      // Preserve the original runtime error when persistence also fails.
+    }
+    publicTaskUpdate(taskId, { type: 'status', status: 'failed', error: message });
+    addRuntimeLog(message);
+  } finally {
+    if (worker) worker.runInProgress = false;
+    updateTray();
+  }
 }
 
 function startStaticServer(rootDir) {
@@ -260,11 +565,15 @@ function startStaticServer(rootDir) {
 
 async function createMainWindow() {
   const devUrl = parseDevUrl();
-  const frontend = devUrl ? { url: devUrl, stop: null } : await startStaticServer(path.join(process.resourcesPath, 'dist'));
+  const exportedUiRoot = app.isPackaged
+    ? path.join(process.resourcesPath, 'dist')
+    : path.resolve(__dirname, '../ui/dist');
+  const frontend = devUrl ? { url: devUrl, stop: null } : await startStaticServer(exportedUiRoot);
   staticServer = frontend.stop ? null : frontend.server;
   const allowedOrigin = new URL(frontend.url).origin;
   mainWindow = new BrowserWindow({
     title: 'DevPilot', width: 1280, height: 840, minWidth: 960, minHeight: 640, backgroundColor: '#F5F5F5', show: true,
+    icon: getWindowIcon(),
     webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true, webviewTag: false, preload: path.join(__dirname, 'preload.cjs') },
   });
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
@@ -273,6 +582,12 @@ async function createMainWindow() {
   });
   mainWindow.webContents.on('will-navigate', (event, url) => { if (new URL(url).origin !== allowedOrigin) event.preventDefault(); });
   mainWindow.once('ready-to-show', () => mainWindow?.show());
+  mainWindow.on('close', (event) => {
+    if (isQuitting) return;
+    event.preventDefault();
+    mainWindow?.hide();
+    updateTray();
+  });
   mainWindow.on('closed', () => { mainWindow = null; });
   await mainWindow.loadURL(frontend.url);
   // Some development-server navigations do not emit `ready-to-show` even
@@ -303,6 +618,68 @@ ipcMain.handle('devpilot:select-project', async (event) => {
   const result = await dialog.showOpenDialog(mainWindow, { properties: ['openDirectory', 'createDirectory'] });
   return result.canceled ? null : result.filePaths[0] || null;
 });
+ipcMain.handle('devpilot:get-workspace', (event) => {
+  if (!isTrustedSender(event)) throw new Error('Untrusted Electron renderer.');
+  return readWorkspace();
+});
+ipcMain.handle('devpilot:add-project', async (event) => {
+  if (!isTrustedSender(event)) throw new Error('Untrusted Electron renderer.');
+  const result = await dialog.showOpenDialog(mainWindow, {
+    title: 'Open a project in DevPilot',
+    buttonLabel: 'Open project',
+    properties: ['openDirectory', 'createDirectory'],
+  });
+  if (result.canceled || !result.filePaths[0]) return null;
+  const workspace = saveWorkspace(addProject(readWorkspace(), result.filePaths[0]));
+  return workspace;
+});
+ipcMain.handle('devpilot:activate-project', (event, projectId) => {
+  if (!isTrustedSender(event)) throw new Error('Untrusted Electron renderer.');
+  return saveWorkspace(selectWorkspaceProject(readWorkspace(), String(projectId || '')));
+});
+ipcMain.handle('devpilot:activate-task', (event, taskId) => {
+  if (!isTrustedSender(event)) throw new Error('Untrusted Electron renderer.');
+  const workspace = readWorkspace();
+  const found = findWorkspaceTask(workspace, String(taskId || ''));
+  if (!found) throw new Error('Unknown DevPilot task.');
+  workspace.selectedProjectId = found.project.id;
+  workspace.selectedTaskId = found.task.id;
+  return saveWorkspace(workspace);
+});
+ipcMain.handle('devpilot:create-task', (event, projectId, input) => {
+  if (!isTrustedSender(event)) throw new Error('Untrusted Electron renderer.');
+  const prompt = String(input?.prompt || '').trim();
+  const created = createTask(readWorkspace(), String(projectId || ''), input);
+  const workspace = saveWorkspace(created.workspace);
+  void runTaskPrompt(created.task.id, prompt);
+  return { workspace, task: created.task };
+});
+ipcMain.handle('devpilot:send-task-prompt', (event, taskId, prompt, input) => {
+  if (!isTrustedSender(event)) throw new Error('Untrusted Electron renderer.');
+  const text = String(prompt || '').trim();
+  if (!text) throw new Error('Describe what you would like DevPilot to work on.');
+  const appended = appendTaskMessage(readWorkspace(), String(taskId || ''), { role: 'user', text });
+  const updated = updateTask(appended.workspace, String(taskId || ''), {
+    status: 'starting',
+    model: String(input?.model || appended.task.model || 'default'),
+    reasoningEffort: String(input?.reasoningEffort || appended.task.reasoningEffort || 'medium'),
+  });
+  const workspace = saveWorkspace(updated.workspace);
+  void runTaskPrompt(String(taskId || ''), text);
+  return workspace;
+});
+ipcMain.handle('devpilot:cancel-task', async (event, taskId) => {
+  if (!isTrustedSender(event)) throw new Error('Untrusted Electron renderer.');
+  const id = String(taskId || '');
+  const worker = taskWorkers.get(id);
+  if (worker?.sessionId) {
+    await worker.client.request('session/cancel', { sessionId: worker.sessionId });
+    worker.runInProgress = false;
+  }
+  const updated = updateTask(readWorkspace(), id, { status: 'cancelled' });
+  updateTray();
+  return saveWorkspace(updated.workspace);
+});
 ipcMain.handle('devpilot:launch-acp', async (event, projectPath) => {
   if (!isTrustedSender(event)) throw new Error('Untrusted Electron renderer.');
   if (!projectPath || !existsSync(projectPath) || !statSync(projectPath).isDirectory()) throw new Error('Select an accessible local project directory.');
@@ -324,10 +701,14 @@ ipcMain.handle('devpilot:start-acp-prompt', async (event, sessionId, prompt) => 
   const text = String(prompt || '').trim();
   if (!text) throw new Error('Describe a research goal before starting a run.');
   persistLocalSession('running');
+  acpRunInProgress = true;
+  updateTray();
   try {
     return await requestAcp('session/prompt', { sessionId: acpSessionId, prompt: { text } }, 0);
   } finally {
+    acpRunInProgress = false;
     persistLocalSession('idle');
+    updateTray();
   }
 });
 ipcMain.handle('devpilot:cancel-acp-run', async (event, sessionId) => {
@@ -361,12 +742,19 @@ ipcMain.handle('devpilot:clear-runtime-logs', (event) => {
 app.whenReady().then(async () => {
   session.defaultSession.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false));
   session.defaultSession.setPermissionCheckHandler(() => false);
+  recoverInterruptedWorkspace();
+  createTray();
   await createMainWindow();
-  app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) void createMainWindow(); });
+  app.on('activate', showMainWindow);
 }).catch((error) => { console.error(error instanceof Error ? error.stack || error.message : String(error)); app.quit(); });
-app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
 app.on('before-quit', () => {
+  isQuitting = true;
   stopAcpProcess();
+  stopAllTaskWorkers();
   if (codexLoginProcess && codexLoginProcess.exitCode === null) codexLoginProcess.kill();
   if (staticServer) staticServer.close();
+  if (tray) {
+    tray.destroy();
+    tray = null;
+  }
 });
