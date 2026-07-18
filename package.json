@@ -25,7 +25,7 @@
     "test:importer": "node --test scripts/import-happier-desktop.test.mjs",
     "test:desktop-command": "node --test scripts/desktop-command.test.mjs",
     "test:branding": "node --experimental-strip-types --test packages/branding/src/brand.test.ts",
-    "test:runtime-discovery": "node --experimental-strip-types --test packages/devpilot-runtime/src/runtimeDiscovery.test.ts packages/devpilot-runtime/src/runtimeProbe.test.ts packages/devpilot-runtime/src/acpProcessClient.test.cjs",
+    "test:runtime-discovery": "node --experimental-strip-types --test packages/devpilot-runtime/src/runtimeDiscovery.test.ts packages/devpilot-runtime/src/runtimeProbe.test.ts packages/devpilot-runtime/src/acpProcessClient.test.cjs packages/devpilot-runtime/src/desktopRuntimeClient.test.cjs",
     "test:research": "node --experimental-strip-types --test packages/devpilot-research/src/*.test.ts"
   },
   "workspaces": {

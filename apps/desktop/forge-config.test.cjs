@@ -4,10 +4,10 @@ const test = require('node:test');
 
 const config = require('./forge.config.cjs');
 
-test('packages the reusable ACP process client beside the desktop resources', () => {
+test('packages the private DevPilot runtime client beside the desktop resources', () => {
   assert.ok(config.packagerConfig.asar);
   assert.ok(config.packagerConfig.extraResource.includes(
-    resolve(__dirname, '../../packages/devpilot-runtime/src/acpProcessClient.cjs'),
+    resolve(__dirname, '../../packages/devpilot-runtime/src/desktopRuntimeClient.cjs'),
   ));
 });
 

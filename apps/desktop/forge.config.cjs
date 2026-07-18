@@ -20,7 +20,7 @@ module.exports = {
       path.resolve(__dirname, '../ui/sources/assets/images/icon.png'),
       path.resolve(__dirname, '../ui/sources/assets/images/devpilot-bot.png'),
       path.resolve(__dirname, './runtime'),
-      path.resolve(__dirname, '../../packages/devpilot-runtime/src/acpProcessClient.cjs'),
+      path.resolve(__dirname, '../../packages/devpilot-runtime/src/desktopRuntimeClient.cjs'),
     ],
   },
   makers: [
