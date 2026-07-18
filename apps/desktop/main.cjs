@@ -53,28 +53,44 @@ function persistLocalSession(status = 'idle') {
   writeFileSync(localSessionRecordPath(), JSON.stringify(record), { encoding: 'utf8', mode: 0o600 });
 }
 
-function desktopRoot() {
-  return process.env.DEVPILOT_DESKTOP_ROOT || path.resolve(__dirname, '..', '..');
+function desktopRoots() {
+  const configured = String(process.env.DEVPILOT_DESKTOP_ROOT || '').trim();
+  const roots = [
+    configured,
+    // Development starts from the repository, while a packaged executable
+    // lives under AppData and must still find the local DevPilot checkout.
+    app.isPackaged ? null : path.resolve(__dirname, '..', '..'),
+    path.join(app.getPath('documents'), 'DevPilot'),
+  ].filter(Boolean).map((candidate) => path.resolve(candidate));
+  return [...new Set(roots)];
+}
+
+function isElectronExecutable(command) {
+  try {
+    return path.resolve(command).toLowerCase() === path.resolve(process.execPath).toLowerCase();
+  } catch {
+    return false;
+  }
 }
 
 function resolveDevPilotRuntime() {
   const configured = String(process.env.DEVPILOT_EXECUTABLE_PATH || '').trim();
-  const repository = desktopRoot();
-  const candidates = configured ? [configured] : [
+  const candidates = configured ? [configured] : desktopRoots().flatMap((repository) => [
     path.join(repository, '.venv', 'Scripts', 'devpilot.exe'),
     path.join(repository, 'venv', 'Scripts', 'devpilot.exe'),
     path.join(repository, '.venv', 'Scripts', 'python.exe'),
     path.join(repository, 'venv', 'Scripts', 'python.exe'),
-  ];
+  ]);
   for (const command of candidates) {
-    if (!existsSync(command)) continue;
+    if (!existsSync(command) || isElectronExecutable(command)) continue;
     const python = path.basename(command).toLowerCase() === 'python.exe';
     return { command, argsPrefix: python ? ['-m', 'devpilot.cli.app'] : [], source: configured ? 'configured' : 'repository-virtual-environment' };
   }
   const resolver = process.platform === 'win32' ? 'where.exe' : 'which';
   const name = process.platform === 'win32' ? 'devpilot.exe' : 'devpilot';
   const found = spawnSync(resolver, [name], { encoding: 'utf8', windowsHide: true });
-  const command = String(found.stdout || '').split(/\r?\n/).map((value) => value.trim()).find(Boolean);
+  const command = String(found.stdout || '').split(/\r?\n/).map((value) => value.trim())
+    .find((value) => value && !isElectronExecutable(value));
   return command ? { command, argsPrefix: [], source: 'path' } : null;
 }
 
