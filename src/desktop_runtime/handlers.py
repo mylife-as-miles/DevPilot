@@ -9,7 +9,9 @@ from importlib.metadata import PackageNotFoundError, version
 from typing import Any
 
 from .authentication import AuthenticationStatus, ChatGPTAuthentication
+from .changes import GitReviewError, inspect_git_changes, read_git_diff
 from .events import RuntimeEvent
+from .permissions import parse_sandbox
 from .projects import preflight_project
 from .protocol import ProtocolError, Request
 
@@ -65,6 +67,9 @@ class DesktopRuntimeHandlers:
             "run.cancel": self._run_cancel,
             "run.resume": self._run_resume,
             "run.status": self._run_status,
+            "changes.list": self._changes_list,
+            "changes.diff": self._changes_diff,
+            "migration.importLegacyWorkspace": self._migration_import_legacy_workspace,
         }
         handler = handlers.get(request.method)
         if handler is None:
@@ -168,8 +173,8 @@ class DesktopRuntimeHandlers:
     async def _conversation_create(self, params: Mapping[str, Any]) -> DispatchResult:
         project = await self._project_for(params, open_path=True)
         model = await self._model_from(params)
-        reasoning_effort = _optional_string(params, "reasoningEffort") or "high"
-        sandbox = _optional_string(params, "sandbox") or "workspace-write"
+        reasoning_effort = await self._reasoning_effort_from(model, _optional_string(params, "reasoningEffort") or "high")
+        sandbox = parse_sandbox(_optional_string(params, "sandbox") or "workspace-write").value
         try:
             conversation = await self._sdk.create_conversation(
                 cwd=project.path,
@@ -261,6 +266,26 @@ class DesktopRuntimeHandlers:
         conversation = await self._conversation_for(params)
         return DispatchResult({"conversationId": conversation.record.id, "runId": conversation.record.active_run_id, "state": conversation.record.state, "running": conversation.running})
 
+    async def _changes_list(self, params: Mapping[str, Any]) -> DispatchResult:
+        project = await self._project_for(params)
+        return DispatchResult({"changes": inspect_git_changes(project.path).as_protocol()})
+
+    async def _changes_diff(self, params: Mapping[str, Any]) -> DispatchResult:
+        project = await self._project_for(params)
+        file_path = _optional_string(params, "path")
+        scope = _optional_string(params, "scope") or "combined"
+        try:
+            return DispatchResult({"diff": read_git_diff(project.path, file_path=file_path, scope=scope)})
+        except GitReviewError as exc:
+            raise ProtocolError("invalid_review", str(exc)) from exc
+
+    async def _migration_import_legacy_workspace(self, params: Mapping[str, Any]) -> DispatchResult:
+        workspace = params.get("workspace")
+        if not isinstance(workspace, Mapping):
+            raise ProtocolError("invalid_request", "A legacy workspace object is required.")
+        model = await self._model_from({})
+        return DispatchResult(await self._sdk.import_legacy_workspace(workspace, fallback_model=model))
+
     async def _project_for(self, params: Mapping[str, Any], *, open_path: bool = False):
         raw_project_id = _optional_string(params, "projectId")
         if raw_project_id:
@@ -298,6 +323,18 @@ class DesktopRuntimeHandlers:
         if not model or model not in allowed:
             raise ProtocolError("invalid_model", "Choose a Codex model available to your ChatGPT account.")
         return model
+
+    async def _reasoning_effort_from(self, model: str, requested: str) -> str:
+        listed = await self._models_list({})
+        for candidate in listed.result.get("models", []):
+            if not isinstance(candidate, Mapping) or candidate.get("id") != model:
+                continue
+            efforts = candidate.get("reasoningEfforts")
+            allowed = {str(value) for value in efforts} if isinstance(efforts, list) else set()
+            if requested in allowed:
+                return requested
+            raise ProtocolError("invalid_reasoning_effort", "Choose a reasoning effort supported by the selected Codex model.")
+        raise ProtocolError("invalid_model", "Choose a Codex model available to your ChatGPT account.")
 
     def _watch_conversation(self, conversation: Any) -> None:
         key = (conversation.project.id, conversation.record.id)

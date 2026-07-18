@@ -196,6 +196,9 @@ class DevPilotSDK:
     async def delete_conversation(self, project_id: str, conversation_id: str) -> bool:
         return await self._conversations.delete(project_id, conversation_id)
 
+    async def import_legacy_workspace(self, workspace: Mapping[str, Any], *, fallback_model: str):
+        return await self._conversations.import_legacy_workspace(workspace, fallback_model=fallback_model)
+
     async def shutdown(self) -> None:
         """Persist/cancel live conversations before the desktop process exits."""
         await self._conversations.shutdown()

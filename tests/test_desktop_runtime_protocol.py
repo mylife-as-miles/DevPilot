@@ -3,10 +3,13 @@ from __future__ import annotations
 import asyncio
 import io
 import json
+import subprocess
+
+import pytest
 
 from devpilot.desktop_runtime.authentication import AuthenticationStatus
 from devpilot.desktop_runtime.handlers import DesktopRuntimeHandlers
-from devpilot.desktop_runtime.protocol import Request
+from devpilot.desktop_runtime.protocol import ProtocolError, Request
 from devpilot.desktop_runtime.server import DesktopRuntimeServer
 from devpilot.sdk import DevPilotSDK
 
@@ -149,3 +152,56 @@ def test_desktop_runtime_exposes_project_and_conversation_domain(tmp_path, monke
         assert any(event.name == "conversation.pinned" for event in emitted)
 
     asyncio.run(scenario())
+
+
+def test_desktop_runtime_reads_local_git_review_data_from_the_project_folder(tmp_path) -> None:
+    repository = tmp_path / "review-project"
+    repository.mkdir()
+    _git(repository, "init")
+    _git(repository, "config", "user.email", "devpilot@example.test")
+    _git(repository, "config", "user.name", "DevPilot Test")
+    tracked = repository / "app.py"
+    tracked.write_text("print('before')\n", encoding="utf-8")
+    _git(repository, "add", "app.py")
+    _git(repository, "commit", "-m", "Initial project")
+    tracked.write_text("print('after')\n", encoding="utf-8")
+
+    async def scenario() -> None:
+        sdk = DevPilotSDK(project_registry_path=tmp_path / "desktop-projects.json")
+        handlers = DesktopRuntimeHandlers(sdk=sdk, authentication=FakeAuthentication())
+        opened = await handlers.dispatch(Request("open", "project.open", {"path": str(repository)}))
+        project_id = opened.result["project"]["projectId"]
+
+        listed = await handlers.dispatch(Request("changes", "changes.list", {"projectId": project_id}))
+        changes = listed.result["changes"]
+        assert changes["available"] is True
+        assert changes["dirty"] is True
+        assert changes["branch"]
+        assert changes["files"] == [{
+            "path": "app.py",
+            "status": "M",
+            "additions": 1,
+            "deletions": 1,
+            "included": False,
+            "pending": True,
+        }]
+
+        diff = await handlers.dispatch(Request("diff", "changes.diff", {
+            "projectId": project_id,
+            "path": "app.py",
+            "scope": "combined",
+        }))
+        assert "-print('before')" in diff.result["diff"]["diff"]
+        assert "+print('after')" in diff.result["diff"]["diff"]
+
+        with pytest.raises(ProtocolError, match="not a changed file"):
+            await handlers.dispatch(Request("bad-diff", "changes.diff", {
+                "projectId": project_id,
+                "path": "outside.py",
+            }))
+
+    asyncio.run(scenario())
+
+
+def _git(cwd, *arguments: str) -> None:
+    subprocess.run(["git", "-C", str(cwd), *arguments], check=True, capture_output=True, text=True)

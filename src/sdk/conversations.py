@@ -521,10 +521,102 @@ class ConversationStore:
         conversation.archive(True)
         return True
 
+    async def import_legacy_workspace(self, workspace: Mapping[str, Any], *, fallback_model: str) -> dict[str, Any]:
+        """Import the old Electron task store without retaining ACP identity.
+
+        The source file stays untouched here.  Electron writes a backup and a
+        completion marker only after this method returns successfully.
+        """
+        projects = workspace.get("projects") if isinstance(workspace.get("projects"), list) else []
+        legacy_project_ids: dict[str, str] = {}
+        legacy_task_ids: dict[str, tuple[str, str]] = {}
+        imported_conversations = 0
+        for raw_project in projects:
+            if not isinstance(raw_project, Mapping):
+                continue
+            raw_path = raw_project.get("path")
+            if not isinstance(raw_path, str) or not raw_path.strip() or not Path(raw_path).is_dir():
+                continue
+            project = self._projects.open(raw_path)
+            raw_project_id = str(raw_project.get("id") or "").strip()
+            if raw_project_id:
+                legacy_project_ids[raw_project_id] = project.id
+            marker_path = Path(project.path) / ".devpilot" / "migrations" / "workspace-v1.json"
+            marker = _read_json(marker_path) or {}
+            task_map = marker.get("taskMap") if isinstance(marker.get("taskMap"), dict) else {}
+            changed = False
+            raw_tasks = raw_project.get("tasks") if isinstance(raw_project.get("tasks"), list) else []
+            for raw_task in raw_tasks:
+                if not isinstance(raw_task, Mapping):
+                    continue
+                legacy_task_id = str(raw_task.get("id") or "").strip()
+                if not legacy_task_id:
+                    continue
+                mapped = task_map.get(legacy_task_id)
+                if isinstance(mapped, str) and mapped:
+                    legacy_task_ids[legacy_task_id] = (project.id, mapped)
+                    continue
+                record = self._legacy_record(project, raw_task, fallback_model=fallback_model)
+                conversation = DevPilotConversation(self._sdk, project, record)
+                conversation.directory.mkdir(parents=True, exist_ok=False)
+                _atomic_json_write(conversation.record_path, _record_payload(record))
+                raw_messages = raw_task.get("messages") if isinstance(raw_task.get("messages"), list) else []
+                for raw_message in raw_messages:
+                    message = _legacy_message(raw_message, conversation_id=record.id)
+                    if message is not None:
+                        _append_json_line(conversation.messages_path, message.as_protocol())
+                task_map[legacy_task_id] = record.id
+                legacy_task_ids[legacy_task_id] = (project.id, record.id)
+                imported_conversations += 1
+                changed = True
+            if changed or not marker_path.exists():
+                _atomic_json_write(marker_path, {
+                    "schemaVersion": 1,
+                    "source": "devpilot-workspace.json",
+                    "taskMap": task_map,
+                    "migratedAt": _now(),
+                })
+
+        selected_project = legacy_project_ids.get(str(workspace.get("selectedProjectId") or ""))
+        selected_task = legacy_task_ids.get(str(workspace.get("selectedTaskId") or ""))
+        return {
+            "importedConversations": imported_conversations,
+            "selectedProjectId": selected_task[0] if selected_task else selected_project,
+            "selectedConversationId": selected_task[1] if selected_task else None,
+        }
+
     async def shutdown(self) -> None:
         for conversation in tuple(self._live.values()):
             if conversation.running:
                 await conversation.cancel()
+
+    def _legacy_record(self, project: ProjectRecord, task: Mapping[str, Any], *, fallback_model: str) -> ConversationRecord:
+        now = _now()
+        created_at = _number(task.get("createdAt"), now)
+        status = str(task.get("status") or "interrupted")
+        state = {
+            "draft": "idle",
+            "starting": "interrupted",
+            "running": "interrupted",
+            "completed": "completed",
+            "failed": "failed",
+            "cancelled": "cancelled",
+            "interrupted": "interrupted",
+        }.get(status, "interrupted")
+        configured_model = str(task.get("model") or "").strip()
+        return ConversationRecord(
+            id=f"conversation-{uuid4()}",
+            project_id=project.id,
+            title=str(task.get("title") or "New conversation").strip() or "New conversation",
+            state=state,
+            created_at=created_at,
+            updated_at=_number(task.get("updatedAt"), created_at),
+            provider="codex",
+            model=configured_model if configured_model and configured_model != "default" else fallback_model,
+            reasoning_effort=str(task.get("reasoningEffort") or "high").strip() or "high",
+            sandbox="workspace-write",
+            last_error="Interrupted while migrating the previous desktop runtime." if state == "interrupted" else None,
+        )
 
 
 def _number(value: object, fallback: float) -> float:
@@ -595,3 +687,22 @@ def _safe_error(error: BaseException) -> str:
 def _title_from_prompt(prompt: str) -> str:
     compact = " ".join(prompt.split())
     return compact[:72] + ("…" if len(compact) > 72 else "")
+
+
+def _legacy_message(raw_message: object, *, conversation_id: str) -> ConversationMessage | None:
+    if not isinstance(raw_message, Mapping):
+        return None
+    text = raw_message.get("text")
+    if not isinstance(text, str) or not text.strip():
+        return None
+    role = str(raw_message.get("role") or "system")
+    if role not in {"user", "assistant", "system"}:
+        role = "system"
+    return ConversationMessage(
+        id=f"message-{uuid4()}",
+        turn_id=f"legacy-{conversation_id}",
+        role=role,
+        text=text.strip(),
+        created_at=_number(raw_message.get("createdAt"), _now()),
+        kind="thinking" if raw_message.get("kind") == "thinking" else "message",
+    )

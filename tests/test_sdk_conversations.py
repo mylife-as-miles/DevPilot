@@ -141,3 +141,44 @@ def test_projects_and_conversations_are_isolated_and_restore_after_runtime_resta
         assert restored.project.path == str(first_project.resolve())
 
     asyncio.run(restore())
+
+
+def test_legacy_workspace_migration_preserves_messages_without_acp_identity(tmp_path: Path) -> None:
+    project = tmp_path / "legacy-project"
+    project.mkdir()
+    sdk, _sessions = _sdk_with_fake_sessions(tmp_path)
+    workspace = {
+        "selectedProjectId": "old-project",
+        "selectedTaskId": "old-task",
+        "projects": [{
+            "id": "old-project",
+            "path": str(project),
+            "tasks": [{
+                "id": "old-task",
+                "title": "Fix old task storage",
+                "status": "running",
+                "acpSessionId": "must-not-survive",
+                "model": "default",
+                "reasoningEffort": "high",
+                "messages": [
+                    {"role": "user", "text": "First prompt", "createdAt": 10},
+                    {"role": "assistant", "text": "Prior result", "createdAt": 20},
+                ],
+            }],
+        }],
+    }
+
+    async def scenario() -> None:
+        migrated = await sdk.import_legacy_workspace(workspace, fallback_model="codex-test")
+        assert migrated["importedConversations"] == 1
+        assert migrated["selectedProjectId"]
+        assert migrated["selectedConversationId"]
+        restored = await sdk.open_conversation(migrated["selectedProjectId"], migrated["selectedConversationId"])
+        assert restored.record.state == "interrupted"
+        assert restored.record.model == "codex-test"
+        assert [message.text for message in restored.messages()] == ["First prompt", "Prior result"]
+        assert "acp" not in restored.record.id.lower()
+        second = await sdk.import_legacy_workspace(workspace, fallback_model="codex-test")
+        assert second["importedConversations"] == 0
+
+    asyncio.run(scenario())

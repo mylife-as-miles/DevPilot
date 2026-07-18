@@ -204,10 +204,10 @@ import { useAutomationsSupport } from '@/hooks/server/useAutomationsSupport';
 import { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExecutor';
 import { executeSessionComposerResolution } from '@/sync/domains/input/slashCommands/executeSessionComposerResolution';
 import {
-    abortDevPilotLocalAcpSession,
-    isDevPilotLocalAcpSession,
-    submitDevPilotLocalAcpPrompt,
-} from '@/config/devpilotLocalAcpSession';
+    abortDevPilotLocalConversation,
+    isDevPilotLocalConversation,
+    submitDevPilotLocalConversationMessage,
+} from '@/config/devpilotLocalConversation';
 import { sessionGoalClear, sessionGoalSet } from '@/sync/ops/sessionGoals';
 import {
     readSessionWorkStateFromMetadata,
@@ -3961,8 +3961,8 @@ function SessionViewLoaded({
     }, [buildCurrentSessionHref, multiPaneDeviceType, multiPaneEnabled, pane.openRight, pane.setRightTab, router, windowWidth]);
     const handleAgentInputFileViewerPress = useStableAgentInputFileViewerPress(openFileViewer);
     const handleAgentInputAbort = React.useCallback(() => {
-        if (isDevPilotLocalAcpSession(session)) {
-            void abortDevPilotLocalAcpSession(sessionId).catch((error) => {
+        if (isDevPilotLocalConversation(session)) {
+            void abortDevPilotLocalConversation(sessionId).catch((error) => {
                 Modal.alert(t('common.error'), error instanceof Error ? error.message : 'DevPilot cancellation failed.');
             });
             return;
@@ -4104,9 +4104,9 @@ function SessionViewLoaded({
             const shouldSendReviewComments = hasIncludedReviewCommentDrafts;
             const hasAttachments = attachmentsUploadsEnabled && attachmentDrafts.length > 0;
             const participantRecipient = recipientState.recipient;
-            const isLocalDevPilotAcpSession = isDevPilotLocalAcpSession(session);
+            const isLocalDevPilotConversation = isDevPilotLocalConversation(session);
 
-            if (isLocalDevPilotAcpSession && (participantRecipient || shouldSendReviewComments || hasAttachments)) {
+            if (isLocalDevPilotConversation && (participantRecipient || shouldSendReviewComments || hasAttachments)) {
                 Modal.alert(
                     t('common.error'),
                     'Local DevPilot ACP sessions support text prompts only right now.',
@@ -4386,11 +4386,11 @@ function SessionViewLoaded({
 
             if (!outbound) return;
 
-            if (isLocalDevPilotAcpSession) {
+            if (isLocalDevPilotConversation) {
                 setIsComposerSendPending(true);
                 fireAndForget((async () => {
                     try {
-                        await submitDevPilotLocalAcpPrompt(sessionId, outbound.text);
+                        await submitDevPilotLocalConversationMessage(sessionId, outbound.text);
                         clearAfterOutboundHandoff();
                         recordOutboundAccepted();
                     } catch (e) {
@@ -4399,7 +4399,7 @@ function SessionViewLoaded({
                     } finally {
                         setIsComposerSendPending(false);
                     }
-                })(), { tag: 'SessionView.sendMessage.devpilotLocalAcp' });
+                })(), { tag: 'SessionView.sendMessage.devpilotLocalConversation' });
                 return;
             }
 

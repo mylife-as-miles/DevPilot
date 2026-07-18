@@ -1,6 +1,6 @@
 import * as React from 'react';
-import { useLocalSearchParams } from 'expo-router';
 import { View } from 'react-native';
+import { useLocalSearchParams } from 'expo-router';
 import { SessionView } from '@/components/sessions/shell/SessionView';
 import { SessionInvalidLinkFallback } from '@/components/sessions/shell/SessionInvalidLinkFallback';
 import type { AttachmentDraft } from '@/components/sessions/attachments/attachmentDraftModel';
@@ -16,15 +16,7 @@ import { resolveSessionRouteAuthRecoveryState } from '@/hooks/session/sessionRou
 import { useSessionRouteServerScope } from '@/hooks/session/sessionRouteServerScope';
 import { useHydrateSessionForRoute } from '@/hooks/session/useHydrateSessionForRoute';
 import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
-import {
-    DEVPILOT_LOCAL_SERVER_ID,
-    ensureDevPilotLocalAcpSessionSeeded,
-    isDevPilotLocalAcpRoute,
-    useDevPilotLocalAcpSessionBridge,
-    useDevPilotLocalWorkspaceBridge,
-} from '@/config/devpilotLocalAcpSession';
 import { isElectronDesktop } from '@/config/devpilotServices';
-import { isLocalDevPilotDesktopMode, readDevPilotLocalSession, useDevPilotLocalSession } from '@/config/devpilotLocalSession';
 import { markSessionRouteEnteredForSessionUiTelemetry } from '@/sync/runtime/performance/sessionUiTelemetry';
 import {
     isSessionRouteHydrationAvailable,
@@ -37,6 +29,7 @@ import {
     useSyncError,
 } from '@/sync/domains/state/storage';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
+import { DevPilotDesktopApp } from '@/devpilot/DevPilotDesktopApp';
 
 type SessionRouteParams = Readonly<{
     id?: string | string[];
@@ -104,10 +97,10 @@ const SessionRoute = React.memo(function SessionRoute() {
             : Array.isArray(sessionIdParam)
                 ? (sessionIdParam[0] ?? '')
                 : '').trim();
-    const localDevPilotSession = useDevPilotLocalSession() ?? readDevPilotLocalSession();
-
-    if ((isElectronDesktop() || isLocalDevPilotDesktopMode()) && isDevPilotLocalAcpRoute(sessionId, localDevPilotSession)) {
-        return <LocalDevPilotSessionRoute sessionId={sessionId} />;
+    // The Electron app owns its native conversation navigation.  A stale hosted
+    // session URL must never bring back the former local-session/ACP surface.
+    if (isElectronDesktop()) {
+        return <DevPilotDesktopApp />;
     }
 
     return <RemoteSessionRoute params={params} sessionId={sessionId} />;
@@ -248,39 +241,6 @@ function RemoteSessionRoute({
             initialAttachmentDrafts={recoverableAttachmentDrafts}
             routeAnchorOverride={true}
             routeHydrationState={routeHydrationState}
-        />
-    );
-}
-
-function LocalDevPilotSessionRoute({ sessionId }: Readonly<{ sessionId: string }>) {
-    const localSession = useDevPilotLocalSession() ?? readDevPilotLocalSession();
-    useDevPilotLocalAcpSessionBridge(localSession);
-    useDevPilotLocalWorkspaceBridge(true);
-
-    React.useEffect(() => {
-        ensureDevPilotLocalAcpSessionSeeded(localSession);
-    }, [
-        localSession?.acpPid,
-        localSession?.acpSessionId,
-        localSession?.connectedAt,
-        localSession?.projectPath,
-    ]);
-
-    if (!sessionId) {
-        return <SessionInvalidLinkFallback />;
-    }
-
-    return (
-        <SessionCockpitShell
-            sessionId={sessionId}
-            scopeId={`session:${sessionId}`}
-            surface="chat"
-            routeServerId={DEVPILOT_LOCAL_SERVER_ID}
-            routeHydrationState={{
-                kind: 'available',
-                sessionId,
-                serverId: DEVPILOT_LOCAL_SERVER_ID,
-            }}
         />
     );
 }

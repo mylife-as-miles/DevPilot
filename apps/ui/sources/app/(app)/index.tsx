@@ -40,10 +40,11 @@ import {
 
 import { shouldAutoRedirectToSetupOnFirstLaunch } from "@/utils/navigation/firstLaunchSetupRedirectPolicy";
 import { isElectronDesktop } from '@/config/devpilotServices';
+import { DevPilotDesktopApp } from '@/devpilot/DevPilotDesktopApp';
 import { isLocalDevPilotDesktopMode } from '@/config/devpilotLocalSession';
 import {
-    useDevPilotLocalWorkspaceBridge,
-} from '@/config/devpilotLocalAcpSession';
+    useDevPilotConversationWorkspaceBridge,
+} from '@/config/devpilotLocalConversation';
 import { useDevPilotLocalWorkspaceActive } from '@/config/devpilotLocalWorkspace';
 
 const DEFAULT_WELCOME_SERVER_CHECK_TIMEOUT_MS = 6_000;
@@ -66,6 +67,9 @@ function readWelcomeServerCheckRetryDelayMs(): number {
 }
 
 export default function Home() {
+    if (isElectronDesktop()) {
+        return <DevPilotDesktopApp />;
+    }
     const auth = useAuth();
     const localWorkspaceActive = useDevPilotLocalWorkspaceActive();
     if (!auth.isAuthenticated && (isElectronDesktop() || isLocalDevPilotDesktopMode()) && localWorkspaceActive) {
@@ -88,7 +92,7 @@ function Authenticated() {
 }
 
 function AuthenticatedLocalDevPilotWorkspace() {
-    useDevPilotLocalWorkspaceBridge(true);
+    useDevPilotConversationWorkspaceBridge(true);
     return <MainView variant="phone" />;
 }
 

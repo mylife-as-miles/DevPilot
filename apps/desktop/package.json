@@ -14,7 +14,7 @@
     "prepare:runtime": "node scripts/prepare-python-runtime.cjs",
     "package": "yarn prepare:runtime && electron-forge package",
     "make": "yarn prepare:runtime && electron-forge make",
-    "verify": "node --check main.cjs && node --check preload.cjs && node --check workspace-store.cjs && node --test desktop-shell.test.cjs forge-config.test.cjs workspace-store.test.cjs"
+    "verify": "node --check main.cjs && node --check preload.cjs && node --check conversation-preferences.cjs && node --test desktop-shell.test.cjs forge-config.test.cjs conversation-preferences.test.cjs"
   },
   "devDependencies": {
     "electron": "43.1.1"

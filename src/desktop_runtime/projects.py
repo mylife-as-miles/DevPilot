@@ -56,4 +56,11 @@ def preflight_project(raw_path: str | Path) -> ProjectPreflight:
         return ProjectPreflight(path, True, False, None, None, True)
     _, branch = git_output("branch", "--show-current")
     status_code, status = git_output("status", "--porcelain=v1")
-    return ProjectPreflight(path, True, True, branch or None, status != "" if status_code == 0 else None, True)
+    if status_code != 0:
+        dirty: bool | None = None
+    else:
+        dirty = any(
+            len(line) >= 4 and not (line[3:] == ".devpilot" or line[3:].startswith(".devpilot/"))
+            for line in status.splitlines()
+        )
+    return ProjectPreflight(path, True, True, branch or None, dirty, True)
