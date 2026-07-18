@@ -148,6 +148,20 @@ def test_desktop_runtime_exposes_project_and_conversation_domain(tmp_path, monke
             "pinned": True,
         }))
         assert pinned.result["conversation"]["pinned"] is True
+        with pytest.raises(ProtocolError, match="Sandbox"):
+            await handlers.dispatch(Request("invalid-sandbox", "conversation.create", {
+                "projectId": project["projectId"],
+                "model": "configured-codex-model",
+                "reasoningEffort": "high",
+                "sandbox": "anywhere",
+            }))
+        with pytest.raises(ProtocolError, match="reasoning effort"):
+            await handlers.dispatch(Request("invalid-reasoning", "conversation.create", {
+                "projectId": project["projectId"],
+                "model": "configured-codex-model",
+                "reasoningEffort": "unbounded",
+                "sandbox": "workspace-write",
+            }))
         assert any(event.name == "conversation.renamed" for event in emitted)
         assert any(event.name == "conversation.pinned" for event in emitted)
 
