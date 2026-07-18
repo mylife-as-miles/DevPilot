@@ -219,6 +219,35 @@ const existingWatchFolders = Array.isArray(config.watchFolders) ? config.watchFo
 config.watchFolders = existingWatchFolders.filter(
   (folder, index, all) => typeof folder === 'string' && folder.length > 0 && all.indexOf(folder) === index,
 );
+
+// Sentry's monorepo defaults add every Yarn workspace to Metro's watcher. That
+// leaves a local Electron launch idle while Windows opens tens of thousands of
+// handles for unrelated CLI, stack, and mobile workspaces. Keep the local
+// DevPilot desktop's workspace set intentional, while retaining the root
+// node_modules tree: Metro needs it to hash hoisted and transitive modules.
+const isDevPilotDesktopRun = /^(1|true|yes|on)$/i.test(
+  String(process.env.EXPO_PUBLIC_DEVPILOT_DESKTOP ?? '').trim(),
+);
+if (isDevPilotDesktopRun) {
+  const desktopRuntimeRoots = new Set([
+    path.resolve(__dirname),
+    path.resolve(__dirname, "../desktop"),
+    rootNodeModules,
+    path.resolve(__dirname, '../../packages/branding'),
+    path.resolve(__dirname, '../../packages/devpilot-research'),
+    path.resolve(__dirname, '../../packages/agents'),
+    path.resolve(__dirname, '../../packages/audio-stream-native'),
+    path.resolve(__dirname, '../../packages/cli-common'),
+    path.resolve(__dirname, '../../packages/connection-supervisor'),
+    path.resolve(__dirname, '../../packages/protocol'),
+    path.resolve(__dirname, '../../packages/release-runtime'),
+    path.resolve(__dirname, '../../packages/sherpa-native'),
+    path.resolve(__dirname, '../../packages/transfers'),
+  ].map((folder) => path.normalize(folder)));
+  config.watchFolders = config.watchFolders.filter((folder) =>
+    desktopRuntimeRoots.has(path.normalize(folder)),
+  );
+}
 const generatedWorkletsWatchFolders = resolveGeneratedWorkletsWatchFolders() || [];
 for (const generatedWorkletsWatchFolder of generatedWorkletsWatchFolders) {
   if (!config.watchFolders.includes(generatedWorkletsWatchFolder)) {
@@ -276,6 +305,7 @@ const expoSystemUiWebStub = path.resolve(__dirname, "sources/platform/stubs/expo
 const expoAsyncRequireSetupShim = path.resolve(__dirname, "sources/dev/webHmrOptOut/expoAsyncRequireSetupShim.ts");
 const expoMessageSocketShim = path.resolve(__dirname, "sources/dev/webHmrOptOut/expoMessageSocketShim.ts");
 const workspaceEntryPoint = path.resolve(__dirname, "index.ts");
+const devpilotDesktopClient = path.resolve(__dirname, "../desktop/src/client.ts");
 
 function isExpoModuleOrigin(originModulePath, suffixes) {
   const origin = String(originModulePath ?? "");
@@ -303,6 +333,13 @@ config.resolver.resolveRequest = (context, moduleName, platform) => {
 
   const generatedWorkletResolution = resolveGeneratedWorkletModule(moduleName);
   if (generatedWorkletResolution) return generatedWorkletResolution;
+
+  // TypeScript uses the workspace package declaration while the development
+  // bundle reads the typed IPC boundary directly.  Metro does not apply the
+  // TypeScript `paths` mapping, so make the same mapping explicit here.
+  if (moduleName === "@devpilot/desktop/client") {
+    return { type: "sourceFile", filePath: devpilotDesktopClient };
+  }
 
   // Fix event-target-shim/index import - exports define "." not "./index"
   let resolvedModuleName = moduleName;
