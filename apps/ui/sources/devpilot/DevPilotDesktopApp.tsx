@@ -1,6 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import * as React from 'react';
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, Image, ImageBackground, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import {
     getDesktopClient,
@@ -271,6 +271,53 @@ export const DevPilotDesktopApp = React.memo(function DevPilotDesktopApp(): Reac
 function SignInScreen(props: Readonly<{ busy: boolean; error: string | null; onSignIn: () => void }>) {
     return (
         <View style={styles.authShell} testID="devpilot-chatgpt-onboarding">
+            <ImageBackground source={require('../assets/onboarding/planet-dark.jpg')} resizeMode="cover" style={styles.authHero} imageStyle={styles.authHeroImage}>
+                <View style={styles.authHeroShade} />
+                <View style={styles.authHeroContent}>
+                    <View style={styles.authBrand}>
+                        <Image source={require('../assets/images/devpilot-bot.png')} style={styles.authBrandImage} />
+                        <Text style={styles.authBrandName}>DevPilot</Text>
+                    </View>
+                    <View style={styles.authHeroCopy}>
+                        <Text style={styles.authHeroTitle}>Start locally.{"\n"}<Text style={styles.authHeroMuted}>Build autonomously.</Text></Text>
+                        <Text style={styles.authHeroBody}>Launch research runs, monitor Executors, inspect hypotheses, and review every change from one desktop workspace.</Text>
+                        <Text style={styles.authHeroMeta}>◇ Hypotheses   ▶ Executors   ▣ Evidence   ⌁ Git</Text>
+                        <Text style={styles.authHeroMeta}>LOCAL-FIRST   ·   OPEN SOURCE   ·   SELF-HOSTABLE</Text>
+                    </View>
+                </View>
+            </ImageBackground>
+            <View style={styles.authPanel}>
+                <View style={styles.authPanelContent}>
+                    <Text style={styles.onboardingTitle}>Welcome.{"\n"}<Text style={styles.onboardingTitleMuted}>First time here?</Text></Text>
+                    <Text style={styles.onboardingBody}>DevPilot is the graphical control plane for your local coding projects.</Text>
+                    <Pressable disabled={props.busy} onPress={props.onSignIn} style={[styles.authAction, styles.authActionPrimary, props.busy ? styles.disabled : null]}>
+                        <View style={styles.flex}>
+                            <Text style={styles.authActionTitle}>{props.busy ? 'Waiting for ChatGPT sign-in...' : 'Continue with ChatGPT'}</Text>
+                            <Text style={styles.authActionCopy}>Use your ChatGPT account with Codex.</Text>
+                        </View>
+                        {props.busy ? <ActivityIndicator color="#F5F2F2" /> : <Ionicons name="arrow-forward" size={22} color="#F5F2F2" />}
+                    </Pressable>
+                    <Pressable disabled={props.busy} onPress={props.onSignIn} style={[styles.authAction, props.busy ? styles.disabled : null]}>
+                        <View style={styles.flex}>
+                            <Text style={styles.authActionTitle}>I already use ChatGPT</Text>
+                            <Text style={styles.authActionCopy}>Sign in securely in your browser.</Text>
+                        </View>
+                        <Ionicons name="log-in-outline" size={20} color="#D6D0D0" />
+                    </Pressable>
+                    {props.error ? <Text style={styles.onboardingErrorText}>{props.error}</Text> : null}
+                </View>
+                <View style={styles.authPanelFooter}>
+                    <Text style={styles.authFooterCopy}>Your projects stay local.</Text>
+                    <Text style={styles.authFooterCopy}>Need help?   Docs</Text>
+                </View>
+            </View>
+        </View>
+    );
+}
+
+function LegacySignInScreen(props: Readonly<{ busy: boolean; error: string | null; onSignIn: () => void }>) {
+    return (
+        <View style={styles.authShell} testID="devpilot-chatgpt-onboarding">
             <View style={styles.authCard}>
                 <View style={styles.logoTile}><Ionicons name="hardware-chip-outline" size={32} color="#43B5FF" /></View>
                 <Text style={styles.authKicker}>DEVPILOT DESKTOP</Text>
@@ -287,6 +334,10 @@ function SignInScreen(props: Readonly<{ busy: boolean; error: string | null; onS
 }
 
 function LoadingScreen() {
+    return <View style={styles.loadingShell}><ActivityIndicator color="#43B5FF" size="large" /><Text style={styles.loadingText}>Starting DevPilot...</Text></View>;
+}
+
+function LegacyLoadingScreen() {
     return <View style={styles.authShell}><ActivityIndicator color="#43B5FF" size="large" /><Text style={styles.loadingText}>Starting DevPilot…</Text></View>;
 }
 
@@ -467,7 +518,32 @@ function messageFrom(error: unknown) { return error instanceof Error ? error.mes
 
 const styles = StyleSheet.create({
     shell: { flex: 1, flexDirection: 'row', backgroundColor: '#0D1117' },
-    authShell: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 28, backgroundColor: '#0D1117' },
+    authShell: { flex: 1, flexDirection: 'row', backgroundColor: '#151313' },
+    loadingShell: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: '#151313' },
+    authHero: { flex: 2.08, minWidth: 560, overflow: 'hidden', backgroundColor: '#05070F' },
+    authHeroImage: { opacity: 0.96 },
+    authHeroShade: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(1, 3, 12, 0.18)' },
+    authHeroContent: { flex: 1, justifyContent: 'space-between', paddingHorizontal: 48, paddingTop: 46, paddingBottom: 46 },
+    authBrand: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+    authBrandImage: { width: 27, height: 27, borderRadius: 7 },
+    authBrandName: { color: '#F7F7F8', fontSize: 24, fontWeight: '800', letterSpacing: -0.5 },
+    authHeroCopy: { maxWidth: 470, gap: 18 },
+    authHeroTitle: { color: '#F7F7F8', fontSize: 43, lineHeight: 47, fontWeight: '800', letterSpacing: -1.4 },
+    authHeroMuted: { color: '#ACA9AE' },
+    authHeroBody: { color: '#E2DADD', fontSize: 16, lineHeight: 24, maxWidth: 430 },
+    authHeroMeta: { color: '#B4ADB0', fontFamily: 'monospace', fontSize: 11, lineHeight: 20 },
+    authPanel: { flex: 1, minWidth: 370, justifyContent: 'space-between', paddingHorizontal: 54, paddingVertical: 44, backgroundColor: '#171515', borderLeftWidth: 1, borderColor: '#2A2525' },
+    authPanelContent: { paddingTop: 6, gap: 12 },
+    onboardingTitle: { color: '#F3F0F0', fontSize: 36, lineHeight: 38, fontWeight: '800', letterSpacing: -1 },
+    onboardingTitleMuted: { color: '#AAA4A4' },
+    onboardingBody: { marginTop: 8, color: '#A9A1A1', fontSize: 14, lineHeight: 21, maxWidth: 340, marginBottom: 8 },
+    authAction: { minHeight: 65, flexDirection: 'row', alignItems: 'center', gap: 14, paddingHorizontal: 16, paddingVertical: 12, borderRadius: 12, backgroundColor: '#221E1E', borderWidth: 1, borderColor: '#302A2A' },
+    authActionPrimary: { backgroundColor: '#2A2424' },
+    authActionTitle: { color: '#F4F0F0', fontSize: 14, fontWeight: '800' },
+    authActionCopy: { marginTop: 3, color: '#A69E9E', fontSize: 11 },
+    authPanelFooter: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 14 },
+    authFooterCopy: { color: '#A59D9D', fontSize: 11 },
+    onboardingErrorText: { marginTop: 6, color: '#FFB4A9', fontSize: 12, lineHeight: 18 },
     authCard: { width: '100%', maxWidth: 520, padding: 34, gap: 16, borderRadius: 20, backgroundColor: '#121A23', borderWidth: 1, borderColor: '#283544' },
     logoTile: { width: 58, height: 58, alignItems: 'center', justifyContent: 'center', borderRadius: 16, backgroundColor: '#132B3E' }, authKicker: { color: '#47B7FF', fontSize: 11, fontWeight: '800', letterSpacing: 1.3 }, authTitle: { color: '#F1F5F9', fontSize: 30, lineHeight: 36, fontWeight: '700' }, authBody: { color: '#9FB3C8', fontSize: 15, lineHeight: 22 }, primaryButton: { minHeight: 48, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 9, borderRadius: 12, backgroundColor: '#47B7FF' }, primaryButtonText: { color: '#0D1117', fontSize: 15, fontWeight: '800' }, errorText: { color: '#FFB4A9', fontSize: 13, lineHeight: 18 }, loadingText: { marginTop: 16, color: '#9FB3C8', fontSize: 14 },
     sidebar: { width: 320, borderRightWidth: 1, borderColor: '#263340', backgroundColor: '#0B1016', paddingTop: 18 }, brandRow: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 18, paddingBottom: 18 }, brandMark: { width: 36, height: 36, alignItems: 'center', justifyContent: 'center', borderRadius: 10, backgroundColor: '#132B3E' }, brandCopy: { flex: 1 }, brandName: { color: '#F1F5F9', fontSize: 19, fontWeight: '800' }, readyLabel: { marginTop: 2, color: '#4ADE80', fontSize: 11, fontWeight: '700' }, iconButton: { width: 34, height: 34, alignItems: 'center', justifyContent: 'center', borderRadius: 8 }, openFolderButton: { flexDirection: 'row', alignItems: 'center', gap: 9, marginHorizontal: 14, paddingHorizontal: 13, paddingVertical: 12, borderRadius: 10, backgroundColor: '#18222D', borderWidth: 1, borderColor: '#2C3D4D' }, openFolderText: { color: '#D8E4EF', fontSize: 13, fontWeight: '700' }, projectBadge: { flexDirection: 'row', alignItems: 'center', gap: 8, marginHorizontal: 14, marginTop: 12, padding: 10, borderRadius: 10, backgroundColor: '#101923' }, flex: { flex: 1, minWidth: 0 }, projectName: { color: '#E5EDF5', fontSize: 12, fontWeight: '700' }, projectPath: { marginTop: 2, color: '#71859A', fontSize: 10 }, sidebarScroll: { padding: 14, gap: 18 }, conversationGroup: { gap: 5 }, groupTitle: { marginBottom: 4, color: '#71859A', fontSize: 10, fontWeight: '800', letterSpacing: 1 }, conversationRow: { flexDirection: 'row', alignItems: 'center', gap: 9, paddingHorizontal: 9, paddingVertical: 9, borderRadius: 8 }, conversationRowActive: { backgroundColor: '#1B2936' }, stateDot: { width: 7, height: 7, borderRadius: 4 }, conversationTitle: { color: '#DCE7F1', fontSize: 13, fontWeight: '600' }, conversationMeta: { marginTop: 2, color: '#71859A', fontSize: 10 }, sidebarFooter: { padding: 15, borderTopWidth: 1, borderColor: '#1F2B36' }, footerText: { color: '#71859A', fontSize: 11, lineHeight: 16 },

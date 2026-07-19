@@ -220,7 +220,9 @@ async function launchDesktopRuntime() {
     });
     runtimeClient = client;
     try {
-      await client.request('runtime.initialize');
+      // The bundled Python runtime may populate its import cache on first
+      // launch. Avoid turning a cold local start into an auth error.
+      await client.request('runtime.initialize', {}, 60_000);
       updateTray();
       return client;
     } catch (error) {
@@ -236,9 +238,20 @@ async function launchDesktopRuntime() {
   }
 }
 
-async function requestRuntime(method, params = {}, timeoutMs = 15_000) {
+async function requestRuntime(method, params = {}, timeoutMs = 45_000) {
   const client = await launchDesktopRuntime();
-  return client.request(method, params, timeoutMs);
+  try {
+    return await client.request(method, params, timeoutMs);
+  } catch (error) {
+    // Do not reuse a runtime after a timed-out frame: its late response could
+    // otherwise race the next renderer request.
+    if (error instanceof Error && /timed out while handling/.test(error.message) && runtimeClient === client) {
+      runtimeClient = null;
+      client.terminate('DevPilot desktop runtime request timed out.');
+      updateTray();
+    }
+    throw error;
+  }
 }
 
 async function stopDesktopRuntime() {
@@ -252,7 +265,7 @@ async function stopDesktopRuntime() {
 async function getCodexAuthStatus() {
   const status = getRuntimeStatus();
   if (!status.ready) return { runtimeReady: false, signedIn: false, message: status.issue || 'DevPilot runtime is unavailable.' };
-  const auth = await requestRuntime('auth.status');
+  const auth = await requestRuntime('auth.status', {}, 45_000);
   return {
     runtimeReady: true,
     signedIn: Boolean(auth.signedIn),
