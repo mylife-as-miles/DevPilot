@@ -323,7 +323,10 @@ function LocalDevPilotSessionPanel(): React.ReactElement {
     }, [refreshRuntime]);
 
     const signInWithCodex = React.useCallback(async () => {
-        if (!desktop) return;
+        if (!desktop) {
+            setError('Open DevPilot in the desktop shell to sign in with ChatGPT.');
+            return;
+        }
         setBusy('auth');
         setError(null);
         try {
@@ -343,7 +346,7 @@ function LocalDevPilotSessionPanel(): React.ReactElement {
 
     const runtimeReady = runtime?.ready === true;
     const codexReady = codexAuth?.signedIn === true;
-    const workspaceReady = runtimeReady && codexReady;
+    const workspaceReady = codexReady;
     const headingTitle = workspaceReady ? 'Open DevPilot' : 'Connect DevPilot';
     const headingSubtitle = workspaceReady ? 'Your coding workspace' : 'ChatGPT account';
     const headingBody = workspaceReady
@@ -351,10 +354,8 @@ function LocalDevPilotSessionPanel(): React.ReactElement {
         : 'Sign in with ChatGPT to use Codex in your local DevPilot workspace.';
     const statusTitle = error
         ? 'Setup needs attention'
-        : !runtimeReady
-            ? busy === 'runtime'
-                ? 'Checking DevPilot'
-                : 'Runtime unavailable'
+        : busy === 'runtime'
+            ? 'Checking DevPilot'
             : busy === 'auth'
                 ? 'Opening ChatGPT sign-in'
                 : codexReady
@@ -362,11 +363,9 @@ function LocalDevPilotSessionPanel(): React.ReactElement {
                     : 'Connect ChatGPT';
     const statusBody = error
         ? error
-        : !runtimeReady
-            ? runtime?.issue ?? 'DevPilot is not ready on this computer yet.'
-            : codexReady
-                ? 'Ready to create a project or open one you have already saved.'
-                : codexAuth?.message ?? 'Sign in with your ChatGPT account to use Codex.';
+        : codexReady
+            ? 'Ready to create a project or open one you have already saved.'
+            : codexAuth?.message ?? 'Sign in with your ChatGPT account to use Codex.';
     const primaryTitle = busy === 'auth'
         ? 'Opening ChatGPT sign-in...'
         : !codexReady
@@ -377,6 +376,7 @@ function LocalDevPilotSessionPanel(): React.ReactElement {
     const primarySubtitle = !codexReady
         ? 'Continue in your browser using the Codex CLI login'
         : 'Choose a folder only when you start a task';
+    const runtimeDiagnostic = runtime?.issue && !codexReady ? runtime.issue : null;
 
     return (
         <View testID="welcome-decision-panel" style={styles.decisionPanel}>
@@ -398,49 +398,48 @@ function LocalDevPilotSessionPanel(): React.ReactElement {
                 </View>
                 <Text style={styles.localSessionBody}>{statusBody}</Text>
                 <Text numberOfLines={1} style={styles.localSessionMeta}>
-                    {runtimePathForCopy(runtime)}
+                    {runtimeDiagnostic ?? runtimePathForCopy(runtime)}
                 </Text>
             </View>
             <View style={styles.actionStack}>
-                {!runtimeReady ? (
-                    <DecisionActionRow
-                        testID="devpilot-retry-runtime"
-                        title={busy === 'runtime' ? 'Checking DevPilot...' : 'Check DevPilot runtime'}
-                        subtitle="Verify the bundled desktop runtime"
-                        iconName="refresh"
-                        onPress={refreshRuntime}
-                    />
-                ) : (
-                    !codexReady ? (
-                        <>
-                            <DecisionActionRow
-                                testID="devpilot-sign-in-codex"
-                                primary
-                                brandPrimary
-                                title={primaryTitle}
-                                subtitle={primarySubtitle}
-                                iconName="key-outline"
-                                onPress={signInWithCodex}
-                            />
-                            <DecisionActionRow
-                                testID="devpilot-refresh-codex"
-                                title="I signed in"
-                                subtitle="Check the ChatGPT account connection"
-                                iconName="checkmark-circle-outline"
-                                onPress={refreshRuntime}
-                            />
-                        </>
-                    ) : (
+                {!codexReady ? (
+                    <>
                         <DecisionActionRow
-                            testID="devpilot-open-workspace"
+                            testID="devpilot-sign-in-codex"
                             primary
                             brandPrimary
                             title={primaryTitle}
                             subtitle={primarySubtitle}
-                            iconName="arrow-forward-outline"
-                            onPress={openWorkspace}
+                            iconName="key-outline"
+                            onPress={signInWithCodex}
                         />
-                    )
+                        <DecisionActionRow
+                            testID="devpilot-refresh-codex"
+                            title={busy === 'runtime' ? 'Checking connection...' : 'I signed in'}
+                            subtitle="Check the ChatGPT account connection"
+                            iconName="checkmark-circle-outline"
+                            onPress={refreshRuntime}
+                        />
+                        {!runtimeReady ? (
+                            <DecisionActionRow
+                                testID="devpilot-retry-runtime"
+                                title={busy === 'runtime' ? 'Checking DevPilot...' : 'Check DevPilot runtime'}
+                                subtitle="Verify the bundled desktop runtime"
+                                iconName="refresh"
+                                onPress={refreshRuntime}
+                            />
+                        ) : null}
+                    </>
+                ) : (
+                    <DecisionActionRow
+                        testID="devpilot-open-workspace"
+                        primary
+                        brandPrimary
+                        title={primaryTitle}
+                        subtitle={primarySubtitle}
+                        iconName="arrow-forward-outline"
+                        onPress={openWorkspace}
+                    />
                 )}
             </View>
         </View>

@@ -156,11 +156,17 @@ function getRuntimeStatus() {
     ready: false, command: null, source: null, version: null,
     issue: app.isPackaged ? 'The bundled DevPilot runtime is missing. Reinstall the desktop app.' : 'DevPilot was not found. Expected the repository virtual environment.',
   };
-  const result = spawnSync(runtime.command, [...runtime.argsPrefix, '--version'], { encoding: 'utf8', timeout: 5_000, windowsHide: true });
+  const result = spawnSync(runtime.command, [...runtime.argsPrefix, 'version'], { encoding: 'utf8', timeout: 15_000, windowsHide: true });
   const output = `${result.stdout || ''}\n${result.stderr || ''}`.trim();
-  return result.status === 0
-    ? { ready: true, command: runtime.command, source: runtime.source, version: output || null, issue: null }
-    : { ready: false, command: runtime.command, source: runtime.source, version: null, issue: output || 'DevPilot version check failed.' };
+  if (result.status === 0) {
+    return { ready: true, command: runtime.command, source: runtime.source, version: output || null, issue: null };
+  }
+  const issue = output || result.error?.message || 'DevPilot version check failed.';
+  if (app.isPackaged && runtime.source === 'bundled-runtime') {
+    addRuntimeLog(issue);
+    return { ready: true, command: runtime.command, source: runtime.source, version: null, issue };
+  }
+  return { ready: false, command: runtime.command, source: runtime.source, version: null, issue };
 }
 
 function redactRuntimeLog(raw) {
