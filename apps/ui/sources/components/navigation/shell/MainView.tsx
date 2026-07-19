@@ -42,9 +42,6 @@ import { useTabState } from '@/hooks/ui/useTabState';
 import { Text } from '@/components/ui/text/Text';
 import { getFeatureBuildPolicyDecision } from '@/sync/domains/features/featureBuildPolicy';
 import type { FeatureId } from '@happier-dev/protocol';
-import { DevPilotProjectSidebar } from '@/devpilot/DevPilotProjectSidebar';
-import { isLocalDevPilotDesktopMode } from '@/config/devpilotLocalSession';
-import { useDevPilotLocalWorkspaceActive } from '@/config/devpilotLocalWorkspace';
 
 
 interface MainViewProps {
@@ -282,8 +279,6 @@ const SidebarMainViewContent = React.memo(function SidebarMainViewContent({
     const { theme } = useUnistyles();
     const { directSessionsEnabled, storageKind, setStorageKind } = useSessionListStorageKind();
     const router = useRouter();
-    const localWorkspaceActive = useDevPilotLocalWorkspaceActive();
-    const localDesktopWorkspace = isLocalDevPilotDesktopMode() && localWorkspaceActive;
     const activeSessionId = React.useMemo(() => readSessionIdFromPathname(pathname), [pathname]);
     const surfaceOwnership = React.useMemo(
         () => resolveSessionListSurfaceOwnership({
@@ -316,16 +311,7 @@ const SidebarMainViewContent = React.memo(function SidebarMainViewContent({
     );
 
     let content: React.ReactNode;
-    if (localDesktopWorkspace) {
-        content = (
-            <View style={styles.sidebarContainer}>
-                {storageChrome}
-                <View style={styles.sidebarContentContainer}>
-                    <DevPilotProjectSidebar />
-                </View>
-            </View>
-        );
-    } else if (sessionListViewData === null) {
+    if (sessionListViewData === null) {
         content = (
             <View style={styles.sidebarContainer}>
                 {storageChrome}

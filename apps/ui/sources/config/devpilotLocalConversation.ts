@@ -2,8 +2,8 @@ import * as React from 'react';
 
 /**
  * Compatibility boundary for inactive hosted-session routes. The native
- * desktop renders DevPilotDesktopApp directly and never synthesizes a Happier
- * session, machine, account, or transport marker.
+ * desktop now uses Happier's shell directly; local conversation data is not
+ * synthesized into hosted session, machine, account, or transport markers here.
  */
 export const DEVPILOT_LOCAL_SERVER_ID = 'devpilot-local-ui';
 

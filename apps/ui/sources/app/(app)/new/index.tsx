@@ -15,9 +15,6 @@ import { loadNewSessionDraft } from '@/sync/domains/state/persistence';
 import { useActiveServerAccountScope } from '@/sync/store/hooks';
 import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
 import { peekTempData, type NewSessionData } from '@/utils/sessions/tempDataStore';
-import { isLocalDevPilotDesktopMode } from '@/config/devpilotLocalSession';
-import { useDevPilotLocalWorkspaceActive } from '@/config/devpilotLocalWorkspace';
-import { DevPilotNewTaskScreen } from '@/devpilot/DevPilotNewTaskScreen';
 
 const WEB_CLOSE_BUTTON_EDGE_INSET = 8;
 
@@ -84,7 +81,6 @@ function NewSessionUnseededContent() {
 }
 
 function NewSessionScreen() {
-    const localWorkspaceActive = useDevPilotLocalWorkspaceActive();
     const { dataId, machineId, directory } = useLocalSearchParams<{
         dataId?: string;
         spawnServerId?: string;
@@ -92,10 +88,6 @@ function NewSessionScreen() {
         directory?: string;
     }>();
     const draftScope = useActiveServerAccountScope();
-
-    if (isLocalDevPilotDesktopMode() && localWorkspaceActive) {
-        return <DevPilotNewTaskScreen />;
-    }
 
     const tempData = React.useMemo(() => {
         return typeof dataId === 'string' ? peekTempData<NewSessionData>(dataId) : null;

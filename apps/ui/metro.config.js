@@ -202,16 +202,27 @@ config.transformer.getTransformOptions = async () => ({
 const testRouteBlockList = /[\\/]sources[\\/]app[\\/].*\.(test|spec)\.[jt]sx?$/;
 const projectArtifactsBlockList = /[\\/]\.project[\\/]/;
 const nextBuildArtifactsBlockList = /[\\/]\.next[\\/]/;
+const desktopGeneratedArtifactsBlockList =
+  /[\\/]apps[\\/]desktop[\\/](?:out(?:-[^\\/]+)?|runtime)[\\/]/;
+const uiExportArtifactsBlockList = /[\\/]apps[\\/]ui[\\/]dist[\\/]/;
 // Avoid scanning duplicate workspace-local `node_modules/**` trees (typically symlink-heavy) when Metro falls back
 // to the native `find` crawler (no Watchman). We still keep the monorepo root `node_modules` and `apps/ui/node_modules`.
 const workspaceNodeModulesBlockList =
   /[\\/]apps[\\/](?!ui[\\/])[^\\/]+[\\/]node_modules[\\/]|[\\/]packages[\\/][^\\/]+[\\/]node_modules[\\/]/;
 const existingBlockList = config.resolver.blockList;
+const devPilotDesktopBlockLists = [
+  testRouteBlockList,
+  projectArtifactsBlockList,
+  nextBuildArtifactsBlockList,
+  desktopGeneratedArtifactsBlockList,
+  uiExportArtifactsBlockList,
+  workspaceNodeModulesBlockList,
+];
 config.resolver.blockList = Array.isArray(existingBlockList)
-  ? [...existingBlockList, testRouteBlockList, projectArtifactsBlockList, nextBuildArtifactsBlockList, workspaceNodeModulesBlockList]
+  ? [...existingBlockList, ...devPilotDesktopBlockLists]
   : existingBlockList
-    ? [existingBlockList, testRouteBlockList, projectArtifactsBlockList, nextBuildArtifactsBlockList, workspaceNodeModulesBlockList]
-    : [testRouteBlockList, projectArtifactsBlockList, nextBuildArtifactsBlockList, workspaceNodeModulesBlockList];
+    ? [existingBlockList, ...devPilotDesktopBlockLists]
+    : devPilotDesktopBlockLists;
 
 const rootNodeModules = path.resolve(__dirname, "../../node_modules");
 const appNodeModules = path.resolve(__dirname, "node_modules");
