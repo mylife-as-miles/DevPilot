@@ -161,6 +161,8 @@ export interface NewSessionWizardFooterProps {
     handleCreateSession: (opts?: HandleCreateSessionOptions) => void;
     canCreate: boolean;
     isCreating: boolean;
+    onAbort?: React.ComponentProps<typeof AgentInput>['onAbort'];
+    showAbortButton?: React.ComponentProps<typeof AgentInput>['showAbortButton'];
     submitAccessibilityLabel?: React.ComponentProps<typeof AgentInput>['submitAccessibilityLabel'];
     emptyAutocompletePrefixes: React.ComponentProps<typeof AgentInput>['autocompletePrefixes'];
     emptyAutocompleteSuggestions: React.ComponentProps<typeof AgentInput>['autocompleteSuggestions'];
@@ -176,11 +178,18 @@ export interface NewSessionWizardFooterProps {
     attachmentFlowId?: string | null;
 }
 
+export type NewSessionWizardLocalDevPilotProps = Readonly<{
+    selectedProjectName: string | null;
+    selectedProjectPath: string | null;
+    onOpenFolder: () => void;
+}>;
+
 export interface NewSessionWizardProps {
     popoverBoundaryRef: React.RefObject<RNView>;
     layout: NewSessionWizardLayoutProps;
     sectionPresentation?: Partial<Record<NewSessionWizardSelectionSectionId, NewSessionWizardSectionPresentation>>;
     useColumnLayout?: boolean;
+    localDevPilot?: NewSessionWizardLocalDevPilotProps;
     profiles: NewSessionWizardProfilesProps;
     agent: NewSessionWizardAgentProps;
     machine: NewSessionWizardMachineProps;
@@ -237,6 +246,8 @@ export const NewSessionWizard = React.memo(function NewSessionWizard(props: NewS
         && Platform.OS === 'web'
         && !isMobileLayoutWidth(windowWidth)
         && windowWidth >= 1100;
+    const localDevPilot = props.localDevPilot ?? null;
+    const isLocalDevPilot = localDevPilot !== null;
 
     // Wizard-only scroll bookkeeping (keep it out of NewSessionScreen)
     const scrollViewRef = React.useRef<ScrollView>(null);
@@ -297,7 +308,7 @@ export const NewSessionWizard = React.memo(function NewSessionWizard(props: NewS
         targetServerId: props.machine.serverId,
         selectedMachineId: props.machine.selectedMachine?.id ?? null,
         selectedMachineHomeDir: props.machine.selectedMachine?.metadata?.homeDir ?? null,
-        selectedPath: props.machine.selectedPath,
+        selectedPath: localDevPilot?.selectedProjectPath ?? props.machine.selectedPath,
         baseActionChips: props.footer.agentInputExtraActionChips,
     });
     const renderIconNode = React.useCallback(
@@ -562,6 +573,8 @@ export const NewSessionWizard = React.memo(function NewSessionWizard(props: NewS
                                         onSend={handleSend}
                                         isSendDisabled={!canCreate}
                                         isSending={isCreating}
+                                        onAbort={props.footer.onAbort}
+                                        showAbortButton={props.footer.showAbortButton}
                                         submitAccessibilityLabel={props.footer.submitAccessibilityLabel}
                                         placeholder={t('session.inputPlaceholder')}
                                         autocompletePrefixes={emptyAutocompletePrefixes}
@@ -599,16 +612,17 @@ export const NewSessionWizard = React.memo(function NewSessionWizard(props: NewS
                                         acpConfigOptionOverridesOverride={props.agent.acpConfigOptionOverrides ?? null}
                                         onAcpConfigOptionChange={props.agent.setAcpConfigOptionOverride}
                                         connectionStatus={connectionStatus}
-                                        machineName={selectedMachine?.metadata?.displayName || selectedMachine?.metadata?.host}
-                                        machinePopover={props.footer.machinePopover}
-                                        onMachineClick={props.footer.machinePopover ? undefined : handleAgentInputMachineClick}
-                                        currentPath={selectedPath}
-                                        pathPopover={props.footer.pathPopover}
-                                        onPathClick={props.footer.pathPopover ? undefined : handleAgentInputPathClick}
-                                        resumeSessionId={resumeSessionId}
+                                        machineName={isLocalDevPilot ? null : (selectedMachine?.metadata?.displayName || selectedMachine?.metadata?.host)}
+                                        machinePopover={isLocalDevPilot ? undefined : props.footer.machinePopover}
+                                        onMachineClick={isLocalDevPilot ? undefined : (props.footer.machinePopover ? undefined : handleAgentInputMachineClick)}
+                                        currentPath={isLocalDevPilot ? localDevPilot.selectedProjectPath : selectedPath}
+                                        emptyPathLabel={isLocalDevPilot ? 'Open Folder' : undefined}
+                                        pathPopover={isLocalDevPilot ? undefined : props.footer.pathPopover}
+                                        onPathClick={isLocalDevPilot ? localDevPilot.onOpenFolder : (props.footer.pathPopover ? undefined : handleAgentInputPathClick)}
+                                        resumeSessionId={isLocalDevPilot ? null : resumeSessionId}
                                         onResumeClick={undefined}
-                                        resumePopover={props.footer.resumePopover}
-                                        resumeIsChecking={resumeIsChecking}
+                                        resumePopover={isLocalDevPilot ? undefined : props.footer.resumePopover}
+                                        resumeIsChecking={isLocalDevPilot ? false : resumeIsChecking}
                                         contentPaddingHorizontal={0}
                                         attachmentsUploadsEnabled={attachmentsUploadsEnabled}
                                         filePickerRef={filePickerRef}
@@ -696,12 +710,14 @@ export const NewSessionWizard = React.memo(function NewSessionWizard(props: NewS
                                             <View style={styles.wizardSectionHeaderRow}>
                                                 {renderNormalizedIconNode('hardware-chip-outline', 18, theme.colors.text.primary)}
                                                 <Text style={[styles.sectionHeader, { marginBottom: 0, marginTop: 0 }]}>
-                                                    {t('newSession.selectAiBackendTitle')}
+                                                    {isLocalDevPilot ? 'Provider' : t('newSession.selectAiBackendTitle')}
                                                 </Text>
                                             </View>
                                         </View>
                                         <Text style={styles.sectionDescription}>
-                                            {useProfiles && selectedProfileId
+                                            {isLocalDevPilot
+                                                ? 'DevPilot runs this local project through Codex.'
+                                                : useProfiles && selectedProfileId
                                                 ? t('newSession.aiBackendLimitedByProfileAndMachineClis')
                                                 : t('newSession.aiBackendSelectWhichAiRuns')}
                                         </Text>
@@ -875,6 +891,36 @@ export const NewSessionWizard = React.memo(function NewSessionWizard(props: NewS
 
                                 <View style={{ height: 24 }} />
 
+                                {isLocalDevPilot ? (
+                                    <>
+                                        <View onLayout={registerWizardSectionOffset('path')}>
+                                            <View style={styles.wizardSectionHeaderRow}>
+                                                {renderNormalizedIconNode('folder-outline', 18, theme.colors.text.primary)}
+                                                <Text style={[styles.sectionHeader, { marginBottom: 0, marginTop: 0 }]}>Project folder</Text>
+                                            </View>
+                                        </View>
+                                        <Text style={styles.sectionDescription}>
+                                            Open the local Git project DevPilot should work in. A conversation is created only after you send the first prompt.
+                                        </Text>
+                                        <View style={{ marginBottom: 24 }}>
+                                            <ItemGroup title="">
+                                                <Item
+                                                    testID="new-session-local-open-folder"
+                                                    title={localDevPilot.selectedProjectName ?? 'Open Folder'}
+                                                    subtitle={localDevPilot.selectedProjectPath ?? 'Open a folder to start using DevPilot.'}
+                                                    leftElement={renderIconNode('folder-outline', 24, theme.colors.text.secondary)}
+                                                    rightElement={localDevPilot.selectedProjectPath
+                                                        ? renderIconNode('checkmark-circle', 24, selectedIndicatorColor)
+                                                        : null}
+                                                    selected={Boolean(localDevPilot.selectedProjectPath)}
+                                                    onPress={localDevPilot.onOpenFolder}
+                                                    showChevron={false}
+                                                    showDivider={false}
+                                                />
+                                            </ItemGroup>
+                                        </View>
+                                    </>
+                                ) : (
                                 <View style={useSelectionColumns ? styles.wizardSelectionPair : undefined}>
                                     <View style={useSelectionColumns ? styles.wizardSelectionPairColumn : undefined}>
                                         {/* Section 2: Machine Selection */}
@@ -1020,6 +1066,7 @@ export const NewSessionWizard = React.memo(function NewSessionWizard(props: NewS
                                         </View>
                                     </View>
                                 </View>
+                                )}
 
                                 {/* Section 4: Permission Mode */}
                                 <View onLayout={registerWizardSectionOffset('permission')}>

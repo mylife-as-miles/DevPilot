@@ -19,6 +19,7 @@ export function useAgentInputActionMenuActions(params: Readonly<{
     agentType?: AgentId;
     machineName?: string | null;
     currentPath?: string | null;
+    emptyPathLabel?: string;
     resumeSessionId?: string | null;
     sessionId?: string;
     extraActionChips?: readonly AgentInputExtraActionChip[];
@@ -60,6 +61,7 @@ export function useAgentInputActionMenuActions(params: Readonly<{
             agentType: params.agentType,
             machineName: params.machineName,
             currentPath: params.currentPath,
+            emptyPathLabel: params.emptyPathLabel,
             resumeSessionId: params.resumeSessionId,
             sessionId: params.sessionId,
             onProfileClick: params.onProfileClick,
@@ -84,6 +86,7 @@ export function useAgentInputActionMenuActions(params: Readonly<{
         params.blurInput,
         params.canStop,
         params.currentPath,
+        params.emptyPathLabel,
         params.dismissActionMenu,
         params.envVarsCount,
         params.engineLabel,

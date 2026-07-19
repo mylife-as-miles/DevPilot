@@ -337,6 +337,7 @@ interface AgentInputProps {
     onMachineClick?: () => void;
     machinePopover?: AgentInputContentPopoverConfig;
     currentPath?: string | null;
+    emptyPathLabel?: string;
     onPathClick?: () => void;
     pathPopover?: AgentInputContentPopoverConfig;
     resumeSessionId?: string | null;
@@ -2456,6 +2457,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         agentType: props.agentType,
         machineName: props.machineName,
         currentPath: props.currentPath,
+        emptyPathLabel: props.emptyPathLabel,
         resumeSessionId: props.resumeSessionId,
         sessionId: props.sessionId,
         extraActionChips: props.extraActionChips,
@@ -2536,6 +2538,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         pathChipAnchorRef,
         onPathPress: handlePathPress,
         currentPath: props.currentPath,
+        emptyPathLabel: props.emptyPathLabel,
         resumeChipAnchorRef,
         onResumePress: handleResumePress,
         blurInput: () => inputRef.current?.blur(),
@@ -2923,7 +2926,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                                 iconColor={theme.colors.composer.chipTint}
                                 currentPath={props.currentPath}
                                 pathChipAnchorRef={pathChipAnchorRef}
-                                emptyPathLabel={t('newSession.selectPathTitle')}
+                                emptyPathLabel={props.emptyPathLabel ?? t('newSession.selectPathTitle')}
                                 onPathClick={handlePathPress}
                                 resumeSessionId={props.resumeSessionId}
                                 resumeChipAnchorRef={resumeChipAnchorRef}
@@ -2952,7 +2955,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                             iconColor={theme.colors.composer.chipTint}
                             currentPath={props.currentPath}
                             pathChipAnchorRef={pathChipAnchorRef}
-                            emptyPathLabel={t('newSession.selectPathTitle')}
+                            emptyPathLabel={props.emptyPathLabel ?? t('newSession.selectPathTitle')}
                             onPathClick={handlePathPress}
                             resumeSessionId={props.resumeSessionId}
                             resumeChipAnchorRef={resumeChipAnchorRef}

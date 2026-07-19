@@ -67,6 +67,7 @@ export function useRenderedAgentInputControlRows(params: Readonly<{
     pathChipAnchorRef: React.RefObject<View | null>;
     onPathPress?: () => void;
     currentPath?: string | null;
+    emptyPathLabel?: string;
     resumeChipAnchorRef: React.RefObject<View | null>;
     onResumePress?: () => void;
     blurInput: () => void;
@@ -147,6 +148,7 @@ export function useRenderedAgentInputControlRows(params: Readonly<{
             pathChipAnchorRef: params.pathChipAnchorRef,
             onPathPress: params.onPathPress,
             currentPath: params.currentPath,
+            emptyPathLabel: params.emptyPathLabel,
             resumeChipAnchorRef: params.resumeChipAnchorRef,
             onResumePress: params.onResumePress,
             blurInput: params.blurInput,
@@ -197,6 +199,7 @@ export function useRenderedAgentInputControlRows(params: Readonly<{
         params.chips,
         params.countTextStyle,
         params.currentPath,
+        params.emptyPathLabel,
         params.envVarsChipAnchorRef,
         params.envVarsCount,
         params.hasActionMenuPopoverSections,

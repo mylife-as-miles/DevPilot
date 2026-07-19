@@ -549,14 +549,19 @@ function optimisticUserMessage(text: string): ConversationMessage {
     };
 }
 
-export async function sendDevPilotConversationMessage(text: string): Promise<void> {
+export async function sendDevPilotConversationMessage(text: string): Promise<string | null> {
     const prompt = text.trim();
-    if (!prompt) return;
+    if (!prompt) return null;
     const client = getRequiredDevPilotDesktopClient();
     const projectId = state.selectedProjectId;
     if (!projectId) {
         patchState({ error: 'Open a folder before starting a DevPilot conversation.' });
-        return;
+        return null;
+    }
+    const selectedModel = readString(state.selectedModel);
+    if (!selectedModel || !state.models.some((model) => model.id === selectedModel)) {
+        patchState({ error: 'Choose a Codex model before starting a DevPilot conversation.' });
+        return null;
     }
     patchState({ error: null });
 
@@ -566,7 +571,7 @@ export async function sendDevPilotConversationMessage(text: string): Promise<voi
             const created = await withDevPilotTimeout('conversation.create', client.createConversation({
                 projectId,
                 title: 'New conversation',
-                model: state.selectedModel ?? undefined,
+                model: selectedModel,
                 reasoningEffort: state.reasoningEffort,
                 sandbox: state.sandboxMode,
             }), 12_000);
@@ -611,8 +616,10 @@ export async function sendDevPilotConversationMessage(text: string): Promise<voi
             selectedProjectId: opened.conversation.projectId,
             selectedConversationId: opened.conversation.conversationId,
         });
+        return opened.conversation.conversationId;
     } catch (error) {
         patchState({ error: error instanceof Error ? error.message : 'DevPilot failed to send the message.' });
+        return null;
     }
 }
 

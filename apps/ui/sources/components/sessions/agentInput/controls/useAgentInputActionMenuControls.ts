@@ -39,6 +39,7 @@ export function useAgentInputActionMenuControls(params: Readonly<{
     agentType?: AgentId;
     machineName?: string | null;
     currentPath?: string | null;
+    emptyPathLabel?: string;
     resumeSessionId?: string | null;
     sessionId?: string;
     extraActionChips?: readonly AgentInputExtraActionChip[];
@@ -158,6 +159,7 @@ export function useAgentInputActionMenuControls(params: Readonly<{
         agentType: params.agentType,
         machineName: params.machineName,
         currentPath: params.currentPath,
+        emptyPathLabel: params.emptyPathLabel,
         resumeSessionId: params.resumeSessionId,
         sessionId: params.sessionId,
         extraActionChips: params.extraActionChips,

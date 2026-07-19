@@ -9,6 +9,7 @@ import { t } from '@/text';
 export function createPathActionChip(params: Readonly<{
     anchorRef?: React.RefObject<View | null>;
     currentPath?: string | null;
+    emptyPathLabel?: string;
     tint: string;
     showLabel: boolean;
     chipStyle: (pressed: boolean) => any;
@@ -17,7 +18,7 @@ export function createPathActionChip(params: Readonly<{
 }>): React.ReactNode {
     const label = typeof params.currentPath === 'string' && params.currentPath.length > 0
         ? params.currentPath
-        : t('newSession.selectPathTitle');
+        : params.emptyPathLabel ?? t('newSession.selectPathTitle');
 
     return (
         <Pressable

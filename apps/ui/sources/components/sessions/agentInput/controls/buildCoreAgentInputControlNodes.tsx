@@ -60,6 +60,7 @@ export function buildCoreAgentInputControlNodes(params: Readonly<{
     pathChipAnchorRef: React.RefObject<View | null>;
     onPathPress?: () => void;
     currentPath?: string | null;
+    emptyPathLabel?: string;
     resumeChipAnchorRef: React.RefObject<View | null>;
     onResumePress?: () => void;
     blurInput: () => void;
@@ -162,6 +163,7 @@ export function buildCoreAgentInputControlNodes(params: Readonly<{
     const pathChip = params.onPathPress ? createPathActionChip({
         anchorRef: params.pathChipAnchorRef,
         currentPath: params.currentPath,
+        emptyPathLabel: params.emptyPathLabel,
         tint: params.tint,
         showLabel: params.showChipLabels,
         chipStyle: params.chipStyle,

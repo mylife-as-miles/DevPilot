@@ -10,6 +10,8 @@ import { NewSessionWizard } from '@/components/sessions/new/components/NewSessio
 import { useNewSessionScreenModel } from '@/components/sessions/new/hooks/useNewSessionScreenModel';
 import { isMobileLayoutWidth } from '@/components/sessions/layout/isMobileLayoutWidth';
 import { NewSessionScreenPortalScope } from '@/components/sessions/new/navigation/newSessionContainedModalScreen';
+import { isLocalDevPilotDesktopMode } from '@/config/devpilotLocalSession';
+import { DevPilotLocalNewSessionScreen } from '@/devpilot/views/DevPilotLocalNewSessionScreen';
 import { parseNewSessionCheckoutDraft } from '@/sync/domains/state/newSessionCheckoutDraft';
 import { loadNewSessionDraft } from '@/sync/domains/state/persistence';
 import { useActiveServerAccountScope } from '@/sync/store/hooks';
@@ -38,7 +40,7 @@ function NewSessionWebCloseFallback() {
     );
 }
 
-function NewSessionScreenInner() {
+function HostedNewSessionScreenInner() {
     const model = useNewSessionScreenModel();
 
     if (model.variant === 'simple') {
@@ -60,7 +62,15 @@ function NewSessionScreenInner() {
     );
 }
 
-function NewSessionUnseededContent() {
+function NewSessionScreenInner() {
+    if (isLocalDevPilotDesktopMode()) {
+        return <DevPilotLocalNewSessionScreen />;
+    }
+
+    return <HostedNewSessionScreenInner />;
+}
+
+function HostedNewSessionUnseededContent() {
     const shouldBlock = useShouldBlockNewSessionWithGettingStartedGuidance();
 
     if (shouldBlock) {
@@ -80,7 +90,29 @@ function NewSessionUnseededContent() {
     );
 }
 
-function NewSessionScreen() {
+function NewSessionUnseededContent() {
+    if (isLocalDevPilotDesktopMode()) {
+        return (
+            <NewSessionScreenPortalScope>
+                <NewSessionWebCloseFallback />
+                <NewSessionScreenInner />
+            </NewSessionScreenPortalScope>
+        );
+    }
+
+    return <HostedNewSessionUnseededContent />;
+}
+
+function LocalNewSessionScreen() {
+    return (
+        <NewSessionScreenPortalScope>
+            <NewSessionWebCloseFallback />
+            <NewSessionScreenInner />
+        </NewSessionScreenPortalScope>
+    );
+}
+
+function HostedNewSessionScreen() {
     const { dataId, machineId, directory } = useLocalSearchParams<{
         dataId?: string;
         spawnServerId?: string;
@@ -122,6 +154,14 @@ function NewSessionScreen() {
             <NewSessionScreenInner />
         </NewSessionScreenPortalScope>
     );
+}
+
+function NewSessionScreen() {
+    if (isLocalDevPilotDesktopMode()) {
+        return <LocalNewSessionScreen />;
+    }
+
+    return <HostedNewSessionScreen />;
 }
 
 export default React.memo(NewSessionScreen);

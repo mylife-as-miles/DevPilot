@@ -17,6 +17,7 @@ export function buildAgentInputActionMenuActions(opts: {
     agentType?: AgentId;
     machineName?: string | null;
     currentPath?: string | null;
+    emptyPathLabel?: string;
     resumeSessionId?: string | null;
     sessionId?: string;
     onProfileClick?: () => void;

@@ -360,6 +360,63 @@ describe('NewSessionWizard agent input chips', () => {
         expect(agentInputProps.onResumeClick).toBeUndefined();
     });
 
+    it('uses local DevPilot folder controls without hosted machine or resume controls', async () => {
+        const { NewSessionWizard } = await import('./NewSessionWizard');
+        const onOpenFolder = vi.fn();
+
+        AgentInputMock.mockClear();
+
+        await renderScreen(React.createElement(NewSessionWizard, {
+            ...buildProps(),
+            profiles: {
+                ...buildProps().profiles,
+                useProfiles: false,
+                profiles: [],
+                selectedProfileId: null,
+            },
+            localDevPilot: {
+                selectedProjectName: 'Coal City',
+                selectedProjectPath: 'C:\\Users\\MILES\\Documents\\Coal City',
+                onOpenFolder,
+            },
+            footer: {
+                ...buildProps().footer,
+                resumePopover: { renderContent: () => React.createElement('View') },
+                resumeSessionId: 'claude-session-1',
+            },
+            popoverBoundaryRef: { current: null },
+        } as any));
+
+        const agentInputProps = (AgentInputMock.mock.calls[0]?.[0] ?? {}) as any;
+        expect(agentInputProps.machinePopover).toBeUndefined();
+        expect(agentInputProps.onMachineClick).toBeUndefined();
+        expect(agentInputProps.resumePopover).toBeUndefined();
+        expect(agentInputProps.resumeSessionId).toBeNull();
+        expect(agentInputProps.currentPath).toBe('C:\\Users\\MILES\\Documents\\Coal City');
+        expect(agentInputProps.emptyPathLabel).toBe('Open Folder');
+
+        agentInputProps.onPathClick();
+        expect(onOpenFolder).toHaveBeenCalledTimes(1);
+    });
+
+    it('keeps hosted Happier machine and resume controls unchanged when local mode is absent', async () => {
+        const { NewSessionWizard } = await import('./NewSessionWizard');
+        const props = buildProps();
+        props.footer.resumePopover = { renderContent: () => null };
+        props.footer.resumeSessionId = 'claude-session-1';
+
+        AgentInputMock.mockClear();
+
+        await renderScreen(React.createElement(NewSessionWizard, props as any));
+
+        const agentInputProps = (AgentInputMock.mock.calls[0]?.[0] ?? {}) as any;
+        expect(agentInputProps.onMachineClick).toEqual(expect.any(Function));
+        expect(agentInputProps.onPathClick).toEqual(expect.any(Function));
+        expect(agentInputProps.resumePopover).toBeTruthy();
+        expect(agentInputProps.resumeSessionId).toBe('claude-session-1');
+        expect(agentInputProps.emptyPathLabel).toBeUndefined();
+    });
+
     it('passes ACP config probe props through to AgentInput for the wizard action menu popover', async () => {
         const { NewSessionWizard } = await import('./NewSessionWizard');
         const props = buildProps();

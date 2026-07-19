@@ -23,6 +23,7 @@ export function buildCoreCollapsedControlActions(opts: Readonly<{
     agentType?: AgentId;
     machineName?: string | null;
     currentPath?: string | null;
+    emptyPathLabel?: string;
     resumeSessionId?: string | null;
     sessionId?: string;
     onProfileClick?: () => void;
@@ -132,7 +133,7 @@ export function buildCoreCollapsedControlActions(opts: Readonly<{
     if (opts.onPathClick) {
         const pathLabel = (typeof opts.currentPath === 'string' && opts.currentPath.length > 0)
             ? opts.currentPath
-            : t('newSession.selectPathTitle');
+            : opts.emptyPathLabel ?? t('newSession.selectPathTitle');
         controlActionsById.path = [{
             id: 'path',
             label: pathLabel,

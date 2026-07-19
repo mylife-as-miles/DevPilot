@@ -29,12 +29,15 @@ import {
     mapPermissionModeToSandbox,
     mapSandboxToPermissionMode,
 } from '@/devpilot/domain/status';
-import type { DevPilotRuntimeActivity, RuntimeModel } from '@/devpilot/domain/types';
-import type { ModelOption } from '@/sync/domains/models/modelOptions';
+import {
+    buildDevPilotModelOptions,
+    buildDevPilotReasoningOptions,
+    selectDevPilotModelId,
+} from '@/devpilot/domain/composerOptions';
+import type { DevPilotRuntimeActivity } from '@/devpilot/domain/types';
 import type { PermissionMode } from '@/sync/domains/permissions/permissionTypes';
 import type { Metadata } from '@/sync/domains/state/storageTypes';
 import type { Message } from '@/sync/domains/messages/messageTypes';
-import type { AcpConfigOption } from '@/sync/acp/configOptionsControl';
 
 type DevPilotLocalConversationRouteProps = Readonly<{
     conversationId?: string | null;
@@ -254,52 +257,6 @@ function formatStateLabel(state: string | null | undefined, working: boolean): s
     }
 }
 
-function buildModelOptions(models: readonly RuntimeModel[], selectedModel: string | null): readonly ModelOption[] {
-    const dynamic = models.map((model) => ({
-        value: model.id,
-        label: model.label || model.id,
-        description: 'Codex model from the local DevPilot runtime.',
-    }));
-    if (dynamic.length > 0) return dynamic;
-    return [
-        {
-            value: selectedModel ?? 'codex',
-            label: selectedModel ?? 'Codex',
-            description: 'Codex model from the local DevPilot runtime.',
-        },
-    ];
-}
-
-function formatReasoningLabel(value: string): string {
-    const lower = value.trim().toLowerCase();
-    if (lower === 'xhigh' || lower === 'extra-high') return 'XHigh';
-    return lower.length > 0 ? `${lower.charAt(0).toUpperCase()}${lower.slice(1)}` : value;
-}
-
-function buildReasoningOptions(
-    models: readonly RuntimeModel[],
-    selectedModel: string | null,
-    reasoningEffort: string,
-): readonly AcpConfigOption[] {
-    const selected = models.find((model) => model.id === selectedModel) ?? models[0] ?? null;
-    const efforts = selected?.reasoningEfforts.length ? selected.reasoningEfforts : ['low', 'medium', 'high'];
-    return [
-        {
-            id: 'reasoning_effort',
-            name: 'Reasoning',
-            description: 'Controls how much thinking Codex uses for this DevPilot conversation.',
-            category: 'Codex',
-            type: 'select',
-            currentValue: efforts.includes(reasoningEffort) ? reasoningEffort : efforts[0] ?? reasoningEffort,
-            options: efforts.map((effort) => ({
-                value: effort,
-                name: formatReasoningLabel(effort),
-                description: `${formatReasoningLabel(effort)} reasoning`,
-            })),
-        },
-    ];
-}
-
 function buildMetadata(projectPath: string | null, conversationTitle: string | null): Metadata {
     return ({
         name: conversationTitle ?? 'DevPilot conversation',
@@ -400,11 +357,11 @@ export function DevPilotLocalConversationRoute(props: DevPilotLocalConversationR
     }, [conversation?.conversationId, requestedConversationId]);
 
     const modelOptions = React.useMemo(
-        () => buildModelOptions(conversationVm.state.models, conversationVm.state.selectedModel),
-        [conversationVm.state.models, conversationVm.state.selectedModel],
+        () => buildDevPilotModelOptions(conversationVm.state.models),
+        [conversationVm.state.models],
     );
     const reasoningOptions = React.useMemo(
-        () => buildReasoningOptions(
+        () => buildDevPilotReasoningOptions(
             conversationVm.state.models,
             conversationVm.state.selectedModel,
             conversationVm.state.reasoningEffort,
@@ -458,7 +415,8 @@ export function DevPilotLocalConversationRoute(props: DevPilotLocalConversationR
     }, [reviewVm.project]);
     const autocompleteSuggestions = React.useCallback(async () => [], []);
     const statusLabel = formatStateLabel(conversation?.state, conversationVm.isWorking);
-    const selectedModel = conversationVm.state.selectedModel ?? modelOptions[0]?.value ?? 'codex';
+    const selectedModel = selectDevPilotModelId(conversationVm.state.models, conversationVm.state.selectedModel);
+    const hasValidModel = Boolean(selectedModel);
     const error = conversationVm.state.error;
 
     const input = (
@@ -490,7 +448,7 @@ export function DevPilotLocalConversationRoute(props: DevPilotLocalConversationR
                 }}
                 autocompletePrefixes={[]}
                 autocompleteSuggestions={autocompleteSuggestions}
-                isSendDisabled={!project || conversationVm.isWorking}
+                isSendDisabled={!project || conversationVm.isWorking || !hasValidModel}
                 currentPath={project?.path ?? null}
                 onPathClick={handleOpenFolder}
                 agentType={DEFAULT_AGENT_ID}
