@@ -40,7 +40,6 @@ import {
 
 import { shouldAutoRedirectToSetupOnFirstLaunch } from "@/utils/navigation/firstLaunchSetupRedirectPolicy";
 import { isElectronDesktop } from '@/config/devpilotServices';
-import { DevPilotDesktopApp } from '@/devpilot/DevPilotDesktopApp';
 import { isLocalDevPilotDesktopMode } from '@/config/devpilotLocalSession';
 import {
     useDevPilotConversationWorkspaceBridge,
@@ -67,9 +66,6 @@ function readWelcomeServerCheckRetryDelayMs(): number {
 }
 
 export default function Home() {
-    if (isElectronDesktop()) {
-        return <DevPilotDesktopApp />;
-    }
     const auth = useAuth();
     const localWorkspaceActive = useDevPilotLocalWorkspaceActive();
     if (!auth.isAuthenticated && (isElectronDesktop() || isLocalDevPilotDesktopMode()) && localWorkspaceActive) {

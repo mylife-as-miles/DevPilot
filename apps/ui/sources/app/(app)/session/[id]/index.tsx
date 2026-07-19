@@ -16,7 +16,6 @@ import { resolveSessionRouteAuthRecoveryState } from '@/hooks/session/sessionRou
 import { useSessionRouteServerScope } from '@/hooks/session/sessionRouteServerScope';
 import { useHydrateSessionForRoute } from '@/hooks/session/useHydrateSessionForRoute';
 import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
-import { isElectronDesktop } from '@/config/devpilotServices';
 import { markSessionRouteEnteredForSessionUiTelemetry } from '@/sync/runtime/performance/sessionUiTelemetry';
 import {
     isSessionRouteHydrationAvailable,
@@ -29,7 +28,6 @@ import {
     useSyncError,
 } from '@/sync/domains/state/storage';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
-import { DevPilotDesktopApp } from '@/devpilot/DevPilotDesktopApp';
 
 type SessionRouteParams = Readonly<{
     id?: string | string[];
@@ -97,12 +95,6 @@ const SessionRoute = React.memo(function SessionRoute() {
             : Array.isArray(sessionIdParam)
                 ? (sessionIdParam[0] ?? '')
                 : '').trim();
-    // The Electron app owns its native conversation navigation.  A stale hosted
-    // session URL must never bring back the former local-session/ACP surface.
-    if (isElectronDesktop()) {
-        return <DevPilotDesktopApp />;
-    }
-
     return <RemoteSessionRoute params={params} sessionId={sessionId} />;
 });
 
