@@ -43,9 +43,9 @@ import { fetchAndApplySessionFolderAssignments } from '@/sync/ops/sessionFolders
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { useResolvedActiveServerSelection } from '@/hooks/server/useEffectiveServerSelection';
 import { isLocalDevPilotDesktopMode } from '@/config/devpilotLocalSession';
+import { useDevPilotSessionListViewData } from '@/devpilot/domain/hooks';
 
 const EMPTY_PINNED_SESSION_KEYS: ReadonlyArray<string> = Object.freeze([]);
-const EMPTY_LOCAL_DESKTOP_SESSION_LIST_VIEW_DATA: SessionListViewItem[] = [];
 const EMPTY_SESSION_LIST_GROUP_ORDER: Readonly<Record<string, ReadonlyArray<string> | undefined>> = Object.freeze({});
 const EMPTY_SESSION_WORKSPACE_ORDER: SessionWorkspaceOrderV1 = Object.freeze({});
 const DISABLED_ATTENTION_PROMOTION_OPTIONS: SessionListAttentionPromotionOptions = Object.freeze({
@@ -109,20 +109,6 @@ function applySessionListStorageFilter(
     return filterSessionListViewDataByStorageKind(data, storageFilter);
 }
 
-function resolveLocalDesktopSessionListSource(
-    source: SessionListViewItem[] | null,
-): SessionListViewItem[] | null {
-    if (source !== null) return source;
-
-    // In DevPilot's local desktop harness there is no hosted/Relay-backed
-    // session store to hydrate the inherited Happier list. Treat the missing
-    // remote source as an empty local project list so the shell can render its
-    // normal empty state instead of spinning forever.
-    return isLocalDevPilotDesktopMode()
-        ? EMPTY_LOCAL_DESKTOP_SESSION_LIST_VIEW_DATA
-        : null;
-}
-
 function applyOpenApprovalFlagsToSessionListSource(
     data: SessionListViewItem[] | null,
     sessionIdsWithOpenApprovals: ReadonlySet<string>,
@@ -166,14 +152,14 @@ function buildSessionRowResolver(source: ReadonlyArray<SessionListViewItem>) {
         if (item.type !== 'session') continue;
         const serverId = typeof item.serverId === 'string' ? item.serverId.trim() : '';
         const sessionId = typeof item.session?.id === 'string' ? item.session.id.trim() : '';
-        if (!serverId || !sessionId) continue;
-        byKey.set(`${serverId}:${sessionId}`, item.session);
+        if (!sessionId) continue;
+        byKey.set(serverId ? `${serverId}:${sessionId}` : sessionId, item.session);
     }
     return (serverIdRaw: string | null | undefined, sessionIdRaw: string) => {
         const serverId = typeof serverIdRaw === 'string' ? serverIdRaw.trim() : '';
         const sessionId = typeof sessionIdRaw === 'string' ? sessionIdRaw.trim() : '';
-        if (!serverId || !sessionId) return null;
-        return byKey.get(`${serverId}:${sessionId}`) ?? null;
+        if (!sessionId) return null;
+        return byKey.get(serverId ? `${serverId}:${sessionId}` : sessionId) ?? null;
     };
 }
 
@@ -402,18 +388,23 @@ function useSessionListDataState(
         ? selection.allowedServerIds
         : EMPTY_SELECTED_SESSION_LIST_SERVER_IDS;
     const dataByServerId = useSessionListViewDataByServerId(selectedServerIdsForCache);
+    const localDevPilotMode = isLocalDevPilotDesktopMode();
+    const localDevPilotSource = useDevPilotSessionListViewData(localDevPilotMode);
 
     const source = React.useMemo(() => {
-        return resolveLocalDesktopSessionListSource(resolveSessionListSourceData({
+        if (localDevPilotMode) return localDevPilotSource;
+        return resolveSessionListSourceData({
             enabled: selection.enabled,
             activeServerId: selection.activeServerId,
             activeData,
             byServerId: dataByServerId,
             selectedServerIds: selection.allowedServerIds,
-        }));
+        });
     }, [
         activeData,
         dataByServerId,
+        localDevPilotMode,
+        localDevPilotSource,
         selectedServerIdsKey,
         selection.activeServerId,
         selection.enabled,
@@ -586,18 +577,23 @@ export function useVisibleSessionListSessionSummary(
         ? selection.allowedServerIds
         : EMPTY_SELECTED_SESSION_LIST_SERVER_IDS;
     const dataByServerId = useSessionListViewDataByServerId(selectedServerIdsForCache);
+    const localDevPilotMode = isLocalDevPilotDesktopMode();
+    const localDevPilotSource = useDevPilotSessionListViewData(localDevPilotMode);
 
     const source = React.useMemo(() => {
-        return resolveLocalDesktopSessionListSource(resolveSessionListSourceData({
+        if (localDevPilotMode) return localDevPilotSource;
+        return resolveSessionListSourceData({
             enabled: selection.enabled,
             activeServerId: selection.activeServerId,
             activeData,
             byServerId: dataByServerId,
             selectedServerIds: selection.allowedServerIds,
-        }));
+        });
     }, [
         activeData,
         dataByServerId,
+        localDevPilotMode,
+        localDevPilotSource,
         selectedServerIdsKey,
         selection.activeServerId,
         selection.enabled,
