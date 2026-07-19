@@ -1,36 +1,70 @@
 import * as React from 'react';
 
-/**
- * Compatibility boundary for inactive hosted-session routes. The native
- * desktop now uses Happier's shell directly; local conversation data is not
- * synthesized into hosted session, machine, account, or transport markers here.
- */
+import { useEnsureDevPilotDesktopInitialized } from '@/devpilot/domain/hooks';
+import {
+    cancelSelectedDevPilotConversation,
+    ensureDevPilotDesktopInitialized,
+    getDevPilotDesktopState,
+    isKnownDevPilotConversationId,
+    selectDevPilotConversation,
+    sendDevPilotConversationMessage,
+} from '@/devpilot/domain/store';
+import { isLocalDevPilotDesktopMode } from '@/config/devpilotLocalSession';
+
 export const DEVPILOT_LOCAL_SERVER_ID = 'devpilot-local-ui';
 
-export function isDevPilotLocalConversation(_session: unknown): boolean {
-    return false;
+function readConversationId(value: unknown): string {
+    if (typeof value === 'string') return value.trim();
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return '';
+    const candidate = value as Record<string, unknown>;
+    const id = candidate.id ?? candidate.sessionId ?? candidate.conversationId;
+    return typeof id === 'string' ? id.trim() : '';
 }
 
-export function isDevPilotLocalConversationRoute(_sessionId: string, _local: unknown): boolean {
-    return false;
+export function isDevPilotLocalConversation(session: unknown): boolean {
+    if (!isLocalDevPilotDesktopMode()) return false;
+    const conversationId = readConversationId(session);
+    return conversationId.length > 0 && isKnownDevPilotConversationId(conversationId);
 }
 
-export function ensureDevPilotLocalConversationSeeded(_local: unknown): string | null {
-    return null;
+export function isDevPilotLocalConversationRoute(sessionId: string, _local: unknown): boolean {
+    const normalized = sessionId.trim();
+    return isLocalDevPilotDesktopMode() && normalized.length > 0 && isKnownDevPilotConversationId(normalized);
 }
 
-export function useDevPilotLocalConversationBridge(_local: unknown): void {
-    React.useEffect(() => undefined, []);
+export function ensureDevPilotLocalConversationSeeded(local: unknown): string | null {
+    const conversationId = readConversationId(local);
+    return conversationId.length > 0 && isKnownDevPilotConversationId(conversationId) ? conversationId : null;
 }
 
-export function useDevPilotConversationWorkspaceBridge(_enabled: boolean): void {
-    React.useEffect(() => undefined, []);
+export function useDevPilotLocalConversationBridge(local: unknown): void {
+    const conversationId = ensureDevPilotLocalConversationSeeded(local);
+    React.useEffect(() => {
+        if (!conversationId) return;
+        void ensureDevPilotDesktopInitialized(true).then(() => selectDevPilotConversation(conversationId));
+    }, [conversationId]);
 }
 
-export async function submitDevPilotLocalConversationMessage(_sessionId: string, _text: string): Promise<void> {
-    throw new Error('Open the DevPilot desktop workspace to send a conversation message.');
+export function useDevPilotConversationWorkspaceBridge(enabled: boolean): void {
+    useEnsureDevPilotDesktopInitialized(enabled);
 }
 
-export async function abortDevPilotLocalConversation(_sessionId: string): Promise<void> {
-    throw new Error('Open the DevPilot desktop workspace to stop a conversation run.');
+export async function submitDevPilotLocalConversationMessage(sessionId: string, text: string): Promise<void> {
+    await ensureDevPilotDesktopInitialized(true);
+    const normalized = sessionId.trim();
+    const state = getDevPilotDesktopState();
+    if (normalized && state.selectedConversationId !== normalized && state.conversations[normalized]) {
+        await selectDevPilotConversation(normalized);
+    }
+    await sendDevPilotConversationMessage(text);
+}
+
+export async function abortDevPilotLocalConversation(sessionId: string): Promise<void> {
+    await ensureDevPilotDesktopInitialized(true);
+    const normalized = sessionId.trim();
+    const state = getDevPilotDesktopState();
+    if (normalized && state.selectedConversationId !== normalized && state.conversations[normalized]) {
+        await selectDevPilotConversation(normalized);
+    }
+    await cancelSelectedDevPilotConversation();
 }

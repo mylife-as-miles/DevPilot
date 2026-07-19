@@ -28,6 +28,9 @@ import {
     useSyncError,
 } from '@/sync/domains/state/storage';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
+import { isLocalDevPilotDesktopMode } from '@/config/devpilotLocalSession';
+import { isDevPilotLocalConversationRoute } from '@/config/devpilotLocalConversation';
+import { DevPilotLocalConversationRoute } from '@/devpilot/views/DevPilotLocalConversationRoute';
 
 type SessionRouteParams = Readonly<{
     id?: string | string[];
@@ -95,6 +98,9 @@ const SessionRoute = React.memo(function SessionRoute() {
             : Array.isArray(sessionIdParam)
                 ? (sessionIdParam[0] ?? '')
                 : '').trim();
+    if (isLocalDevPilotDesktopMode() && isDevPilotLocalConversationRoute(sessionId, null)) {
+        return <DevPilotLocalConversationRoute conversationId={sessionId} />;
+    }
     return <RemoteSessionRoute params={params} sessionId={sessionId} />;
 });
 
