@@ -30,6 +30,7 @@ import { isAuthenticatedRootDeepLinkRedirectAllowed } from "@/auth/routing/isAut
 import { buildScopedSessionRouteHref } from "@/hooks/session/sessionRouteServerScope";
 import { RemoteWelcomeDecisionPanel } from "@/components/account/auth/RemoteWelcomeDecisionPanel";
 import { UnauthenticatedSplitShell, useApplyBrandHeroSeen } from "@/components/onboarding/unauthShell";
+import { getDesktopClient } from '@devpilot/desktop/client';
 import {
     resolveRemoteAuthCapabilityOptions,
     useRemoteAuthEntryOptions,
@@ -68,8 +69,10 @@ function readWelcomeServerCheckRetryDelayMs(): number {
 export default function Home() {
     const auth = useAuth();
     const localWorkspaceActive = useDevPilotLocalWorkspaceActive();
-    if (!auth.isAuthenticated && (isElectronDesktop() || isLocalDevPilotDesktopMode()) && localWorkspaceActive) {
-        return <Authenticated />;
+    const localCodexSignedIn = useDevPilotLocalCodexSignedIn(localWorkspaceActive);
+    const shouldOpenLocalWorkspace = (isElectronDesktop() || isLocalDevPilotDesktopMode()) && localWorkspaceActive && localCodexSignedIn;
+    if (shouldOpenLocalWorkspace) {
+        return <AuthenticatedLocalDevPilotWorkspace />;
     }
     if (!auth.isAuthenticated) {
         return <NotAuthenticated />;
@@ -79,17 +82,39 @@ export default function Home() {
     )
 }
 
-function Authenticated() {
-    const localWorkspaceActive = useDevPilotLocalWorkspaceActive();
-    if ((isElectronDesktop() || isLocalDevPilotDesktopMode()) && localWorkspaceActive) {
-        return <AuthenticatedLocalDevPilotWorkspace />;
-    }
-    return <AuthenticatedRemote />;
-}
-
 function AuthenticatedLocalDevPilotWorkspace() {
     useDevPilotConversationWorkspaceBridge(true);
     return <MainView variant="phone" />;
+}
+
+function useDevPilotLocalCodexSignedIn(refreshKey: unknown): boolean {
+    const [signedIn, setSignedIn] = React.useState(false);
+    const isLocalDesktop = isElectronDesktop() || isLocalDevPilotDesktopMode();
+
+    React.useEffect(() => {
+        if (!isLocalDesktop) {
+            setSignedIn(false);
+            return undefined;
+        }
+        const desktop = getDesktopClient();
+        if (!desktop) {
+            setSignedIn(false);
+            return undefined;
+        }
+        let mounted = true;
+        desktop.getCodexAuthStatus()
+            .then((status) => {
+                if (mounted) setSignedIn(status.signedIn === true);
+            })
+            .catch(() => {
+                if (mounted) setSignedIn(false);
+            });
+        return () => {
+            mounted = false;
+        };
+    }, [isLocalDesktop, refreshKey]);
+
+    return signedIn;
 }
 
 function AuthenticatedRemote() {

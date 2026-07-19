@@ -7,7 +7,7 @@ const LOCAL_WORKSPACE_STORAGE_KEY = 'devpilot.localWorkspaceActive.v1';
 const LOCAL_WORKSPACE_EVENT = 'devpilot:local-workspace-changed';
 
 function storageAvailable(): boolean {
-    return typeof window !== 'undefined' && typeof window.localStorage !== 'undefined';
+    return typeof window !== 'undefined' && typeof window.sessionStorage !== 'undefined';
 }
 
 export function isDevPilotLocalWorkspaceEnabled(): boolean {
@@ -16,12 +16,14 @@ export function isDevPilotLocalWorkspaceEnabled(): boolean {
 
 export function readDevPilotLocalWorkspaceActive(): boolean {
     if (!storageAvailable()) return false;
-    return window.localStorage.getItem(LOCAL_WORKSPACE_STORAGE_KEY) === 'true';
+    window.localStorage?.removeItem(LOCAL_WORKSPACE_STORAGE_KEY);
+    return window.sessionStorage.getItem(LOCAL_WORKSPACE_STORAGE_KEY) === 'true';
 }
 
 export function activateDevPilotLocalWorkspace(): void {
     if (!storageAvailable()) return;
-    window.localStorage.setItem(LOCAL_WORKSPACE_STORAGE_KEY, 'true');
+    window.localStorage?.removeItem(LOCAL_WORKSPACE_STORAGE_KEY);
+    window.sessionStorage.setItem(LOCAL_WORKSPACE_STORAGE_KEY, 'true');
     window.dispatchEvent(new Event(LOCAL_WORKSPACE_EVENT));
 }
 
