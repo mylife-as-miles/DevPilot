@@ -78,7 +78,7 @@ export default function Home() {
         return <NotAuthenticated />;
     }
     return (
-        <Authenticated />
+        <AuthenticatedRemote />
     )
 }
 

@@ -8,6 +8,8 @@ import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import type { SessionStorageKind } from '@/sync/domains/session/sessionStorageKind';
 import { t } from '@/text';
 import { SessionListStorageTabsBar } from './SessionListStorageTabsBar';
+import { isLocalDevPilotDesktopMode } from '@/config/devpilotLocalSession';
+import { devPilotDesktopActions } from '@/devpilot/domain/hooks';
 
 const stylesheet = StyleSheet.create(() => ({
     browseActionContainer: {
@@ -32,11 +34,28 @@ export const SessionsListStorageChrome = React.memo((props: SessionsListStorageC
     const router = useRouter();
     const { theme } = useUnistyles();
     const styles = stylesheet;
+    const localDevPilot = isLocalDevPilotDesktopMode();
     const showDirectBrowseAction = props.directSessionsEnabled && props.storageKind === 'direct';
 
     return (
         <>
-            {props.directSessionsEnabled ? (
+            {localDevPilot ? (
+                <ItemGroup
+                    style={styles.browseActionContainer}
+                    containerStyle={styles.browseActionGroupSurface}
+                    constrainToContentWidth={false}
+                >
+                    <Item
+                        testID="devpilot-open-folder-button"
+                        title="Open Folder"
+                        subtitle="Choose a local project for DevPilot"
+                        icon={<Ionicons name="folder-open-outline" size={22} color={theme.colors.text.secondary} />}
+                        onPress={() => {
+                            void devPilotDesktopActions.openProjectFolder();
+                        }}
+                    />
+                </ItemGroup>
+            ) : props.directSessionsEnabled ? (
                 <SessionListStorageTabsBar
                     activeTabId={props.storageKind}
                     onSelectTab={props.onSelectStorageKind}

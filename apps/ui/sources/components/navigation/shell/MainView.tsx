@@ -42,6 +42,8 @@ import { useTabState } from '@/hooks/ui/useTabState';
 import { Text } from '@/components/ui/text/Text';
 import { getFeatureBuildPolicyDecision } from '@/sync/domains/features/featureBuildPolicy';
 import type { FeatureId } from '@happier-dev/protocol';
+import { isLocalDevPilotDesktopMode } from '@/config/devpilotLocalSession';
+import { DevPilotLocalConversationRoute } from '@/devpilot/views/DevPilotLocalConversationRoute';
 
 
 interface MainViewProps {
@@ -428,6 +430,9 @@ const PhoneTabbedMainViewContent = React.memo(function PhoneTabbedMainViewConten
     }, [effectiveActiveTab, friendsEnabled, inboxEnabled]);
 
     if (isTablet) {
+        if (isLocalDevPilotDesktopMode()) {
+            return <DevPilotLocalConversationRoute />;
+        }
         const buildPolicyDecision = getFeatureBuildPolicyDecision(SESSION_GETTING_STARTED_GUIDANCE_FEATURE_ID);
         if (buildPolicyDecision !== 'deny') {
             return <SessionGettingStartedGuidance variant="primaryPane" />;

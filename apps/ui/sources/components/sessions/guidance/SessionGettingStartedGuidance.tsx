@@ -34,7 +34,6 @@ import { listSessionGettingStartedCliCommands } from './listSessionGettingStarte
 import { normalizeNodeForView } from '@/components/ui/rendering/normalizeNodeForView';
 import { runAfterInteractionsWithFallback } from '@/utils/timing/runAfterInteractionsWithFallback';
 import { setClipboardStringSafe } from '@/utils/ui/clipboard';
-import { useDevPilotLocalSession } from '@/config/devpilotLocalSession';
 
 export type SessionGettingStartedGuidanceVariant = 'phone' | 'sidebar' | 'primaryPane' | 'newSessionBlocking';
 
@@ -445,7 +444,6 @@ function SessionGettingStartedGuidanceViewImpl(props: SessionGettingStartedGuida
     const { theme } = useUnistyles();
     const styles = stylesheet;
     const { model } = props;
-    const localDevPilotSession = useDevPilotLocalSession();
     const copyFeedback = useTemporaryCopyFeedback();
 
     const title = titleForKind(model.kind);
@@ -510,9 +508,6 @@ function SessionGettingStartedGuidanceViewImpl(props: SessionGettingStartedGuida
     }, [copyFeedback]);
 
     if (model.kind === 'loading') {
-        const projectLabel = localDevPilotSession?.projectPath
-            ? localDevPilotSession.projectPath
-            : subtitle;
         return (
             <ScrollView
                 testID="session-getting-started-scroll"
@@ -527,19 +522,19 @@ function SessionGettingStartedGuidanceViewImpl(props: SessionGettingStartedGuida
                             <Ionicons name="terminal-outline" size={22} color="#1583F7" />
                         </View>
                         <View>
-                            <Text style={styles.localLoadingEyebrow}>Local ACP</Text>
+                            <Text style={styles.localLoadingEyebrow}>DevPilot</Text>
                             <Text style={styles.localLoadingTitle}>{title}</Text>
                         </View>
                     </View>
                     <Text style={styles.localLoadingSubtitle}>
-                        Preparing your DevPilot workspace from the connected local project.
+                        Loading projects and conversations from the local DevPilot runtime.
                     </Text>
                     <View style={styles.localLoadingStatusCard}>
                         <ActivitySpinner size="small" color={theme.colors.text.secondary} />
                         <View style={styles.localLoadingStatusText}>
-                            <Text style={styles.localLoadingStatusTitle}>Syncing local context</Text>
+                            <Text style={styles.localLoadingStatusTitle}>Loading workspace</Text>
                             <Text numberOfLines={1} style={styles.localLoadingStatusBody}>
-                                {projectLabel}
+                                {subtitle}
                             </Text>
                         </View>
                     </View>
