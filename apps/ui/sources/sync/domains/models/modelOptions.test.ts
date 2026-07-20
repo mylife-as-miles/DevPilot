@@ -161,6 +161,31 @@ describe('modelOptions', () => {
         });
     });
 
+    it('omits the CLI default option for local DevPilot model lists', () => {
+        const out = getModelOptionsForSession(
+            'codex',
+            withMetadata({
+                devpilotLocalV1: {
+                    v: 1,
+                    provider: 'devpilot',
+                    mode: 'local-desktop',
+                },
+                sessionModelsV1: {
+                    v: 1,
+                    provider: 'codex',
+                    updatedAt: 1,
+                    currentModelId: 'gpt-5.5',
+                    availableModels: [
+                        { id: 'gpt-5.5', name: 'gpt-5.5' },
+                        { id: 'gpt-5.6', name: 'gpt-5.6' },
+                    ],
+                },
+            } as Partial<Metadata>),
+        );
+
+        expect(out.map((option) => option.value)).toEqual(['gpt-5.5', 'gpt-5.6']);
+    });
+
     it('ignores stale dynamic session model rows for static-only providers and uses the static catalog', () => {
         const staticClaudeValues = getModelOptionsForAgentType('claude').map((option) => option.value);
         const out = getModelOptionsForSession(

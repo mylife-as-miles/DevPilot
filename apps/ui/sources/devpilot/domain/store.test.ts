@@ -196,6 +196,24 @@ describe('DevPilot desktop store', () => {
         });
     });
 
+    it('surfaces folder picker failures instead of leaving local mode stuck', async () => {
+        const client = makeDesktopClient({
+            selectProjectFolder: vi.fn(async () => {
+                throw new Error('Folder picker failed.');
+            }),
+        });
+        installDesktopClient(client);
+
+        const result = await openDevPilotProjectFolder();
+
+        expect(result).toBeNull();
+        expect(client.openProject).not.toHaveBeenCalled();
+        expect(getDevPilotDesktopState()).toMatchObject({
+            error: 'Folder picker failed.',
+            loading: { projects: false, conversations: false },
+        });
+    });
+
     it('creates one conversation on first send and sends follow-ups to the same conversation', async () => {
         const firstConversation = conversation({ sandbox: 'full-access', reasoningEffort: 'high' });
         const client = makeDesktopClient({

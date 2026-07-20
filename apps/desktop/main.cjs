@@ -271,7 +271,7 @@ async function stopDesktopRuntime() {
 async function getCodexAuthStatus() {
   const status = getRuntimeStatus();
   if (!status.ready) return { runtimeReady: false, signedIn: false, message: status.issue || 'DevPilot runtime is unavailable.' };
-  const auth = await requestRuntime('auth.status', {}, 45_000);
+  const auth = await requestRuntime('auth.status', {}, 8_000);
   return {
     runtimeReady: true,
     signedIn: Boolean(auth.signedIn),
@@ -294,13 +294,21 @@ async function startCodexLogin() {
 async function ensureLegacyMigration() {
   const current = readUiState();
   if (current.migrations.workspaceV1?.status === 'complete') return current;
-  const auth = await requestRuntime('auth.status');
-  if (!auth.signedIn) return current;
-  return migrateLegacyWorkspace({
-    legacyPath: legacyWorkspacePath(),
-    statePath: desktopStatePath(),
-    importWorkspace: (workspace) => requestRuntime('migration.importLegacyWorkspace', { workspace }),
-  });
+  try {
+    return await migrateLegacyWorkspace({
+      legacyPath: legacyWorkspacePath(),
+      statePath: desktopStatePath(),
+      importWorkspace: (workspace) => requestRuntime('migration.importLegacyWorkspace', { workspace }),
+    });
+  } catch (error) {
+    addRuntimeLog(error instanceof Error ? error.message : String(error));
+    current.migrations.workspaceV1 = {
+      status: 'skipped',
+      completedAt: Date.now(),
+      reason: 'migration_failed',
+    };
+    return writeDesktopState(desktopStatePath(), current);
+  }
 }
 
 function parseDevUrl() {

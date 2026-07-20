@@ -374,8 +374,7 @@ export function ensureDevPilotDesktopInitialized(enabled = true): Promise<void> 
         installRuntimeEvents();
         patchState({ loading: { projects: true, conversations: true }, error: null });
         try {
-            const [auth, modelResult, uiState, projectResult] = await Promise.all([
-                withDevPilotTimeout('auth.status', client.getCodexAuthStatus(), 6_000).catch(() => null),
+            const [modelResult, uiState, projectResult] = await Promise.all([
                 withDevPilotTimeout('models.list', client.listModels(), 8_000).catch(() => ({ provider: 'codex' as const, models: [] as RuntimeModel[] })),
                 withDevPilotTimeout('ui.state', client.getUiState(), 4_000).catch(() => null),
                 withDevPilotTimeout('project.list', client.listProjects(), 10_000),
@@ -394,8 +393,7 @@ export function ensureDevPilotDesktopInitialized(enabled = true): Promise<void> 
                     : selectedModelRecord?.defaultReasoningEffort ?? 'high';
             patchState({
                 initialized: true,
-                authenticated: auth?.signedIn === true,
-                runtimeReady: auth?.runtimeReady !== false,
+                runtimeReady: true,
                 projects: replaceProjects(projects),
                 conversations: mergeConversations(conversations),
                 selectedProjectId: initialSelection.selectedProjectId,
@@ -409,9 +407,15 @@ export function ensureDevPilotDesktopInitialized(enabled = true): Promise<void> 
             });
             if (initialSelection.selectedConversationId) {
                 await selectDevPilotConversation(initialSelection.selectedConversationId);
-            } else if (initialSelection.selectedProjectId) {
-                await refreshDevPilotReview(initialSelection.selectedProjectId);
             }
+            void withDevPilotTimeout('auth.status', client.getCodexAuthStatus(), 8_000)
+                .then((auth) => {
+                    patchState({
+                        authenticated: auth.signedIn === true,
+                        runtimeReady: auth.runtimeReady !== false,
+                    });
+                })
+                .catch(() => undefined);
         } catch (error) {
             patchState({
                 initialized: true,
@@ -448,10 +452,10 @@ export async function refreshDevPilotProjectsAndConversations(): Promise<void> {
 
 export async function openDevPilotProjectFolder(): Promise<DevPilotProject | null> {
     const client = getRequiredDevPilotDesktopClient();
-    const path = await client.selectProjectFolder();
-    if (!path) return null;
-    patchState({ loading: { projects: true, conversations: true }, error: null });
     try {
+        const path = await client.selectProjectFolder();
+        if (!path) return null;
+        patchState({ loading: { projects: true, conversations: true }, error: null });
         const opened = await withDevPilotTimeout('project.open', client.openProject(path), 15_000);
         const project = opened.project;
         const list = await withDevPilotTimeout('conversation.list', client.listConversations(project.projectId, false), 10_000);
@@ -463,7 +467,6 @@ export async function openDevPilotProjectFolder(): Promise<DevPilotProject | nul
             selectedConversationId: null,
             loading: { projects: false, conversations: false },
         });
-        await refreshDevPilotReview(project.projectId);
         return project;
     } catch (error) {
         patchState({
@@ -486,7 +489,6 @@ export function selectDevPilotProject(projectId: string | null): void {
     if (client) {
         void client.saveUiState({ selectedProjectId: normalized, selectedConversationId: null }).catch(() => undefined);
     }
-    if (normalized) void refreshDevPilotReview(normalized);
 }
 
 export async function selectDevPilotConversation(conversationId: string): Promise<void> {
@@ -683,7 +685,6 @@ export async function refreshDevPilotReview(projectId: string): Promise<void> {
             },
             loading: { review: false },
         });
-        await prefetchVisibleDiffs(normalizedProjectId, result.changes);
     } catch (error) {
         patchState({
             loading: { review: false },
@@ -694,15 +695,6 @@ export async function refreshDevPilotReview(projectId: string): Promise<void> {
 
 function diffKey(projectId: string, path: string): string {
     return `${projectId}\u0000${path}`;
-}
-
-async function prefetchVisibleDiffs(projectId: string, changes: LocalGitChanges): Promise<void> {
-    const files = changes.files.slice(0, 30);
-    await Promise.all(files.map(async (file) => {
-        if (!file.path) return;
-        if (state.diffByProjectPath[diffKey(projectId, file.path)]) return;
-        await readDevPilotChangeDiff(projectId, file.path, 'combined').catch(() => undefined);
-    }));
 }
 
 export async function readDevPilotChangeDiff(projectId: string, path: string | null, scope: ReviewScope = 'combined'): Promise<DevPilotDiff | null> {

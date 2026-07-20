@@ -135,6 +135,17 @@ function readSelectedModelOverrideId(metadata: Metadata | null | undefined): str
     return typeof metadataModelOverrideRaw?.modelId === 'string' ? metadataModelOverrideRaw.modelId.trim() : '';
 }
 
+function isDevPilotLocalModelList(metadata: Metadata | null | undefined): boolean {
+    const marker = (metadata as any)?.devpilotLocalV1;
+    return Boolean(
+        marker
+        && typeof marker === 'object'
+        && marker.v === 1
+        && marker.provider === 'devpilot'
+        && marker.mode === 'local-desktop',
+    );
+}
+
 function supportsDynamicSessionModelList(agentType: AgentType): boolean {
     return getAgentCore(agentType).model.dynamicProbe !== 'static-only';
 }
@@ -263,6 +274,7 @@ function resolveModelOptionsForSession(agentType: AgentType, metadata: Metadata 
     const state = supportsDynamicSessionModelList(agentType) ? readSessionModelListState(metadata) : null;
     if (state && state.provider === agentType && Array.isArray(state.availableModels) && state.availableModels.length > 0) {
         const catalogOptions = getModelOptionsForAgentType(agentType);
+        const devPilotLocalModelList = isDevPilotLocalModelList(metadata);
 
         const dynamic = state.availableModels
             .filter((m) => m && typeof m.id === 'string' && typeof m.name === 'string')
@@ -283,12 +295,14 @@ function resolveModelOptionsForSession(agentType: AgentType, metadata: Metadata 
 
         return appendSelectedFreeformModelOption({
             options: mergeModelOptionsWithCatalog({
-                options: [
-                    { value: 'default', label: getModelLabel('default'), description: '' },
-                    ...dynamic.filter((m) => m.value !== 'default'),
-                ],
+                options: devPilotLocalModelList
+                    ? dynamic.filter((m) => m.value !== 'default')
+                    : [
+                        { value: 'default', label: getModelLabel('default'), description: '' },
+                        ...dynamic.filter((m) => m.value !== 'default'),
+                    ],
                 catalogOptions,
-                appendMissingCatalogOptions: supportsFreeform,
+                appendMissingCatalogOptions: supportsFreeform && !devPilotLocalModelList,
             }),
             selectedModelId,
             supportsFreeform,

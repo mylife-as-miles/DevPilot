@@ -29,8 +29,8 @@ import {
 } from '@/sync/domains/state/storage';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import { isLocalDevPilotDesktopMode } from '@/config/devpilotLocalSession';
-import { isDevPilotLocalConversationRoute } from '@/config/devpilotLocalConversation';
-import { DevPilotLocalConversationRoute } from '@/devpilot/views/DevPilotLocalConversationRoute';
+import { useDevPilotLocalConversationBridge } from '@/config/devpilotLocalConversation';
+import { useDevPilotDesktopState } from '@/devpilot/domain/hooks';
 
 type SessionRouteParams = Readonly<{
     id?: string | string[];
@@ -98,11 +98,59 @@ const SessionRoute = React.memo(function SessionRoute() {
             : Array.isArray(sessionIdParam)
                 ? (sessionIdParam[0] ?? '')
                 : '').trim();
-    if (isLocalDevPilotDesktopMode() && isDevPilotLocalConversationRoute(sessionId, null)) {
-        return <DevPilotLocalConversationRoute conversationId={sessionId} />;
+    if (isLocalDevPilotDesktopMode()) {
+        return <LocalDevPilotSessionRoute params={params} sessionId={sessionId} />;
     }
     return <RemoteSessionRoute params={params} sessionId={sessionId} />;
 });
+
+function readCachedSessionRouteSession(sessionId: string): boolean {
+    const state = getStorage().getState();
+    return Boolean(selectSessionViewShellSessionForRouteState(
+        {
+            sessions: state.sessions,
+            sessionListViewDataByServerId: state.sessionListViewDataByServerId,
+        },
+        sessionId,
+        null,
+    ));
+}
+
+function LocalDevPilotSessionRoute({
+    params,
+    sessionId,
+}: Readonly<{
+    params: SessionRouteParams;
+    sessionId: string;
+}>) {
+    const normalizedSessionId = sessionId.trim();
+    useDevPilotLocalConversationBridge({ conversationId: normalizedSessionId });
+    const devPilotState = useDevPilotDesktopState();
+    const sessionCached = React.useSyncExternalStore(
+        getStorage().subscribe,
+        () => readCachedSessionRouteSession(normalizedSessionId),
+        () => readCachedSessionRouteSession(normalizedSessionId),
+    );
+
+    if (!normalizedSessionId) {
+        return <SessionInvalidLinkFallback />;
+    }
+
+    if (!sessionCached) {
+        const knownConversation = Boolean(devPilotState.conversations[normalizedSessionId]);
+        const stillLoading = !devPilotState.initialized || devPilotState.loading.conversations || devPilotState.loading.conversation;
+        if (!knownConversation && !stillLoading) {
+            return <SessionInvalidLinkFallback />;
+        }
+        return (
+            <View testID="session-route-loading" style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
+                <ActivitySpinner size="small" />
+            </View>
+        );
+    }
+
+    return <RemoteSessionRoute params={params} sessionId={normalizedSessionId} />;
+}
 
 function RemoteSessionRoute({
     params,
