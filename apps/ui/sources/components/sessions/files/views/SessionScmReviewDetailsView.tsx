@@ -8,7 +8,7 @@ import { Text } from '@/components/ui/text/Text';
 import { ChangedFilesReview } from '@/components/sessions/files/content/ChangedFilesReview';
 import { ChangedFilesViewModeMenu } from '@/components/sessions/files/ChangedFilesViewModeMenu';
 import { useChangedFilesData } from '@/hooks/session/files/useChangedFilesData';
-import { useProjectForSession, useProjectSessions, useSessionMessages, useSessionProjectScmOperationLog, useSessionProjectScmSnapshot, useSessionProjectScmSnapshotError, useSessionProjectScmTouchedPaths, useSessionRealtimeScmTranscriptConsumer, useSessionWorkspacePath, useSetting, useWorkspaceReviewCommentsDrafts } from '@/sync/domains/state/storage';
+import { useProjectForSession, useProjectSessions, useSession, useSessionProjectScmOperationLog, useSessionProjectScmSnapshot, useSessionProjectScmSnapshotError, useSessionProjectScmTouchedPaths, useSessionRealtimeScmTranscriptConsumer, useSessionWorkspacePath, useSetting, useWorkspaceReviewCommentsDrafts } from '@/sync/domains/state/storage';
 import { scmStatusSync } from '@/scm/scmStatusSync';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { ScmChangeDiscardButton } from '@/components/sessions/sourceControl/changes/ScmChangeDiscardButton';
@@ -33,9 +33,17 @@ import {
     type ChangedFilesViewMode,
 } from '@/scm/scmAttribution';
 import type { ScmFileStatus } from '@/scm/scmStatusFiles';
+import { isDevPilotLocalConversationMetadata } from '@/config/devpilotLocalConversationMarker';
 
 const REVIEW_SCROLL_TOP_PERSIST_DEBOUNCE_MS = 250;
 const REVIEW_SCROLL_TOP_PERSIST_EPSILON_PX = 1;
+
+async function refreshLocalDevPilotReviewForSession(sessionId: string): Promise<void> {
+    const { getDevPilotDesktopState, refreshDevPilotReview } = await import('@/devpilot/domain/store');
+    const projectId = getDevPilotDesktopState().conversations[sessionId]?.projectId ?? null;
+    if (!projectId) return;
+    await refreshDevPilotReview(projectId);
+}
 
 function areReviewScrollTopValuesEqual(previous: unknown, next: unknown): boolean {
     if (Object.is(previous, next)) return true;
@@ -166,6 +174,8 @@ export const SessionScmReviewDetailsView = React.memo((props: SessionScmReviewDe
     const snapshotError = useSessionProjectScmSnapshotError(props.sessionId);
     const touchedPaths = useSessionProjectScmTouchedPaths(props.sessionId);
     const operationLog = useSessionProjectScmOperationLog(props.sessionId);
+    const session = useSession(props.sessionId);
+    const isLocalDevPilotSession = isDevPilotLocalConversationMetadata(session?.metadata ?? null);
     const projectSessionIds = useProjectSessions(project?.id ?? null);
     const scmReviewMaxFiles = useSetting('scmReviewMaxFiles');
     const scmReviewMaxChangedLines = useSetting('scmReviewMaxChangedLines');
@@ -176,7 +186,8 @@ export const SessionScmReviewDetailsView = React.memo((props: SessionScmReviewDe
             ? (scmCommitStrategySetting as ScmCommitStrategy)
             : 'atomic';
     }, [scmCommitStrategySetting]);
-    const scmWriteEnabled = useFeatureEnabled('scm.writeOperations');
+    const hostedScmWriteEnabled = useFeatureEnabled('scm.writeOperations');
+    const scmWriteEnabled = hostedScmWriteEnabled && !isLocalDevPilotSession;
     const reviewScope = useWorkspaceScopeForSession(props.sessionId);
     const reviewCommentsEnabled = useFeatureEnabled('files.reviewComments') === true && Boolean(reviewScope);
     const reviewCommentDrafts = useWorkspaceReviewCommentsDrafts(reviewScope);
@@ -207,7 +218,7 @@ export const SessionScmReviewDetailsView = React.memo((props: SessionScmReviewDe
     });
 
     useScmAdaptivePolling({
-        enabled: Boolean(props.sessionId) && effectiveSnapshot?.repo.isRepo === true,
+        enabled: !isLocalDevPilotSession && Boolean(props.sessionId) && effectiveSnapshot?.repo.isRepo === true,
         baseIntervalMs,
         stepIntervalMs: baseIntervalMs,
         maxIntervalMs,
@@ -277,13 +288,22 @@ export const SessionScmReviewDetailsView = React.memo((props: SessionScmReviewDe
     // Ensure the SCM snapshot is warm so large reviews can load diffs even if the user
     // opened the review tab before visiting Source control.
     React.useEffect(() => {
+        if (isLocalDevPilotSession) {
+            void refreshLocalDevPilotReviewForSession(props.sessionId).catch(() => undefined);
+            return;
+        }
         scmStatusSync.invalidateFromAutoRefresh(props.sessionId);
-    }, [props.sessionId]);
+    }, [isLocalDevPilotSession, props.sessionId]);
 
     const refreshAfterMutation = React.useCallback(async () => {
+        if (isLocalDevPilotSession) {
+            await refreshLocalDevPilotReviewForSession(props.sessionId);
+            setDiffRefreshToken((t) => t + 1);
+            return;
+        }
         await scmStatusSync.invalidateFromMutationAndAwait(props.sessionId);
         setDiffRefreshToken((t) => t + 1);
-    }, [props.sessionId]);
+    }, [isLocalDevPilotSession, props.sessionId]);
 
     const renderReviewFileTrailingActions = React.useMemo(() => {
         if (!scmWriteEnabled) return undefined;

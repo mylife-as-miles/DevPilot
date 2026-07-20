@@ -18,6 +18,9 @@ const hoistedState = vi.hoisted(() => ({
     routerReplaceMock: vi.fn(),
     setActiveTabMock: vi.fn(async () => {}),
     tauriDesktop: false,
+    isAuthenticated: true,
+    electronDesktop: false,
+    localDevPilotDesktopMode: false,
 }));
 
 installNavigationShellCommonModuleMocks({
@@ -198,7 +201,25 @@ vi.mock('expo-router/drawer', () => ({
 }));
 
 vi.mock('@/auth/context/AuthContext', () => ({
-  useAuth: () => ({ isAuthenticated: true }),
+  useAuth: () => ({ isAuthenticated: hoistedState.isAuthenticated }),
+}));
+
+vi.mock('@/config/devpilotServices', () => ({
+  devpilotServices: {
+    apiUrl: null,
+    relayUrl: null,
+    hostedServicesEnabled: false,
+    localDesktopEnabled: false,
+  },
+  isElectronDesktop: () => hoistedState.electronDesktop,
+}));
+
+vi.mock('@/config/devpilotLocalSession', () => ({
+  isLocalDevPilotDesktopMode: () => hoistedState.localDevPilotDesktopMode,
+  readDevPilotLocalSession: () => null,
+  writeDevPilotLocalSession: () => {},
+  clearDevPilotLocalSession: () => {},
+  useDevPilotLocalSession: () => null,
 }));
 
 vi.mock('@/utils/platform/tauri', () => ({
@@ -318,6 +339,9 @@ describe('SidebarNavigator (collapsed sidebar)', () => {
     hoistedState.routerReplaceMock.mockReset();
     hoistedState.setActiveTabMock.mockClear();
     hoistedState.tauriDesktop = false;
+    hoistedState.isAuthenticated = true;
+    hoistedState.electronDesktop = false;
+    hoistedState.localDevPilotDesktopMode = false;
     mockDrawerLifecycle.mounts = 0;
     mockDrawerLifecycle.unmounts = 0;
   });
@@ -379,6 +403,21 @@ describe('SidebarNavigator (collapsed sidebar)', () => {
     const drawer = getDrawer(tree);
     expect(drawer.props.screenOptions.drawerType).toBe('permanent');
     expect(drawer.props.screenOptions.drawerStyle.width).toBeGreaterThan(0);
+  });
+
+  it('keeps the permanent Happier sidebar shell visible in local DevPilot Electron mode without hosted auth', async () => {
+    hoistedState.isAuthenticated = false;
+    hoistedState.electronDesktop = true;
+    hoistedState.localDevPilotDesktopMode = true;
+    hoistedState.mockWindowDimensions = { width: 1200, height: 800 };
+
+    const { SidebarNavigator } = await import('./SidebarNavigator');
+    const screen = await renderScreen(<SidebarNavigator />);
+
+    const drawer = getDrawer(screen.tree);
+    expect(drawer.props.screenOptions.drawerType).toBe('permanent');
+    expect(drawer.props.screenOptions.drawerStyle.width).toBeGreaterThan(0);
+    expect(screen.tree.findAllByType('SidebarView' as any)).toHaveLength(1);
   });
 
   it('wraps authenticated desktop drawer content in the main-content drag surface on Tauri web', async () => {

@@ -43,7 +43,6 @@ import { Text } from '@/components/ui/text/Text';
 import { getFeatureBuildPolicyDecision } from '@/sync/domains/features/featureBuildPolicy';
 import type { FeatureId } from '@happier-dev/protocol';
 import { isLocalDevPilotDesktopMode } from '@/config/devpilotLocalSession';
-import { DevPilotLocalConversationRoute } from '@/devpilot/views/DevPilotLocalConversationRoute';
 
 
 interface MainViewProps {
@@ -326,6 +325,7 @@ const SidebarMainViewContent = React.memo(function SidebarMainViewContent({
         );
     } else if (visibleSessionCount === 0) {
         const suppressSidebarGuidance = isTablet && pathname === '/';
+        const localDevPilot = isLocalDevPilotDesktopMode();
         content = (
             <View style={styles.sidebarContainer}>
                 {storageChrome}
@@ -335,8 +335,12 @@ const SidebarMainViewContent = React.memo(function SidebarMainViewContent({
                             <HiddenInactiveSessionsEmptyState />
                         ) : suppressSidebarGuidance ? (
                             <View style={styles.sidebarEmptyHintContainer}>
-                                <Text style={styles.sidebarEmptyHintTitle}>{t('components.emptySessionsTablet.noActiveSessions')}</Text>
-                                <Text style={styles.sidebarEmptyHintSubtitle}>{t('components.emptySessionsTablet.startNewSessionDescription')}</Text>
+                                <Text style={styles.sidebarEmptyHintTitle}>
+                                    {localDevPilot ? 'No conversations yet' : t('components.emptySessionsTablet.noActiveSessions')}
+                                </Text>
+                                <Text style={styles.sidebarEmptyHintSubtitle}>
+                                    {localDevPilot ? 'Open a folder to start using DevPilot.' : t('components.emptySessionsTablet.startNewSessionDescription')}
+                                </Text>
                             </View>
                         ) : (
                             <SessionGettingStartedGuidance variant="sidebar" />
@@ -430,9 +434,6 @@ const PhoneTabbedMainViewContent = React.memo(function PhoneTabbedMainViewConten
     }, [effectiveActiveTab, friendsEnabled, inboxEnabled]);
 
     if (isTablet) {
-        if (isLocalDevPilotDesktopMode()) {
-            return <DevPilotLocalConversationRoute />;
-        }
         const buildPolicyDecision = getFeatureBuildPolicyDecision(SESSION_GETTING_STARTED_GUIDANCE_FEATURE_ID);
         if (buildPolicyDecision !== 'deny') {
             return <SessionGettingStartedGuidance variant="primaryPane" />;

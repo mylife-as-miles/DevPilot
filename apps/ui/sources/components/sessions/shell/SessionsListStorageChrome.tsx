@@ -34,8 +34,31 @@ export const SessionsListStorageChrome = React.memo((props: SessionsListStorageC
     const router = useRouter();
     const { theme } = useUnistyles();
     const styles = stylesheet;
+    const [openingProjectFolder, setOpeningProjectFolder] = React.useState(false);
+    const mountedRef = React.useRef(true);
     const localDevPilot = isLocalDevPilotDesktopMode();
     const showDirectBrowseAction = props.directSessionsEnabled && props.storageKind === 'direct';
+
+    React.useEffect(() => () => {
+        mountedRef.current = false;
+    }, []);
+
+    const handleOpenProjectFolder = React.useCallback(() => {
+        if (openingProjectFolder) return;
+        setOpeningProjectFolder(true);
+        void (async () => {
+            try {
+                await devPilotDesktopActions.openProjectFolder();
+            } catch {
+                // The DevPilot store surfaces expected picker/runtime failures in
+                // local state; keep this row from producing unhandled promise noise.
+            } finally {
+                if (mountedRef.current) {
+                    setOpeningProjectFolder(false);
+                }
+            }
+        })();
+    }, [openingProjectFolder]);
 
     return (
         <>
@@ -47,12 +70,12 @@ export const SessionsListStorageChrome = React.memo((props: SessionsListStorageC
                 >
                     <Item
                         testID="devpilot-open-folder-button"
-                        title="Open Folder"
-                        subtitle="Choose a local project for DevPilot"
+                        title={openingProjectFolder ? 'Opening folder...' : 'Open Folder'}
+                        subtitle={openingProjectFolder ? 'Waiting for project selection' : 'Choose a local project for DevPilot'}
                         icon={<Ionicons name="folder-open-outline" size={22} color={theme.colors.text.secondary} />}
-                        onPress={() => {
-                            void devPilotDesktopActions.openProjectFolder();
-                        }}
+                        loading={openingProjectFolder}
+                        disabled={openingProjectFolder}
+                        onPress={handleOpenProjectFolder}
                     />
                 </ItemGroup>
             ) : props.directSessionsEnabled ? (

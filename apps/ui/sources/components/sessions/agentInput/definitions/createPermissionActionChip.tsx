@@ -20,6 +20,7 @@ export function createPermissionActionChip(params: Readonly<{
             ref={params.anchorRef}
             key="permission"
             testID={testID}
+            accessibilityRole="button"
             onPress={params.onPress}
             hitSlop={{ top: 5, bottom: 10, left: 0, right: 0 }}
             style={(state) => params.chipStyle(state.pressed)}

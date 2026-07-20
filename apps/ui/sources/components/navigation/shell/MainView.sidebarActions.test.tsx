@@ -10,6 +10,7 @@ import { installNavigationShellCommonModuleMocks } from './navigationShellTestHe
 const routerPushSpy = vi.hoisted(() => vi.fn());
 const routerReplaceSpy = vi.hoisted(() => vi.fn());
 const setSessionsListStorageTabSpy = vi.hoisted(() => vi.fn());
+const openDevPilotProjectFolderSpy = vi.hoisted(() => vi.fn(async () => null));
 
 const sessionListState = vi.hoisted(() => ({
     data: [] as any[] | null,
@@ -32,6 +33,9 @@ const emptyStateState = vi.hoisted(() => ({
 }));
 
 const directSessionsFeatureState = vi.hoisted(() => ({
+    enabled: false,
+}));
+const localDevPilotModeState = vi.hoisted(() => ({
     enabled: false,
 }));
 
@@ -248,12 +252,26 @@ vi.mock('@/sync/domains/server/serverConfig', () => ({
     isUsingCustomServer: () => false,
 }));
 
+vi.mock('@/config/devpilotLocalSession', () => ({
+    isLocalDevPilotDesktopMode: () => localDevPilotModeState.enabled,
+    readDevPilotLocalSession: () => null,
+    writeDevPilotLocalSession: () => {},
+    clearDevPilotLocalSession: () => {},
+    useDevPilotLocalSession: () => null,
+}));
+
 vi.mock('@/track', () => ({
     trackFriendsSearch: () => {},
 }));
 
 vi.mock('@/components/navigation/ConnectionStatusControl', () => ({
     ConnectionStatusControl: 'ConnectionStatusControl',
+}));
+
+vi.mock('@/devpilot/domain/hooks', () => ({
+    devPilotDesktopActions: {
+        openProjectFolder: openDevPilotProjectFolderSpy,
+    },
 }));
 
 function findPressableByLabel(tree: renderer.ReactTestRenderer, label: string) {
@@ -269,6 +287,7 @@ describe('MainView sidebar actions', () => {
         tabState.activeTab = 'sessions';
         tabState.setActiveTab.mockClear();
         setSessionsListStorageTabSpy.mockReset();
+        openDevPilotProjectFolderSpy.mockClear();
         sessionListState.data = [];
         sessionListHookState.useVisibleSessionListViewDataCalls = 0;
         sessionListHookState.useVisibleSessionListPaneStateCalls = 0;
@@ -277,6 +296,7 @@ describe('MainView sidebar actions', () => {
         sessionListHookState.visibleSessionListPaneStateOptions = [];
         emptyStateState.hasHiddenInactiveSessions = false;
         directSessionsFeatureState.enabled = false;
+        localDevPilotModeState.enabled = false;
         localSettingsState.sessionsListStorageTab = 'persisted';
         platformState.isTablet = true;
         routerState.pathname = '/';
@@ -488,6 +508,25 @@ describe('MainView sidebar actions', () => {
         tree = (await renderScreen(<MainView variant="sidebar" />)).tree;
 
         expect(() => tree!.findByProps({ testID: 'direct-sessions-browse-button' })).not.toThrow();
+    });
+
+    it('uses local DevPilot project copy instead of connected-machine copy in the sidebar empty state', async () => {
+        localDevPilotModeState.enabled = true;
+
+        const screen = await renderScreen(<MainView variant="sidebar" />);
+        const json = JSON.stringify(screen.tree.toJSON());
+
+        expect(json).toContain('No conversations yet');
+        expect(json).toContain('Open a folder to start using DevPilot.');
+        expect(json).not.toContain('connected machines');
+    });
+
+    it('keeps local DevPilot on the regular Happier primary-pane shell', async () => {
+        localDevPilotModeState.enabled = true;
+
+        const screen = await renderScreen(<MainView variant="phone" />);
+
+        expect(() => screen.tree.findByType('SessionGettingStartedGuidance')).not.toThrow();
     });
 
     it('shows the hidden inactive sessions notice when hide inactive sessions empties the sidebar', async () => {

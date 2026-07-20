@@ -47,6 +47,7 @@ export function PathAndResumeRow(props: PathAndResumeRowProps) {
                     <Pressable
                         ref={props.pathChipAnchorRef}
                         testID="agent-input-path-chip"
+                        accessibilityRole="button"
                         onPress={props.onPathClick}
                         hitSlop={{ top: 5, bottom: 10, left: 0, right: 0 }}
                         style={(p) => ([

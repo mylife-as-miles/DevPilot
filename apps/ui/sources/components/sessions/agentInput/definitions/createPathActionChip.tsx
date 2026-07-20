@@ -25,6 +25,7 @@ export function createPathActionChip(params: Readonly<{
             ref={params.anchorRef}
             key="path"
             testID="agent-input-path-chip"
+            accessibilityRole="button"
             onPress={params.onPress}
             hitSlop={{ top: 5, bottom: 10, left: 0, right: 0 }}
             style={(state) => params.chipStyle(state.pressed)}

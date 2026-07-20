@@ -33,6 +33,7 @@ describe('createPathActionChip', () => {
         if (!pathChip) {
             throw new Error('Expected path chip to render');
         }
+        expect(pathChip.props.accessibilityRole).toBe('button');
 
         const textValues = pathChip
             .findAll((node: { type?: unknown }) => node?.type === 'Text')

@@ -961,7 +961,9 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
         justifyContent: 'center',
         height: 32,
         gap: 6,
-        ...(Platform.OS === 'web' ? {} : { marginRight: 6, marginBottom: NATIVE_ACTION_CHIP_GAP_Y }),
+        ...(Platform.OS === 'web'
+            ? { cursor: 'pointer' }
+            : { marginRight: 6, marginBottom: NATIVE_ACTION_CHIP_GAP_Y }),
     },
     actionChipText: {
         fontSize: 13,

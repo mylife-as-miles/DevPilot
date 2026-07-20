@@ -208,6 +208,13 @@ import {
     isDevPilotLocalConversation,
     submitDevPilotLocalConversationMessage,
 } from '@/config/devpilotLocalConversation';
+import {
+    openDevPilotProjectFolder,
+    setDevPilotModel,
+    setDevPilotReasoningEffort,
+    setDevPilotSandboxMode,
+} from '@/devpilot/domain/store';
+import { mapPermissionModeToSandbox } from '@/devpilot/domain/status';
 import { sessionGoalClear, sessionGoalSet } from '@/sync/ops/sessionGoals';
 import {
     readSessionWorkStateFromMetadata,
@@ -3316,6 +3323,11 @@ function SessionViewLoaded({
 
     // Function to update permission mode
     const updatePermissionMode = React.useCallback((mode: PermissionMode) => {
+        if (isDevPilotLocalConversation(session)) {
+            storage.getState().updateSessionPermissionMode(sessionId, mode);
+            setDevPilotSandboxMode(mapPermissionModeToSandbox(mode));
+            return;
+        }
         fireAndForget(applyPermissionModeSelection({
             sessionId,
             mode,
@@ -3324,7 +3336,7 @@ function SessionViewLoaded({
             getSessionPermissionModeUpdatedAt: (sid) => storage.getState().sessions[sid]?.permissionModeUpdatedAt ?? null,
             publishSessionPermissionModeToMetadata: (payload) => sync.publishSessionPermissionModeToMetadata(payload),
         }), { tag: 'SessionView.updatePermissionMode' });
-    }, [sessionId, settings.sessionPermissionModeApplyTiming]);
+    }, [session, sessionId, settings.sessionPermissionModeApplyTiming]);
 
     const updateAcpSessionModeOverride = React.useCallback((modeId: string) => {
         const normalized = typeof modeId === 'string' ? modeId.trim() : '';
@@ -3341,29 +3353,43 @@ function SessionViewLoaded({
 
     const updateAcpConfigOptionOverride = React.useCallback((configId: string, valueId: string) => {
         const updatedAt = nowServerMs();
-        setOptimisticAcpConfigOptionOverrides((current) => {
-            const baseMetadata = (current
-                ? {
-                    ...(session.metadata ?? {}),
-                    acpConfigOptionOverridesV1: current,
-                    sessionConfigOptionOverridesV1: current,
-                }
-                : (session.metadata ?? {})) as Metadata;
-            const nextMetadata = computeNextAcpConfigOptionOverrideMetadata({
-                metadata: baseMetadata,
-                configId,
-                value: valueId,
-                updatedAt,
-            });
-            return (nextMetadata.acpConfigOptionOverridesV1 ?? nextMetadata.sessionConfigOptionOverridesV1 ?? null) as React.ComponentProps<typeof AgentInput>['acpConfigOptionOverridesOverride'];
+        const baseMetadata = (optimisticAcpConfigOptionOverrides
+            ? {
+                ...(session.metadata ?? {}),
+                acpConfigOptionOverridesV1: optimisticAcpConfigOptionOverrides,
+                sessionConfigOptionOverridesV1: optimisticAcpConfigOptionOverrides,
+            }
+            : (session.metadata ?? {})) as Metadata;
+        const nextMetadata = computeNextAcpConfigOptionOverrideMetadata({
+            metadata: baseMetadata,
+            configId,
+            value: valueId,
+            updatedAt,
         });
+        const nextOverrides = (nextMetadata.acpConfigOptionOverridesV1 ?? nextMetadata.sessionConfigOptionOverridesV1 ?? null) as React.ComponentProps<typeof AgentInput>['acpConfigOptionOverridesOverride'];
+        setOptimisticAcpConfigOptionOverrides(nextOverrides);
+
+        if (isDevPilotLocalConversation(session)) {
+            if (configId === 'reasoning_effort') {
+                setDevPilotReasoningEffort(valueId);
+            }
+            const currentSession = storage.getState().sessions[sessionId] ?? session;
+            storage.getState().applySessions([{
+                ...currentSession,
+                updatedAt,
+                metadata: nextMetadata,
+                metadataVersion: Math.max(currentSession.metadataVersion ?? 0, updatedAt),
+            }]);
+            return;
+        }
+
         fireAndForget(sync.publishSessionAcpConfigOptionOverrideToMetadata({
             sessionId,
             configId,
             value: valueId,
             updatedAt,
         }), { tag: 'SessionView.updateAcpConfigOptionOverride' });
-    }, [session.metadata, sessionId]);
+    }, [optimisticAcpConfigOptionOverrides, session, session.metadata, sessionId]);
     const buildNextMessageMetaOverrides = React.useCallback((metaOverrides?: Record<string, unknown>) => {
         return buildSessionComposerNextMessageMetaOverridesFromUiState({
             agentId: liveComposerState.agentId,
@@ -3376,12 +3402,36 @@ function SessionViewLoaded({
     const updateModelMode = React.useCallback((mode: ModelMode) => {
         if (!isModelSelectableForSession(agentId, session.metadata ?? null, mode)) return;
         storage.getState().updateSessionModelMode(sessionId, mode);
+        if (isDevPilotLocalConversation(session)) {
+            setDevPilotModel(mode);
+            const updatedAt = nowServerMs();
+            const currentSession = storage.getState().sessions[sessionId] ?? session;
+            storage.getState().applySessions([{
+                ...currentSession,
+                updatedAt,
+                metadata: {
+                    ...(currentSession.metadata ?? session.metadata ?? {}),
+                    modelOverrideV1: {
+                        v: 1,
+                        updatedAt,
+                        modelId: mode,
+                    },
+                } as Metadata,
+                metadataVersion: Math.max(currentSession.metadataVersion ?? 0, updatedAt),
+            }]);
+            return;
+        }
         fireAndForget(sync.publishSessionModelOverrideToMetadata({
             sessionId,
             modelId: mode,
             updatedAt: nowServerMs(),
         }), { tag: 'SessionView.updateModelMode' });
-    }, [agentId, sessionId, session.metadata]);
+    }, [agentId, session, sessionId, session.metadata]);
+
+    const openLocalDevPilotProjectFolder = React.useCallback(() => {
+        if (!isDevPilotLocalConversation(session)) return;
+        fireAndForget(openDevPilotProjectFolder(), { tag: 'SessionView.openLocalDevPilotProjectFolder' });
+    }, [session]);
 
     // Handle resuming an inactive session
     const handleResumeSession = React.useCallback(async (opts?: { silent?: boolean; initialTranscriptAfterSeq?: number }): Promise<boolean> => {
@@ -4741,6 +4791,9 @@ function SessionViewLoaded({
                 modelMode={modelMode}
                 onModelModeChange={updateModelMode}
                 metadata={session.metadata}
+                currentPath={isDevPilotLocalConversation(session) ? session.metadata?.path ?? null : undefined}
+                emptyPathLabel={isDevPilotLocalConversation(session) ? 'Open Folder' : undefined}
+                onPathClick={isDevPilotLocalConversation(session) ? openLocalDevPilotProjectFolder : undefined}
                 profileId={liveComposerState.profileId ?? undefined}
                 onProfileClick={liveComposerState.profileId !== null ? () => {
                     const profileId = liveComposerState.profileId;
