@@ -11,6 +11,7 @@
 /target/
 /apps/electron/out/
 /apps/desktop/out/
+/apps/desktop/out-*/
 /apps/desktop/runtime/
 **/dist/
 **/build/
@@ -34,6 +35,8 @@
 /.pytest_cache/
 /.venv/
 /*.egg-info/
+__pycache__/
+**/__pycache__/
 
 # Environment and secrets
 .env
